@@ -1,0 +1,14 @@
+{
+  "name": "sozorock-health-agentic",
+  "version": "0.1.0",
+  "description": "SozoRock Health Agentic Infrastructure — Place Intelligence and access coordination for all U.S. counties",
+  "private": true,
+  "scripts": {
+    "serve": "npx serve frontend -p 3000",
+    "lint": "echo \"No linter configured yet\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}
