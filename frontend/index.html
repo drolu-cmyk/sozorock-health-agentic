@@ -20,11 +20,10 @@
           <div class="text-[11px] text-slate-500 mt-0.5">Nationwide · Source-traceable · Non-clinical</div>
         </div>
       </div>
-      <nav class="hidden sm:flex items-center gap-6 text-sm text-slate-600">
-        <a href="#voice" class="hover:text-teal-700">Voice Access</a>
-        <a href="#results" class="hover:text-teal-700">Results</a>
-        <a href="#hubs" class="hover:text-teal-700">Hubs</a>
-      </nav>
+      <div class="flex items-center gap-4">
+        <span id="sessionStatus" class="text-[11px] text-slate-500 hidden sm:inline"></span>
+        <button id="shareSessionBtn" class="text-xs font-medium text-teal-700 hover:text-teal-900 border border-teal-200 rounded-md px-2.5 py-1">Share live plan</button>
+      </div>
     </div>
   </header>
 
@@ -38,7 +37,7 @@
                class="flex-1 px-4 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-transparent">
         <button id="searchBtn" class="px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium rounded-lg transition">Analyze</button>
       </div>
-      <p class="text-[11px] text-slate-400">Demo data for illustration. Production draws from public sources across all 3,144 county equivalents.</p>
+      <p class="text-[11px] text-slate-400">Covers all 3,144 county equivalents. Public evidence only.</p>
     </section>
 
     <!-- Voice Access -->
@@ -49,12 +48,12 @@
         </div>
         <div>
           <h2 class="text-sm font-semibold text-slate-900">Voice Access</h2>
-          <p class="text-xs text-slate-500">Natural conversation with pauses and clarification. No forms required.</p>
+          <p class="text-xs text-slate-500">Natural conversation. Speaks a request and receives live place intelligence.</p>
         </div>
       </div>
       <div id="chatLog" class="px-5 py-4 space-y-3 max-h-56 overflow-y-auto bg-slate-50/60 text-sm"></div>
       <div class="px-5 py-3 border-t border-slate-100 flex gap-2">
-        <input id="voiceInput" type="text" placeholder="Describe what is getting in the way…"
+        <input id="voiceInput" type="text" placeholder="Describe what is getting in the way or name a place…"
                class="flex-1 px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600">
         <button id="sendVoice" class="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium rounded-lg">Send</button>
         <button id="micBtn" class="px-3 py-2 border border-slate-300 rounded-lg text-slate-500 hover:bg-slate-50" title="Simulate listening">
@@ -95,7 +94,7 @@
       <div id="tab-map" class="tab-panel hidden">
         <div class="bg-white rounded-lg border border-slate-200 p-3">
           <div id="map" class="h-80 rounded-md"></div>
-          <p class="text-[11px] text-slate-400 mt-2">Official geography with compatible evidence layers only.</p>
+          <p class="text-[11px] text-slate-400 mt-2">Official geography + intensity markers from county planning signals.</p>
         </div>
       </div>
 
@@ -117,6 +116,24 @@
       </div>
     </section>
 
+    <!-- Scenarios -->
+    <section id="scenarios" class="hidden space-y-3">
+      <h2 class="text-lg font-semibold text-slate-900">Scenario comparison</h2>
+      <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="w-full text-left">
+          <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th class="p-3 font-medium">Scenario</th>
+              <th class="p-3 font-medium">Description</th>
+              <th class="p-3 font-medium">Projected reach</th>
+              <th class="p-3 font-medium">Barrier reduction</th>
+            </tr>
+          </thead>
+          <tbody id="scenarioTable"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Hubs -->
     <section id="hubs" class="hidden space-y-4">
       <h2 class="text-lg font-semibold text-slate-900">Hub format fit for this place</h2>
@@ -128,13 +145,41 @@
       <h2 class="text-sm font-semibold text-teal-900 mb-1">Health Access Day signal</h2>
       <p id="accessDayText" class="text-sm text-teal-800"></p>
     </section>
+
+    <!-- Funder View -->
+    <section id="funderView" class="hidden space-y-3">
+      <h2 class="text-lg font-semibold text-slate-900">Funder snapshot</h2>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div class="bg-white rounded-lg border border-slate-200 p-4">
+          <div class="text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">Reach potential</div>
+          <div id="funderReach" class="text-sm font-semibold text-slate-900">—</div>
+        </div>
+        <div class="bg-white rounded-lg border border-slate-200 p-4">
+          <div class="text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">Recommended hub mix</div>
+          <div id="funderHubMix" class="text-sm text-slate-800">—</div>
+        </div>
+        <div class="bg-white rounded-lg border border-slate-200 p-4">
+          <div class="text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">Barrier pressure</div>
+          <div id="funderBarrier" class="text-sm font-semibold text-slate-900">—</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Audit Log -->
+    <section class="bg-white rounded-xl border border-slate-200 p-5">
+      <h2 class="text-sm font-semibold text-slate-900 mb-3">Audit log (last actions)</h2>
+      <div id="auditLog" class="text-xs text-slate-600 space-y-0 max-h-48 overflow-y-auto"></div>
+    </section>
   </main>
 
   <footer class="border-t border-slate-200 mt-16 py-6 text-center text-xs text-slate-500">
-    SozoRock Place Intelligence · Coverage for all U.S. counties · Non-clinical · Source-traceable
+    SozoRock Place Intelligence · Coverage for all U.S. counties · Non-clinical · Source-traceable · Auditable
   </footer>
 
   <script src="js/data.js"></script>
+  <script src="js/cbcap-adapter.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/audit.js"></script>
   <script src="js/place-intelligence.js"></script>
   <script src="js/voice-access.js"></script>
   <script src="js/app.js"></script>
