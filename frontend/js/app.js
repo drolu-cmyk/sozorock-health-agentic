@@ -1,6 +1,6 @@
 /**
- * Application bootstrap.
- * Wires search, tabs, and Voice Access to the place intelligence layer.
+ * Application bootstrap
+ * Wires search, tabs, Voice Access, session sharing, and audit rendering.
  */
 
 (function () {
@@ -29,9 +29,7 @@
   function initSearch() {
     document.getElementById("searchBtn").addEventListener("click", function () {
       var query = document.getElementById("placeInput").value;
-      var data = window.SozoRockData.resolve(query);
-      window.SozoRockPlace.render(data);
-      document.getElementById("results").scrollIntoView({ behavior: "smooth" });
+      window.SozoRockVoice.runPipeline(query, "search:" + query);
     });
   }
 
@@ -57,9 +55,39 @@
     });
   }
 
+  function initSession() {
+    // Resume session from URL if present
+    var params = new URLSearchParams(window.location.search);
+    var sessionId = params.get("session");
+    if (sessionId) {
+      var existing = window.SozoRockSession.get(sessionId);
+      if (existing) {
+        window.SozoRockSession.setCurrent(sessionId);
+        document.getElementById("sessionStatus").textContent = "Live session: " + sessionId;
+      }
+    }
+
+    var shareBtn = document.getElementById("shareSessionBtn");
+    if (shareBtn) {
+      shareBtn.addEventListener("click", function () {
+        var session = window.SozoRockSession.getCurrent();
+        if (!session) {
+          session = window.SozoRockSession.create("New plan");
+          window.SozoRockSession.setCurrent(session.id);
+        }
+        var url = window.SozoRockSession.shareUrl();
+        navigator.clipboard.writeText(url).then(function () {
+          document.getElementById("sessionStatus").textContent = "Link copied — " + session.id;
+        });
+      });
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initTabs();
     initSearch();
     initVoice();
+    initSession();
+    window.SozoRockAudit.renderLog();
   });
 })();
