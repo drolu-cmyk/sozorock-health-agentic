@@ -1,6 +1,6 @@
 /**
  * Application bootstrap
- * Wires search, tabs, Voice Access, session sharing, and audit rendering.
+ * Wires search, tabs, Voice Access, and server-backed session sharing.
  */
 
 (function () {
@@ -26,10 +26,15 @@
     });
   }
 
+  function runPlace(location) {
+    // Reuse the same path Voice Access uses
+    window.SozoRockVoice.handle(location);
+  }
+
   function initSearch() {
     document.getElementById("searchBtn").addEventListener("click", function () {
-      var query = document.getElementById("placeInput").value;
-      window.SozoRockVoice.runPipeline(query, "search:" + query);
+      var query = document.getElementById("placeInput").value.trim();
+      if (query) runPlace(query);
     });
   }
 
@@ -51,36 +56,38 @@
     });
 
     document.getElementById("micBtn").addEventListener("click", function () {
-      window.SozoRockVoice.simulateListen();
+      window.SozoRockVoice.listen();
     });
   }
 
   function initSession() {
-    // Resume session from URL if present
-    var params = new URLSearchParams(window.location.search);
-    var sessionId = params.get("session");
-    if (sessionId) {
-      var existing = window.SozoRockSession.get(sessionId);
-      if (existing) {
-        window.SozoRockSession.setCurrent(sessionId);
-        document.getElementById("sessionStatus").textContent = "Live session: " + sessionId;
+    window.SozoRockSession.initFromUrl().then(function (session) {
+      if (session) {
+        document.getElementById("sessionStatus").textContent = "Live session: " + session.id;
       }
-    }
+    });
 
     var shareBtn = document.getElementById("shareSessionBtn");
     if (shareBtn) {
       shareBtn.addEventListener("click", function () {
-        var session = window.SozoRockSession.getCurrent();
-        if (!session) {
-          session = window.SozoRockSession.create("New plan");
-          window.SozoRockSession.setCurrent(session.id);
+        var id = window.SozoRockSession.getCurrentId();
+        if (!id) {
+          window.SozoRockSession.create(null, null).then(function (session) {
+            copyShare(session.id);
+          });
+        } else {
+          copyShare(id);
         }
-        var url = window.SozoRockSession.shareUrl();
-        navigator.clipboard.writeText(url).then(function () {
-          document.getElementById("sessionStatus").textContent = "Link copied — " + session.id;
-        });
       });
     }
+  }
+
+  function copyShare(id) {
+    var url = window.SozoRockSession.shareUrl();
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(function () {
+      document.getElementById("sessionStatus").textContent = "Link copied — " + id;
+    });
   }
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -88,6 +95,5 @@
     initSearch();
     initVoice();
     initSession();
-    window.SozoRockAudit.renderLog();
   });
 })();
