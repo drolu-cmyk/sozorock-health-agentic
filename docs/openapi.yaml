@@ -1,0 +1,290 @@
+openapi: 3.1.0
+info:
+  title: SozoRock Health Place Intelligence API
+  version: 0.4.0
+  description: |
+    Non-clinical place intelligence and CB-CAP planning endpoints.
+    All responses are source-traceable and policy-gated.
+  license:
+    name: MIT
+servers:
+  - url: http://localhost:3000
+    description: Local development
+paths:
+  /api/health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                  version:
+                    type: string
+                  time:
+                    type: string
+                    format: date-time
+  /api/place:
+    post:
+      summary: Run place intelligence pipeline
+      operationId: postPlace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [location]
+              properties:
+                location:
+                  type: string
+                  description: ZIP, FIPS, or county name
+                  example: "12043"
+                purpose:
+                  type: string
+                  enum: [resident, planner, funder, cbcap]
+                  default: resident
+      responses:
+        "200":
+          description: Place Intelligence Package
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaceIntelligencePackage"
+        "400":
+          description: Missing location
+        "422":
+          description: Policy block or unresolved location
+  /api/cbcap:
+    post:
+      summary: Build CB-CAP county plan
+      operationId: postCbcap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [location]
+              properties:
+                location:
+                  type: string
+                  example: "36095"
+      responses:
+        "200":
+          description: CB-CAP county plan with modeled scenarios
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CbcapPlan"
+  /api/sessions:
+    post:
+      summary: Create a shared session
+      operationId: createSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                location:
+                  type: string
+                plan:
+                  type: object
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+  /api/sessions/{id}:
+    get:
+      summary: Retrieve a session
+      operationId: getSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Not found
+    put:
+      summary: Update a session plan
+      operationId: updateSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                location:
+                  type: string
+                plan:
+                  type: object
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+  /api/audit:
+    get:
+      summary: Internal audit log (governance only)
+      operationId: getAudit
+      responses:
+        "200":
+          description: Array of audit events
+components:
+  schemas:
+    PlaceIntelligencePackage:
+      type: object
+      properties:
+        location:
+          type: object
+          properties:
+            query:
+              type: string
+            fips:
+              type: string
+            county:
+              type: string
+            state:
+              type: string
+            zcta:
+              type: string
+              nullable: true
+        brief:
+          type: object
+          properties:
+            planStatus:
+              type: string
+            context:
+              type: string
+            gaps:
+              type: array
+              items:
+                type: string
+        barriers:
+          type: object
+          additionalProperties:
+            type: number
+        compositeBarrier:
+          type: number
+        hubs:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              fit:
+                type: string
+              reason:
+                type: string
+              score:
+                type: number
+        evidence:
+          type: object
+          properties:
+            sources:
+              type: array
+              items:
+                $ref: "#/components/schemas/Source"
+            freshness:
+              type: string
+        actions:
+          type: array
+          items:
+            type: object
+        meta:
+          type: object
+          properties:
+            nonClinical:
+              type: boolean
+            sourceTraceable:
+              type: boolean
+            sourceFreshness:
+              type: string
+            purpose:
+              type: string
+            generatedAt:
+              type: string
+              format: date-time
+            agentVersion:
+              type: string
+    Source:
+      type: object
+      required: [citation, releaseDate]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        citation:
+          type: string
+        releaseDate:
+          type: string
+        usedFor:
+          type: string
+    CbcapPlan:
+      type: object
+      properties:
+        type:
+          type: string
+          example: cbcap_county_plan
+        location:
+          type: object
+        planningAttention:
+          type: object
+        scenarios:
+          type: array
+          items:
+            type: object
+        recommendedHubMix:
+          type: object
+        meta:
+          type: object
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        location:
+          type: string
+          nullable: true
+        plan:
+          type: object
+          nullable: true
+        participants:
+          type: integer
