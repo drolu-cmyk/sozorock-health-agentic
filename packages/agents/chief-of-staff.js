@@ -84,12 +84,18 @@ class ChiefOfStaff {
         sourceFreshness: evidence.freshness,
         purpose: task.purpose || "resident",
         generatedAt: new Date().toISOString(),
-        agentVersion: "0.3.0",
+        agentVersion: "0.4.0",
         durationMs: Date.now() - start
       }
     };
 
-    // 6. Compliance gate (mandatory)
+    // 6. Report layer FIRST (so compliance can inspect it)
+    if (task.purpose === "planner" || task.purpose === "funder" || task.purpose === "cbcap") {
+      package_.report = this.report.generate(package_, task.purpose);
+      trace.push({ agent: "report", status: "ok" });
+    }
+
+    // 7. Compliance gate AFTER report (mandatory)
     const compliance = this.compliance.check(package_);
     trace.push({ agent: "compliance", status: compliance.ok ? "ok" : "blocked" });
 
@@ -102,12 +108,6 @@ class ChiefOfStaff {
       return this._fail("Policy violation: " + compliance.violations.join("; "), trace);
     }
 
-    // 7. Optional report layer for planner/funder purposes
-    if (task.purpose === "planner" || task.purpose === "funder" || task.purpose === "cbcap") {
-      package_.report = this.report.generate(package_, task.purpose);
-      trace.push({ agent: "report", status: "ok" });
-    }
-
     this.auditSink({
       action: "place_intelligence_completed",
       fips: geo.fips,
@@ -117,6 +117,7 @@ class ChiefOfStaff {
     });
 
     package_.meta.trace = trace;
+    package_.meta.durationMs = Date.now() - start;
     return package_;
   }
 
