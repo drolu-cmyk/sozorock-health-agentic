@@ -1,9 +1,9 @@
 /**
  * Voice Access
  *
- * Uses the browser Web Speech API when available.
- * Recognized (or typed) text is sent to the real server POST /api/place.
- * Falls back to typed input if speech recognition is unavailable.
+ * Uses browser Web Speech API when available.
+ * Sends location to POST /api/place and POST /api/cbcap,
+ * then renders the combined result via renderFromServer.
  */
 
 window.SozoRockVoice = (function () {
@@ -13,7 +13,7 @@ window.SozoRockVoice = (function () {
 
   function init() {
     chatLog = document.getElementById("chatLog");
-    addSystem("You can speak or type. Tell me a ZIP, county, or what is making the next step difficult.");
+    addSystem("You can speak or type a ZIP or county. Supported demonstration counties currently return full plans; other U.S. counties resolve geography and report data availability.");
 
     var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -61,33 +61,38 @@ window.SozoRockVoice = (function () {
     var lower = text.toLowerCase();
     if (lower.indexOf("cobleskill") !== -1 || lower.indexOf("schoharie") !== -1) return "12043";
     if (lower.indexOf("delaware") !== -1) return "13753";
-    return null;
+    // Pass through free-text county names for the server geography agent
+    return text.trim() || null;
   }
 
   function handle(text) {
     addUser(text);
-    if (window.SozoRockAudit) {
-      window.SozoRockAudit.record("voice_input", { summary: text.slice(0, 80) }, "resident");
-    }
-
-    addSystem("Checking place intelligence…");
+    addSystem("Retrieving place intelligence and planning signals…");
 
     var location = extractLocation(text) || (document.getElementById("placeInput") && document.getElementById("placeInput").value) || "12043";
 
-    // Call the real server API
-    fetch("/api/place", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location: location, purpose: "resident" })
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
+    Promise.all([
+      fetch("/api/place", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ location: location, purpose: "resident" })
+      }).then(function (r) { return r.json(); }),
+      fetch("/api/cbcap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ location: location })
+      }).then(function (r) { return r.json(); }).catch(function () { return null; })
+    ])
+      .then(function (results) {
+        var data = results[0];
+        var cbcap = results[1];
+
         if (data.status === "error") {
-          addSystem(data.message || "I could not complete that request.");
+          addSystem(data.message || "I could not complete that request for this location.");
           return;
         }
 
-        // Create server-side session
+        // Create server session
         return fetch("/api/sessions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -99,24 +104,24 @@ window.SozoRockVoice = (function () {
               window.SozoRockSession.setCurrent(session.id);
             }
 
-            // Render using place-intelligence if available
             if (window.SozoRockPlace && window.SozoRockPlace.renderFromServer) {
-              window.SozoRockPlace.renderFromServer(data);
-            } else if (window.SozoRockPlace && window.SozoRockPlace.render) {
-              window.SozoRockPlace.render(data, null);
+              window.SozoRockPlace.renderFromServer(data, cbcap);
             }
 
-            addSystem("Here is the place intelligence for " + (data.location && data.location.county ? data.location.county + " County" : location) + ".");
+            var countyLabel = (data.location && data.location.county)
+              ? data.location.county + " County"
+              : location;
+            addSystem("Place intelligence ready for " + countyLabel + ". Sources and release dates are listed in the Brief.");
 
             var input = document.getElementById("placeInput");
             if (input) input.value = location;
-            var results = document.getElementById("results");
-            if (results) results.scrollIntoView({ behavior: "smooth" });
+            var resultsEl = document.getElementById("results");
+            if (resultsEl) resultsEl.scrollIntoView({ behavior: "smooth" });
           });
       })
       .catch(function (err) {
         console.error(err);
-        addSystem("The place intelligence service is not reachable right now. Make sure the server is running (npm start).");
+        addSystem("The place intelligence service is not reachable. Start the server with npm start.");
       });
   }
 
@@ -145,7 +150,6 @@ window.SozoRockVoice = (function () {
     if (btn) btn.classList.remove("voice-pulse", "text-teal-700");
   }
 
-  // Keep a named function for the mic button (no longer a simulation)
   function listen() {
     startListening();
   }
@@ -154,7 +158,6 @@ window.SozoRockVoice = (function () {
     init: init,
     handle: handle,
     listen: listen,
-    // backward-compatible alias
     simulateListen: listen
   };
 })();
