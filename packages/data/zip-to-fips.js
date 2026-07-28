@@ -1,15 +1,18 @@
 /**
  * ZIP → FIPS / County Resolution
  *
- * Deterministic geography resolution.
- * Production: load full HUD / Census crosswalk.
- * Current: high-fidelity sample + clear extension point for full 41k+ ZIPs.
+ * CURRENT COVERAGE: Demonstration set for Schoharie County (36095) and
+ * Delaware County (36025), New York only.
  *
- * Required for every place intelligence request.
+ * This is intentionally limited. Unknown ZIPs return null so callers fail
+ * clearly instead of inventing geography.
+ *
+ * Production path: load the full HUD / Census ZIP–county crosswalk
+ * (approximately 41k+ ZCTA records) via loadFullCrosswalk().
  */
 
 const ZIP_TO_FIPS = {
-  // Schoharie County, NY (primary demo)
+  // Schoharie County, NY
   "12043": { fips: "36095", county: "Schoharie", state: "NY", zcta: "12043" },
   "12031": { fips: "36095", county: "Schoharie", state: "NY", zcta: "12031" },
   "12036": { fips: "36095", county: "Schoharie", state: "NY", zcta: "12036" },
@@ -25,7 +28,7 @@ const ZIP_TO_FIPS = {
   "12194": { fips: "36095", county: "Schoharie", state: "NY", zcta: "12194" },
   "13459": { fips: "36095", county: "Schoharie", state: "NY", zcta: "13459" },
 
-  // Delaware County, NY (secondary)
+  // Delaware County, NY
   "13753": { fips: "36025", county: "Delaware", state: "NY", zcta: "13753" },
   "13739": { fips: "36025", county: "Delaware", state: "NY", zcta: "13739" },
   "13740": { fips: "36025", county: "Delaware", state: "NY", zcta: "13740" },
@@ -46,30 +49,26 @@ const ZIP_TO_FIPS = {
 
 /**
  * Resolve a ZIP, city+state string, or FIPS to a canonical geography record.
- * @param {string} query
- * @returns {{ fips: string, county: string, state: string, zcta?: string } | null}
+ * Returns null when the location is outside the demonstration set.
  */
 function resolveGeography(query) {
   if (!query) return null;
   const cleaned = String(query).trim().toUpperCase();
 
-  // Direct ZIP
   if (/^\d{5}$/.test(cleaned) && ZIP_TO_FIPS[cleaned]) {
     return { ...ZIP_TO_FIPS[cleaned] };
   }
 
-  // Direct FIPS
   if (/^\d{5}$/.test(cleaned)) {
     const match = Object.values(ZIP_TO_FIPS).find(r => r.fips === cleaned);
     if (match) return { fips: match.fips, county: match.county, state: match.state };
   }
 
-  // Simple name match (demo)
   const lower = cleaned.toLowerCase();
   if (lower.includes("schoharie") || lower.includes("cobleskill")) {
     return { fips: "36095", county: "Schoharie", state: "NY" };
   }
-  if (lower.includes("delaware") && lower.includes("ny")) {
+  if (lower.includes("delaware") && (lower.includes("ny") || lower.includes("new york") || !lower.includes("ohio"))) {
     return { fips: "36025", county: "Delaware", state: "NY" };
   }
 
@@ -78,6 +77,5 @@ function resolveGeography(query) {
 
 module.exports = {
   resolveGeography,
-  ZIP_TO_FIPS,
-  // Extension point: loadFullCrosswalk() for production HUD/Census file
+  ZIP_TO_FIPS
 };
