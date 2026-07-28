@@ -1,16 +1,42 @@
 /**
  * Voice Access
  *
- * Natural conversation front door. A spoken or typed request now runs the
- * full place-analysis pipeline and renders visual results in Explore.
+ * Uses the browser Web Speech API when available.
+ * Recognized (or typed) text is sent to the real server POST /api/place.
+ * Falls back to typed input if speech recognition is unavailable.
  */
 
 window.SozoRockVoice = (function () {
   var chatLog = null;
+  var recognition = null;
+  var isListening = false;
 
   function init() {
     chatLog = document.getElementById("chatLog");
-    addSystem("You can speak or type. Tell me what is making the next step difficult, or give me a ZIP or county.");
+    addSystem("You can speak or type. Tell me a ZIP, county, or what is making the next step difficult.");
+
+    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onresult = function (event) {
+        var transcript = event.results[0][0].transcript;
+        stopListeningUI();
+        handle(transcript);
+      };
+
+      recognition.onerror = function () {
+        stopListeningUI();
+        addSystem("I could not hear clearly. You can type instead.");
+      };
+
+      recognition.onend = function () {
+        stopListeningUI();
+      };
+    }
   }
 
   function addSystem(text) {
@@ -30,110 +56,105 @@ window.SozoRockVoice = (function () {
   }
 
   function extractLocation(text) {
-    // Simple extraction for demo. Production uses proper NLU.
     var zipMatch = text.match(/\b\d{5}\b/);
     if (zipMatch) return zipMatch[0];
     var lower = text.toLowerCase();
     if (lower.indexOf("cobleskill") !== -1 || lower.indexOf("schoharie") !== -1) return "12043";
+    if (lower.indexOf("delaware") !== -1) return "13753";
     return null;
   }
 
   function handle(text) {
     addUser(text);
-    window.SozoRockAudit.record("voice_input", { summary: text.slice(0, 80) }, "resident");
+    if (window.SozoRockAudit) {
+      window.SozoRockAudit.record("voice_input", { summary: text.slice(0, 80) }, "resident");
+    }
 
-    // Natural pause
-    setTimeout(function () {
-      addSystem("Got it. Checking public place data and planning signals…");
-    }, 600);
+    addSystem("Checking place intelligence…");
 
-    var location = extractLocation(text) || document.getElementById("placeInput").value || "12043";
+    var location = extractLocation(text) || (document.getElementById("placeInput") && document.getElementById("placeInput").value) || "12043";
 
-    // Run the full pipeline
-    setTimeout(function () {
-      runPipeline(location, text);
-    }, 1400);
-  }
-
-  function runPipeline(location, originalText) {
-    // 1. Resolve place data
-    var placeData = window.SozoRockData.resolve(location);
-
-    // 2. Pull CB-CAP signals
-    window.SozoRockCBCAP.fetchSignals(location).then(function (cbcap) {
-      // 3. Policy check
-      var package = {
-        name: placeData.name,
-        lat: placeData.lat,
-        lng: placeData.lng,
-        status: placeData.status,
-        context: placeData.context,
-        gaps: placeData.gaps,
-        barriers: placeData.barriers,
-        trend: placeData.trend,
-        actions: placeData.actions,
-        hubs: placeData.hubs,
-        accessDay: placeData.accessDay,
-        meta: {
-          nonClinical: true,
-          sourceTraceable: true,
-          triggeredBy: "voice_access"
+    // Call the real server API
+    fetch("/api/place", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location: location, purpose: "resident" })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data.status === "error") {
+          addSystem(data.message || "I could not complete that request.");
+          return;
         }
-      };
 
-      var policy = window.SozoRockAudit.enforcePolicy(package);
-      if (!policy.ok) {
-        addSystem("I cannot show that result because it violates the non-clinical policy.");
-        window.SozoRockAudit.record("policy_block", { violations: policy.violations }, "system");
-        return;
-      }
+        // Create server-side session
+        return fetch("/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ location: location, plan: data })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (session) {
+            if (window.SozoRockSession) {
+              window.SozoRockSession.setCurrent(session.id);
+            }
 
-      // 4. Create or update shared session
-      var session = window.SozoRockSession.getCurrent();
-      if (!session) {
-        session = window.SozoRockSession.create(placeData.name);
-        window.SozoRockSession.setCurrent(session.id);
-      }
-      window.SozoRockSession.appendEvent("place_analysis", {
-        location: location,
-        summary: "Place analysis completed for " + placeData.name
-      }, "voice-agent");
-      window.SozoRockSession.updatePlan({
-        actions: placeData.actions,
-        hubs: placeData.hubs
+            // Render using place-intelligence if available
+            if (window.SozoRockPlace && window.SozoRockPlace.renderFromServer) {
+              window.SozoRockPlace.renderFromServer(data);
+            } else if (window.SozoRockPlace && window.SozoRockPlace.render) {
+              window.SozoRockPlace.render(data, null);
+            }
+
+            addSystem("Here is the place intelligence for " + (data.location && data.location.county ? data.location.county + " County" : location) + ".");
+
+            var input = document.getElementById("placeInput");
+            if (input) input.value = location;
+            var results = document.getElementById("results");
+            if (results) results.scrollIntoView({ behavior: "smooth" });
+          });
+      })
+      .catch(function (err) {
+        console.error(err);
+        addSystem("The place intelligence service is not reachable right now. Make sure the server is running (npm start).");
       });
-
-      // 5. Render visual results
-      window.SozoRockPlace.render(package, cbcap);
-
-      // 6. Audit
-      window.SozoRockAudit.record("place_render", {
-        summary: "Rendered place intelligence for " + placeData.name,
-        location: location
-      }, "voice-agent");
-
-      addSystem("Here is the place intelligence for " + placeData.name + ". You can share this live plan with others using the session link.");
-
-      // Update the search box so the visual state is consistent
-      document.getElementById("placeInput").value = location;
-      document.getElementById("results").scrollIntoView({ behavior: "smooth" });
-    });
   }
 
-  function simulateListen() {
+  function startListening() {
+    if (!recognition) {
+      addSystem("Speech recognition is not available in this browser. Please type your request.");
+      return;
+    }
+    if (isListening) return;
+
+    isListening = true;
     var btn = document.getElementById("micBtn");
-    btn.classList.add("voice-pulse", "text-teal-700");
+    if (btn) btn.classList.add("voice-pulse", "text-teal-700");
     addSystem("Listening…");
-    setTimeout(function () {
-      btn.classList.remove("voice-pulse", "text-teal-700");
-      handle("I need help in Cobleskill. The portal will not open and I do not have a ride.");
-    }, 1600);
+    try {
+      recognition.start();
+    } catch (e) {
+      stopListeningUI();
+      addSystem("Could not start the microphone. Please type instead.");
+    }
+  }
+
+  function stopListeningUI() {
+    isListening = false;
+    var btn = document.getElementById("micBtn");
+    if (btn) btn.classList.remove("voice-pulse", "text-teal-700");
+  }
+
+  // Keep a named function for the mic button (no longer a simulation)
+  function listen() {
+    startListening();
   }
 
   return {
     init: init,
     handle: handle,
-    simulateListen: simulateListen,
-    runPipeline: runPipeline
+    listen: listen,
+    // backward-compatible alias
+    simulateListen: listen
   };
 })();
