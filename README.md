@@ -1,20 +1,41 @@
-# SozoRock Health Agentic Infrastructure
+# SozoRock Health — Place Intelligence
 
-Non-clinical systems infrastructure for place intelligence and access coordination.
+**SozoRock helps county teams turn fragmented public data into a shared, source-traceable access plan.**  
+Enter a county, compare barriers, test delivery scenarios, and hand the live plan to partners and funders.
 
-**Current status:** Working prototype with a real runnable server, agent orchestration, policy enforcement, and demonstration data for selected New York counties. Not yet a production nationwide service.
+## 60–90 second workflow
 
-## Honest scope
+1. Enter or speak a ZIP or county.
+2. The system runs the Chief of Staff agent pipeline.
+3. Sources and release dates appear beside each signal.
+4. Scenarios show modeled reach and barrier-reduction estimates with formulas.
+5. A session link can be shared so a second browser loads the same plan.
+6. Every completed or blocked run is recorded in the server audit log.
+7. The funder snapshot summarizes reach, hub mix, and barrier pressure.
 
-| Claim | Reality |
-|-------|--------|
-| Runnable Place Intelligence API | Yes — `POST /api/place` via Express |
-| Real speech input | Yes — browser Web Speech API when available |
-| Shared sessions across browsers | Yes — server-side in-memory sessions |
-| Nationwide ZIP coverage | No — demonstration ZIPs for Schoharie & Delaware Counties, NY |
-| Live CDC / Census queries | No — modeled demonstration indicators with citations |
-| Durable multi-user auth | No — open demo sessions, no authentication yet |
-| Production deployment | Not yet |
+## What works today
+
+| Capability | Status |
+|------------|--------|
+| Runnable Express API (`/api/place`, `/api/cbcap`, sessions) | Working |
+| Chief of Staff + sub-agents (geography, research, barrier, hub, report, compliance) | Working |
+| Browser speech recognition → server pipeline | Working |
+| Server-backed session IDs (shareable across browsers) | Working |
+| Compliance after report generation + clinical-language scan | Working |
+| Source citations + freshness required | Working |
+| Scenarios labeled as modeled estimates with formula/uncertainty | Working |
+| Valid OpenAPI 3.1 (`docs/openapi.yaml`) | Working |
+| Unit tests + GitHub Actions CI | Working |
+| Frontend renders the live server package | Working |
+
+## Current data scope (exact)
+
+- **Geography resolution:** Demonstration ZIP set for Schoharie County (FIPS 36095) and Delaware County (FIPS 36025), New York. County-name resolution for those two counties. Unknown locations return a clear error — no invented geography.
+- **Indicators:** Modeled demonstration values with published methodology. Not live CDC PLACES or ACS field extractionsions.
+- **Sessions:** In-memory on the server process. Lost on restart. No authentication yet.
+- **Map:** Marker at approximate county center. Heat points only when CB-CAP returns them for the demonstration counties.
+
+National architecture (FIPS contracts, agent pipeline, OpenAPI, policy gate) is in place so live adapters and a full ZIP–county crosswalk can be added without rewriting the product surface.
 
 ## Quick start
 
@@ -30,49 +51,48 @@ npm test
 
 ## API
 
+See `docs/openapi.yaml` for the machine-readable contract.
+
 | Endpoint | Method | Purpose |
 |----------|--------|--------|
-| `/api/health` | GET | Health check |
+| `/api/health` | GET | Health |
 | `/api/place` | POST | Place intelligence (`{ location, purpose }`) |
-| `/api/cbcap` | POST | CB-CAP county plan (`{ location }`) |
+| `/api/cbcap` | POST | CB-CAP county plan |
 | `/api/sessions` | POST | Create shared session |
-| `/api/sessions/:id` | GET / PUT | Read / update session |
-| `/api/audit` | GET | Internal audit log |
+| `/api/sessions/:id` | GET/PUT | Read / update session |
+| `/api/audit` | GET | Internal audit events |
 
-`purpose` values: `resident` | `planner` | `funder` | `cbcap`
+`purpose`: `resident` | `planner` | `funder` | `cbcap`
 
 ## Agent hierarchy
 
 ```
 Chief of Staff
 ├── Geography Agent
-├── Research Agent          (modeled demonstration data)
-├── Barrier Agent           (transparent deterministic scoring)
+├── Research Agent
+├── Barrier Agent          (transparent weights)
 ├── Hub Matching Agent
 ├── Report Agent
-└── Compliance Agent        (text inspection + source linkage required)
+└── Compliance Agent       (runs after report)
 ```
 
-Compliance runs **after** report generation so report content is evaluated.
+## Design rules enforced in code
 
-## Data honesty
+- Non-clinical only
+- Source freshness required
+- Citations required on every source
+- Deterministic barrier scoring
+- Modeled scenarios must declare formula and uncertainty
+- Unknown geography fails closed
 
-- Barrier scores are **modeled estimates** with published weights.
-- Scenario projections are **modeled estimates** and carry formula, assumptions, and uncertainty notes.
-- Source freshness and citations are required fields.
-- Geography resolution currently covers selected demonstration ZIPs only. Unknown ZIPs return a clear failure.
+## Next implementation priorities (in order)
 
-## Experiences (architecture target)
-
-One intelligence system, five distinct experiences:
-
-1. Resident Access
-2. Planner Workspace
-3. CB-CAP Environment
-4. Funder Evidence View
-5. Governance Console (audit only)
-
-The current frontend is still a combined demo. Separation of UIs is the next product priority.
+1. Full national ZIP ↔ FIPS crosswalk + county reference table
+2. Live, versioned adapters (CDC PLACES, ACS) with field-level lineage
+3. Durable sessions (Postgres) + authentication + roles
+4. Live multiplayer (SSE/WebSocket) and participant identity
+5. Separated Resident / Planner / CB-CAP / Funder / Admin experiences
+6. Production deployment pipeline and security hardening
 
 ## License
 
@@ -80,4 +100,4 @@ MIT
 
 ---
 
-SozoRock Health · Non-clinical · Source-traceable · Auditable
+SozoRock Health · Non-clinical systems infrastructure · Source-traceable · Auditable
