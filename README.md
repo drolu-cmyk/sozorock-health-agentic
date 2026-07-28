@@ -1,81 +1,78 @@
 # SozoRock Health Agentic Infrastructure
 
-Shareable, purpose-built infrastructure for place intelligence and access coordination across every U.S. county.
+Non-clinical systems infrastructure for place intelligence and access coordination across every U.S. county.
 
-## What it is
+One underlying intelligence system. Distinct experiences for different users.
 
-A small cloud for live place plans. Multiple humans and agents can collaborate on the same county plan, hand it off, and keep an auditable trail of every action. Strictly non-clinical. Source-traceable. Ready for S3, CloudFront, Lambda, or any Node runtime.
+## Experiences
 
-## Core capabilities
+| Experience | Audience | Status |
+|------------|----------|--------|
+| Resident Access | Residents, caregivers | Foundation ready |
+| Planner Workspace | County staff, libraries, partners | Foundation ready |
+| CB-CAP Environment | County planners, health departments | Planning engine live |
+| Funder Evidence View | Funders, foundations | Report agent live |
+| Governance Console | Internal operators | Audit + policy live |
 
-| Capability | Status |
-|------------|--------|
-| Voice Access → Place Agent → live visual results | Live |
-| CB-CAP county planning signals | Adapter in place |
-| Shared live session (multiplayer) | Live |
-| Scenario comparison tables | Live |
-| Heat-style intensity layer on map | Live |
-| Audit log + policy enforcement | Live |
-| OpenAPI-style contracts | Documented |
-| Funder snapshot (reach, hub mix, barrier pressure) | Live |
-| Portable static frontend + agent stubs | Ready |
+Public-facing experiences do not expose technical audit logs.
 
-## How the pieces work together
-
-1. A resident speaks or types a request (Voice Access).
-2. The request runs the Place Agent and pulls CB-CAP planning signals.
-3. Policy gate checks non-clinical and source-traceable constraints.
-4. Results render as Brief / Map / Action / Visuals + scenarios + funder snapshot.
-5. A shared session is created or updated so other humans or agents can join the same plan.
-6. Every step is written to an append-only audit log.
-
-## Architecture
+## Agent Hierarchy (live)
 
 ```
-frontend/               Explore + Voice + Session + Audit (static, S3-ready)
-  js/session.js         Shared live plan model
-  js/cbcap-adapter.js   County planning signals
-  js/audit.js           Policy enforcement + audit trail
-  js/voice-access.js    Natural language → full pipeline
-  js/place-intelligence.js  Rendering + scenarios + heat markers
-
-src/agents/
-  place-agent.js        Location → structured intelligence
-  hub-matcher.js        Barrier scores → hub ranking
-  orchestrator.js       Full pipeline + policy gate
-
-api/example-handler.js  Ready for API Gateway / Lambda
-docs/                   Architecture, AWS notes, OpenAPI contracts
+Chief of Staff
+├─ Geography Agent          ZIP → FIPS resolution
+├─ Research Agent           Public evidence + freshness + citations
+├─ Barrier Agent            Transparent deterministic scoring
+├─ Hub Matching Agent       Library / Community / Home fit
+├─ Report Agent             Partnership, intervention, funding briefs
+└─ Compliance Agent         Policy gate + data minimization
 ```
 
-## Quick start
+## What is now in place
 
-```bash
-cd frontend
-npx serve .
-# open http://localhost:3000
+- Real ZIP-to-county/FIPS resolution foundation
+- Transparent barrier calculations with published methodology
+- Source freshness as a required field
+- Deterministic policy and eligibility rules
+- Chief of Staff orchestrating structured sub-agents
+- Server-side Place Intelligence API
+- CB-CAP as a distinct planning engine (scenarios, hub mix, CHA/CHIP support)
+- Portable contracts and OpenAPI-style documentation
+- County/FIPS-based data contracts
+- Brief / Map / Action / Evidence concept preserved
+
+## Repository layout
+
+```
+ARCHITECTURE.md                 Platform principles and experience separation
+packages/
+  agents/                       Chief of Staff + sub-agents
+  core/                         Barrier scoring, policy primitives
+  data/                         ZIP→FIPS, county contracts
+  cbcap/                        Distinct planning engine
+server/
+  place-intelligence-api.js     Server-side entry point
+frontend/                       Legacy demo (to be split into experiences)
+docs/                           Deployment and contracts
 ```
 
-Or open `frontend/index.html` directly.
+## Next priorities (in order)
 
-Click **Share live plan** to copy a session URL that others can open and collaborate on.
+1. Full public dataset adapters with release dates (CDC PLACES, Census)
+2. Durable sessions with authentication and permissions
+3. Separated frontend experiences (Resident / Planner / CB-CAP / Funder / Admin)
+4. Automated tests for geography, scoring, citations, safety, and API contracts
+5. Historical comparison (current vs prior release)
 
-## Deployment (AWS)
-
-See `docs/deployment-aws.md`.
-
-Frontend → S3 + CloudFront  
-Agents → Lambda or ECS  
-No individual health records are stored or processed.
-
-## Design constraints (enforced in code)
+## Design constraints (enforced)
 
 - Non-clinical only
 - Source-traceable evidence required
+- Source freshness required
 - Minimal data collection
+- Deterministic policy rules
 - Human judgment remains visible
-- Every agent action is auditable
 
 ---
 
-SozoRock Health · Non-clinical · Source-traceable · Auditable · Nationwide
+SozoRock Health · Non-clinical systems infrastructure · Nationwide
