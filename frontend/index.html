@@ -17,7 +17,7 @@
         <div class="w-8 h-8 rounded-md bg-teal-700 flex items-center justify-center text-white text-xs font-semibold tracking-tight">SR</div>
         <div>
           <div class="text-sm font-semibold text-slate-900 leading-none">SozoRock Place Intelligence</div>
-          <div class="text-[11px] text-slate-500 mt-0.5">Nationwide · Source-traceable · Non-clinical</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">Source-traceable · Non-clinical · Demonstration</div>
         </div>
       </div>
       <div class="flex items-center gap-4">
@@ -30,14 +30,14 @@
   <main class="max-w-6xl mx-auto px-4 py-8 space-y-10">
     <!-- Search -->
     <section class="text-center space-y-3">
-      <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">See what is shaping health in this place</h1>
-      <p class="text-slate-600 text-sm max-w-xl mx-auto">Enter any U.S. ZIP code, city, or county. Receive a Brief, Map, Action path, and visual summary built from public evidence.</p>
+      <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">See what is shaping access in this place</h1>
+      <p class="text-slate-600 text-sm max-w-xl mx-auto">Enter a demonstration ZIP or county (Schoharie or Delaware, NY). Receive a Brief, Map, Action path, and visual summary.</p>
       <div class="flex flex-col sm:flex-row gap-2 max-w-lg mx-auto pt-2">
-        <input id="placeInput" type="text" value="12043" placeholder="ZIP, city, or county"
+        <input id="placeInput" type="text" value="12043" placeholder="ZIP or county (e.g. 12043 or Schoharie)"
                class="flex-1 px-4 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-transparent">
         <button id="searchBtn" class="px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium rounded-lg transition">Analyze</button>
       </div>
-      <p class="text-[11px] text-slate-400">Covers all 3,144 county equivalents. Public evidence only.</p>
+      <p class="text-[11px] text-slate-400">Demonstration coverage: selected ZIPs in Schoharie & Delaware Counties, NY. Modeled public-style evidence.</p>
     </section>
 
     <!-- Voice Access -->
@@ -48,7 +48,7 @@
         </div>
         <div>
           <h2 class="text-sm font-semibold text-slate-900">Voice Access</h2>
-          <p class="text-xs text-slate-500">Natural conversation. Speaks a request and receives live place intelligence.</p>
+          <p class="text-xs text-slate-500">Speak or type. Uses the browser microphone when available.</p>
         </div>
       </div>
       <div id="chatLog" class="px-5 py-4 space-y-3 max-h-56 overflow-y-auto bg-slate-50/60 text-sm"></div>
@@ -56,7 +56,7 @@
         <input id="voiceInput" type="text" placeholder="Describe what is getting in the way or name a place…"
                class="flex-1 px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600">
         <button id="sendVoice" class="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium rounded-lg">Send</button>
-        <button id="micBtn" class="px-3 py-2 border border-slate-300 rounded-lg text-slate-500 hover:bg-slate-50" title="Simulate listening">
+        <button id="micBtn" class="px-3 py-2 border border-slate-300 rounded-lg text-slate-500 hover:bg-slate-50" title="Use microphone">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
         </button>
       </div>
@@ -94,7 +94,7 @@
       <div id="tab-map" class="tab-panel hidden">
         <div class="bg-white rounded-lg border border-slate-200 p-3">
           <div id="map" class="h-80 rounded-md"></div>
-          <p class="text-[11px] text-slate-400 mt-2">Official geography + intensity markers from county planning signals.</p>
+          <p class="text-[11px] text-slate-400 mt-2">Demonstration geography markers.</p>
         </div>
       </div>
 
@@ -105,7 +105,7 @@
       <div id="tab-visuals" class="tab-panel hidden">
         <div class="grid sm:grid-cols-2 gap-4">
           <div class="bg-white rounded-lg border border-slate-200 p-4">
-            <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Barrier ranking</h3>
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Barrier ranking (modeled)</h3>
             <canvas id="barrierChart" height="180"></canvas>
           </div>
           <div class="bg-white rounded-lg border border-slate-200 p-4">
@@ -118,7 +118,7 @@
 
     <!-- Scenarios -->
     <section id="scenarios" class="hidden space-y-3">
-      <h2 class="text-lg font-semibold text-slate-900">Scenario comparison</h2>
+      <h2 class="text-lg font-semibold text-slate-900">Scenario comparison <span class="text-xs font-normal text-slate-500">(modeled estimates)</span></h2>
       <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
         <table class="w-full text-left">
           <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
@@ -132,6 +132,7 @@
           <tbody id="scenarioTable"></tbody>
         </table>
       </div>
+      <p class="text-[11px] text-slate-400">All scenario numbers are modeled estimates with published formulas and uncertainty. They are not measured impact.</p>
     </section>
 
     <!-- Hubs -->
@@ -164,16 +165,10 @@
         </div>
       </div>
     </section>
-
-    <!-- Audit Log -->
-    <section class="bg-white rounded-xl border border-slate-200 p-5">
-      <h2 class="text-sm font-semibold text-slate-900 mb-3">Audit log (last actions)</h2>
-      <div id="auditLog" class="text-xs text-slate-600 space-y-0 max-h-48 overflow-y-auto"></div>
-    </section>
   </main>
 
   <footer class="border-t border-slate-200 mt-16 py-6 text-center text-xs text-slate-500">
-    SozoRock Place Intelligence · Coverage for all U.S. counties · Non-clinical · Source-traceable · Auditable
+    SozoRock Place Intelligence · Demonstration · Non-clinical · Source-traceable · Auditable
   </footer>
 
   <script src="js/data.js"></script>
