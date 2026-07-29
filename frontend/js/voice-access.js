@@ -4,6 +4,7 @@
  * Uses browser Web Speech API when available.
  * Sends location to POST /api/place and POST /api/cbcap,
  * then renders the combined result via renderFromServer.
+ * Stores both packages in the shared session so a second browser can restore them.
  */
 
 window.SozoRockVoice = (function () {
@@ -13,7 +14,7 @@ window.SozoRockVoice = (function () {
 
   function init() {
     chatLog = document.getElementById("chatLog");
-    addSystem("You can speak or type a ZIP or county. Supported demonstration counties currently return full plans; other U.S. counties resolve geography and report data availability.");
+    addSystem("Speak or type a ZIP or county. Currently full plans are available for Schoharie and Delaware Counties, NY. Other locations return a clear resolution failure.");
 
     var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -61,7 +62,6 @@ window.SozoRockVoice = (function () {
     var lower = text.toLowerCase();
     if (lower.indexOf("cobleskill") !== -1 || lower.indexOf("schoharie") !== -1) return "12043";
     if (lower.indexOf("delaware") !== -1) return "13753";
-    // Pass through free-text county names for the server geography agent
     return text.trim() || null;
   }
 
@@ -92,11 +92,14 @@ window.SozoRockVoice = (function () {
           return;
         }
 
-        // Create server session
         return fetch("/api/sessions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ location: location, plan: data })
+          body: JSON.stringify({
+            location: location,
+            plan: data,
+            cbcapPlan: cbcap
+          })
         })
           .then(function (r) { return r.json(); })
           .then(function (session) {
