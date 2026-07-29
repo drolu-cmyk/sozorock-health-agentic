@@ -10,9 +10,27 @@
 
 const { ChiefOfStaff } = require("../agents/chief-of-staff");
 
+// Approximate intensity points for demonstration counties only.
+// Production: derive from tract-level public indicators or local configuration.
+const DEMO_HEAT = {
+  "36095": [ // Schoharie
+    { lat: 42.68, lng: -74.49, intensity: 0.85 },
+    { lat: 42.71, lng: -74.42, intensity: 0.60 },
+    { lat: 42.64, lng: -74.55, intensity: 0.70 },
+    { lat: 42.75, lng: -74.38, intensity: 0.45 }
+  ],
+  "36025": [ // Delaware
+    { lat: 42.20, lng: -75.00, intensity: 0.75 },
+    { lat: 42.25, lng: -74.95, intensity: 0.55 },
+    { lat: 42.15, lng: -75.08, intensity: 0.65 }
+  ]
+};
+
 class CBCAPPlanningEngine {
-  constructor() {
-    this.chief = new ChiefOfStaff();
+  constructor(options = {}) {
+    this.chief = new ChiefOfStaff({
+      auditSink: options.auditSink || (() => {})
+    });
   }
 
   async buildCountyPlan(fipsOrQuery) {
@@ -25,6 +43,7 @@ class CBCAPPlanningEngine {
 
     const scenarios = this._buildScenarios(base);
     const planningAttention = this._planningAttention(base);
+    const fips = base.location && base.location.fips;
 
     return {
       type: "cbcap_county_plan",
@@ -34,6 +53,7 @@ class CBCAPPlanningEngine {
       compositeBarrier: base.compositeBarrier,
       recommendedHubMix: this._hubMix(base.hubs),
       scenarios,
+      heatPoints: (fips && DEMO_HEAT[fips]) ? DEMO_HEAT[fips] : [],
       chaChipSupport: {
         status: base.brief.planStatus,
         evidenceShortlist: base.evidence.sources,
@@ -53,7 +73,6 @@ class CBCAPPlanningEngine {
   _buildScenarios(base) {
     const pressure = base.compositeBarrier || 40;
 
-    // Explicit modeled assumptions (demo)
     const assumptions = {
       populationDenominator: "County adult population estimate (placeholder; replace with ACS)",
       uptakeRate: "Assumed 8–15% of reachable residents engage in first 12 months",
