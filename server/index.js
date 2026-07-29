@@ -7,16 +7,17 @@
 
 const express = require("express");
 const path = require("path");
-const crypto = require("crypto");
 const { createPlaceIntelligenceAPI } = require("./place-intelligence-api");
 const { CBCAPPlanningEngine } = require("../packages/cbcap/planning-engine");
+const sessionStore = require("./session-store");
+const { getMeta: countyMeta } = require("../packages/data/national-counties");
+const { getMeta: zipMeta } = require("../packages/data/zip-crosswalk");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json({ limit: "200kb" }));
 
-// CORS for local development — restrict before any public deployment
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
@@ -39,23 +40,17 @@ function recordAudit(event) {
   console.log("[audit]", event.action, event.fips || "", event.purpose || "");
 }
 
-const placeAPI = createPlaceIntelligenceAPI({
-  onAudit: recordAudit
-});
-
-const cbcapEngine = new CBCAPPlanningEngine({
-  auditSink: recordAudit
-});
-
-// In-memory session store. Lost on restart. Production: Redis or Postgres.
-const sessions = new Map();
+const placeAPI = createPlaceIntelligenceAPI({ onAudit: recordAudit });
+const cbcapEngine = new CBCAPPlanningEngine({ auditSink: recordAudit });
 
 app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
     service: "sozorock-health-agentic",
-    version: "0.4.1",
-    time: new Date().toISOString()
+    version: "0.5.0",
+    time: new Date().toISOString(),
+    geography: countyMeta(),
+    zipCrosswalk: zipMeta()
   });
 });
 
@@ -82,38 +77,30 @@ app.post("/api/cbcap", async (req, res) => {
 });
 
 app.post("/api/sessions", (req, res) => {
-  const id = crypto.randomBytes(6).toString("hex");
-  const session = {
-    id,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+  const session = sessionStore.create({
     location: req.body.location || null,
     plan: req.body.plan || null,
-    cbcapPlan: req.body.cbcapPlan || null,
-    participants: 1
-  };
-  sessions.set(id, session);
+    cbcapPlan: req.body.cbcapPlan || null
+  });
   res.status(201).json(session);
 });
 
 app.get("/api/sessions/:id", (req, res) => {
-  const session = sessions.get(req.params.id);
+  const session = sessionStore.get(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
   res.json(session);
 });
 
 app.put("/api/sessions/:id", (req, res) => {
-  const session = sessions.get(req.params.id);
+  const session = sessionStore.update(req.params.id, {
+    plan: req.body.plan,
+    cbcapPlan: req.body.cbcapPlan,
+    location: req.body.location
+  });
   if (!session) return res.status(404).json({ error: "Session not found" });
-  if (req.body.plan !== undefined) session.plan = req.body.plan;
-  if (req.body.cbcapPlan !== undefined) session.cbcapPlan = req.body.cbcapPlan;
-  if (req.body.location !== undefined) session.location = req.body.location;
-  session.updatedAt = new Date().toISOString();
-  sessions.set(req.params.id, session);
   res.json(session);
 });
 
-/** GET /api/audit — currently public. Production requires auth. */
 app.get("/api/audit", (req, res) => {
   res.json(auditEvents);
 });
@@ -125,8 +112,7 @@ app.get("*", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`SozoRock Health Agentic listening on http://localhost:${PORT}`);
-  console.log(`  POST /api/place`);
-  console.log(`  POST /api/cbcap`);
-  console.log(`  GET  /api/health`);
+  console.log(`SozoRock Health Agentic v0.5.0 on http://localhost:${PORT}`);
+  console.log(`  geography: ${countyMeta().count} counties (${countyMeta().source})`);
+  console.log(`  zip crosswalk: ${zipMeta().count} ZIPs (${zipMeta().source})`);
 });
