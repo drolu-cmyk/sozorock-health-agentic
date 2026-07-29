@@ -2,22 +2,32 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
 /**
- * Mirror of the frontend escapeHtml implementation so CI catches regressions.
- * The live function lives in frontend/js/place-intelligence.js.
+ * Mirror of frontend escapeHtml (concatenation form) so CI catches regressions.
+ * Live function: frontend/js/place-intelligence.js
  */
 function escapeHtml(str) {
   if (str == null) return "";
+  var amp = "&" + "amp;";
+  var lt = "&" + "lt;";
+  var gt = "&" + "gt;";
+  var quot = "&" + "quot;";
+  var apos = "&" + "#39;";
   return String(str)
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/"/g, """)
-    .replace(/'/g, "&#39;");
+    .replace(/&/g, amp)
+    .replace(/</g, lt)
+    .replace(/>/g, gt)
+    .replace(/"/g, quot)
+    .replace(/'/g, apos);
 }
 
 describe("escapeHtml", () => {
   it("escapes ampersand, angle brackets, and quotes", () => {
-    assert.equal(escapeHtml('<script>alert("x")</script>'), "<script>alert("x")</script>");
+    var input = "<script>alert(" + '"' + "x" + '"' + ")</script>";
+    var expected =
+      ("&" + "lt;") + "script" + ("&" + "gt;") +
+      "alert(" + ("&" + "quot;") + "x" + ("&" + "quot;") + ")" +
+      ("&" + "lt;") + "/script" + ("&" + "gt;");
+    assert.equal(escapeHtml(input), expected);
   });
 
   it("handles null and undefined", () => {
@@ -27,5 +37,9 @@ describe("escapeHtml", () => {
 
   it("leaves plain text unchanged", () => {
     assert.equal(escapeHtml("Schoharie County"), "Schoharie County");
+  });
+
+  it("escapes ampersand first", () => {
+    assert.equal(escapeHtml("A & B"), "A " + ("&" + "amp;") + " B");
   });
 });
