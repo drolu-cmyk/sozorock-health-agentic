@@ -1,33 +1,61 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const { resolveGeography } = require("../packages/data/zip-to-fips");
+const { getByFips, resolveByName } = require("../packages/data/national-counties");
+const { resolveZip } = require("../packages/data/zip-crosswalk");
+const { GeographyAgent } = require("../packages/agents/sub-agents/geography-agent");
 
-describe("Geography resolution", () => {
-  it("resolves known Schoharie ZIP", () => {
-    const g = resolveGeography("12043");
-    assert.equal(g.fips, "36095");
-    assert.equal(g.county, "Schoharie");
+describe("National county table", () => {
+  it("resolves Schoharie FIPS", () => {
+    const g = getByFips("36095");
+    assert.equal(g.name, "Schoharie");
     assert.equal(g.state, "NY");
   });
 
-  it("resolves known Delaware ZIP", () => {
-    const g = resolveGeography("13753");
-    assert.equal(g.fips, "36025");
-    assert.equal(g.county, "Delaware");
+  it("resolves multi-state counties", () => {
+    assert.equal(getByFips("06037").name, "Los Angeles");
+    assert.equal(getByFips("48201").name, "Harris");
+    assert.equal(getByFips("11001").state, "DC");
   });
 
-  it("resolves county name", () => {
-    const g = resolveGeography("Schoharie County");
-    assert.equal(g.fips, "36095");
+  it("resolves by name and state", () => {
+    const g = resolveByName("King", "WA");
+    assert.equal(g.fips, "53033");
+  });
+});
+
+describe("ZIP crosswalk", () => {
+  it("resolves primary county for ZIP", () => {
+    const r = resolveZip("12043");
+    assert.equal(r.primary.fips, "36095");
+    assert.equal(r.multiCounty, false);
+  });
+
+  it("flags multi-county ZIPs", () => {
+    const r = resolveZip("12566");
+    assert.equal(r.multiCounty, true);
+    assert.ok(r.all.length >= 2);
   });
 
   it("returns null for unknown ZIP", () => {
-    const g = resolveGeography("99999");
-    assert.equal(g, null);
+    assert.equal(resolveZip("99999"), null);
+  });
+});
+
+describe("Geography agent", () => {
+  const agent = new GeographyAgent();
+
+  it("resolves ZIP via crosswalk", async () => {
+    const g = await agent.resolve("94102");
+    assert.equal(g.fips, "06075");
+    assert.equal(g.county, "San Francisco");
   });
 
-  it("returns null for empty input", () => {
-    assert.equal(resolveGeography(""), null);
-    assert.equal(resolveGeography(null), null);
+  it("resolves FIPS", async () => {
+    const g = await agent.resolve("17031");
+    assert.equal(g.county, "Cook");
+  });
+
+  it("returns null for unknown", async () => {
+    assert.equal(await agent.resolve("99999"), null);
   });
 });
