@@ -2,11 +2,8 @@
  * Transparent Barrier Scoring
  *
  * Deterministic, explainable calculations.
- * Every score carries its methodology and source inputs so results are auditable.
- *
- * Methodology (v1):
- *   Composite = weighted average of normalized public indicators.
- *   Weights are fixed and published. No black-box models.
+ * Sparse indicators: only dimensions with numeric values participate in the composite.
+ * Weights are renormalized over available dimensions.
  */
 
 const WEIGHTS = {
@@ -17,35 +14,45 @@ const WEIGHTS = {
   language: 0.10
 };
 
-/**
- * Calculate barrier scores from public indicators.
- * @param {object} indicators - raw public values (0-100 normalized)
- * @returns {object} scored result with methodology
- */
 function scoreBarriers(indicators = {}) {
-  const scores = {
-    Transportation: clamp(indicators.transportation ?? 40),
-    Technology: clamp(indicators.technology ?? 35),
-    Workforce: clamp(indicators.workforce ?? 45),
-    Cost: clamp(indicators.cost ?? 50),
-    Language: clamp(indicators.language ?? 20)
-  };
+  const scores = {};
+  const usedWeights = {};
+  let weightSum = 0;
 
-  const composite =
-    scores.Transportation * WEIGHTS.transportation +
-    scores.Technology * WEIGHTS.technology +
-    scores.Workforce * WEIGHTS.workforce +
-    scores.Cost * WEIGHTS.cost +
-    scores.Language * WEIGHTS.language;
+  for (const [key, weight] of Object.entries(WEIGHTS)) {
+    // Map to display key (capitalize)
+    const displayKey = key.charAt(0).toUpperCase() + key.slice(1);
+    const raw = indicators[key];
+    if (raw == null || Number.isNaN(Number(raw))) {
+      scores[displayKey] = null;
+      continue;
+    }
+    const v = clamp(raw);
+    scores[displayKey] = v;
+    usedWeights[key] = weight;
+    weightSum += weight;
+  }
+
+  let composite = null;
+  if (weightSum > 0) {
+    composite = 0;
+    for (const [key, weight] of Object.entries(usedWeights)) {
+      const displayKey = key.charAt(0).toUpperCase() + key.slice(1);
+      composite += scores[displayKey] * (weight / weightSum);
+    }
+    composite = Math.round(composite * 10) / 10;
+  }
 
   return {
     scores,
-    composite: Math.round(composite * 10) / 10,
+    composite,
     methodology: {
-      version: "1.0",
+      version: "1.1",
       weights: { ...WEIGHTS },
-      description: "Weighted average of normalized public indicators. Higher = greater practical barrier pressure.",
-      inputsUsed: Object.keys(indicators)
+      weightsUsed: usedWeights,
+      weightSum,
+      description: "Weighted average over available source-backed indicators only. Missing dimensions are null and excluded from composite.",
+      inputsUsed: Object.keys(indicators).filter(k => indicators[k] != null)
     }
   };
 }
