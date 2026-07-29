@@ -10,7 +10,6 @@ window.SozoRockPlace = (function () {
   var barrierChart = null;
   var trendChart = null;
 
-  // Approximate county centers for demonstration geographies only.
   var COUNTY_CENTERS = {
     "36095": { lat: 42.68, lng: -74.49 },
     "36025": { lat: 42.20, lng: -75.00 }
@@ -51,12 +50,7 @@ window.SozoRockPlace = (function () {
       compositeBarrier: pkg.compositeBarrier,
       barrierMethodology: pkg.barrierMethodology,
       hubs: (pkg.hubs || []).map(function (h) {
-        return {
-          type: h.type,
-          fit: h.fit,
-          reason: h.reason || "",
-          score: h.score
-        };
+        return { type: h.type, fit: h.fit, reason: h.reason || "", score: h.score };
       }),
       actions: (pkg.actions || []).map(function (a) {
         return {
@@ -172,7 +166,7 @@ window.SozoRockPlace = (function () {
         },
         options: {
           indexAxis: "y",
-          scales: { x: { beginAtZero: true, max: 100 },
+          scales: { x: { beginAtZero: true, max: 100 } },
           plugins: { legend: { display: false } }
         }
       });
@@ -273,9 +267,6 @@ window.SozoRockPlace = (function () {
     }
   }
 
-  /**
-   * HTML escape. Built with concatenation so entity strings cannot be stripped in transit.
-   */
   function escapeHtml(str) {
     if (str == null) return "";
     var amp = "&" + "amp;";
