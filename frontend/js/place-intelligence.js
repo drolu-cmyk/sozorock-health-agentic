@@ -1,12 +1,7 @@
 /**
  * Place Intelligence rendering layer
  *
- * Accepts the server Place Intelligence Package produced by Chief of Staff:
- * {
- *   location, brief, barriers, barrierMethodology, compositeBarrier,
- *   hubs, evidence, actions, report, meta
- * }
- *
+ * Accepts the server Place Intelligence Package produced by Chief of Staff.
  * Also accepts an optional CB-CAP plan for scenarios and hub mix.
  */
 
@@ -16,10 +11,9 @@ window.SozoRockPlace = (function () {
   var trendChart = null;
 
   // Approximate county centers for demonstration geographies only.
-  // Production: load from Census TIGER centroid or equivalent.
   var COUNTY_CENTERS = {
-    "36095": { lat: 42.68, lng: -74.49 }, // Schoharie, NY
-    "36025": { lat: 42.20, lng: -75.00 }  // Delaware, NY
+    "36095": { lat: 42.68, lng: -74.49 },
+    "36025": { lat: 42.20, lng: -75.00 }
   };
 
   function resolveCoordinates(pkg) {
@@ -30,13 +24,9 @@ window.SozoRockPlace = (function () {
     if (fips && COUNTY_CENTERS[fips]) {
       return COUNTY_CENTERS[fips];
     }
-    // No invented default for unknown counties — center on continental US overview
     return { lat: 39.8, lng: -98.5, zoom: 4 };
   }
 
-  /**
-   * Primary entry for server responses.
-   */
   function renderFromServer(pkg, cbcapPlan) {
     if (!pkg || pkg.status === "error") {
       console.warn("Place intelligence error", pkg && pkg.message);
@@ -92,7 +82,7 @@ window.SozoRockPlace = (function () {
     document.getElementById("scenarios").classList.remove("hidden");
     document.getElementById("funderView").classList.remove("hidden");
 
-    document.getElementById("placeName").textContent = data.name || "—";
+    document.getElementById("placeName").textContent = data.name || "\u2014";
     document.getElementById("briefStatus").textContent = data.status || "";
     document.getElementById("briefContext").textContent = data.context || "";
 
@@ -104,7 +94,7 @@ window.SozoRockPlace = (function () {
       gapsHtml += "<li class='mt-2 list-none text-xs text-slate-500'><strong>Sources</strong> (freshness: " +
         escapeHtml(data.evidence.freshness || "n/a") + ")</li>";
       data.evidence.sources.forEach(function (s) {
-        gapsHtml += "<li class='list-none text-xs text-slate-500'>· " +
+        gapsHtml += "<li class='list-none text-xs text-slate-500'>\u00b7 " +
           escapeHtml(s.citation || s.title || "Source") +
           (s.releaseDate ? " (" + escapeHtml(s.releaseDate) + ")" : "") +
           "</li>";
@@ -182,7 +172,7 @@ window.SozoRockPlace = (function () {
         },
         options: {
           indexAxis: "y",
-          scales: { x: { beginAtZero: true, max: 100 } },
+          scales: { x: { beginAtZero: true, max: 100 },
           plugins: { legend: { display: false } }
         }
       });
@@ -263,7 +253,7 @@ window.SozoRockPlace = (function () {
     } else if (data.report && data.report.reachPotential) {
       reachEl.textContent = data.report.reachPotential + " (modeled)";
     } else {
-      reachEl.textContent = "—";
+      reachEl.textContent = "\u2014";
     }
 
     if (cbcap && cbcap.recommendedHubMix) {
@@ -273,27 +263,32 @@ window.SozoRockPlace = (function () {
     } else if (data.hubs && data.hubs.length) {
       mixEl.textContent = data.hubs.map(function (h) { return h.type + " (" + h.fit + ")"; }).join(" \u00b7 ");
     } else {
-      mixEl.textContent = "—";
+      mixEl.textContent = "\u2014";
     }
 
     if (data.compositeBarrier != null) {
       barrierEl.textContent = data.compositeBarrier + " / 100 composite pressure";
     } else {
-      barrierEl.textContent = "—";
+      barrierEl.textContent = "\u2014";
     }
   }
 
   /**
-   * Correct HTML escaping. Replaces special characters with entities.
+   * HTML escape. Built with concatenation so entity strings cannot be stripped in transit.
    */
   function escapeHtml(str) {
     if (str == null) return "";
+    var amp = "&" + "amp;";
+    var lt = "&" + "lt;";
+    var gt = "&" + "gt;";
+    var quot = "&" + "quot;";
+    var apos = "&" + "#39;";
     return String(str)
-      .replace(/&/g, "&")
-      .replace(/</g, "<")
-      .replace(/>/g, ">")
-      .replace(/"/g, """)
-      .replace(/'/g, "&#39;");
+      .replace(/&/g, amp)
+      .replace(/</g, lt)
+      .replace(/>/g, gt)
+      .replace(/"/g, quot)
+      .replace(/'/g, apos);
   }
 
   return {
