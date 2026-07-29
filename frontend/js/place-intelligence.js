@@ -15,6 +15,25 @@ window.SozoRockPlace = (function () {
   var barrierChart = null;
   var trendChart = null;
 
+  // Approximate county centers for demonstration geographies only.
+  // Production: load from Census TIGER centroid or equivalent.
+  var COUNTY_CENTERS = {
+    "36095": { lat: 42.68, lng: -74.49 }, // Schoharie, NY
+    "36025": { lat: 42.20, lng: -75.00 }  // Delaware, NY
+  };
+
+  function resolveCoordinates(pkg) {
+    if (pkg.location && typeof pkg.location.lat === "number" && typeof pkg.location.lng === "number") {
+      return { lat: pkg.location.lat, lng: pkg.location.lng };
+    }
+    var fips = pkg.location && pkg.location.fips;
+    if (fips && COUNTY_CENTERS[fips]) {
+      return COUNTY_CENTERS[fips];
+    }
+    // No invented default for unknown counties — center on continental US overview
+    return { lat: 39.8, lng: -98.5, zoom: 4 };
+  }
+
   /**
    * Primary entry for server responses.
    */
@@ -24,14 +43,17 @@ window.SozoRockPlace = (function () {
       return;
     }
 
-    var name = (pkg.location && (pkg.location.county ? pkg.location.county + " County, " + (pkg.location.state || "") : pkg.location.query)) || "Selected place";
-    var lat = (pkg.location && pkg.location.lat) || 42.68;
-    var lng = (pkg.location && pkg.location.lng) || -74.49;
+    var name = (pkg.location && (pkg.location.county
+      ? pkg.location.county + " County, " + (pkg.location.state || "")
+      : pkg.location.query)) || "Selected place";
+
+    var coords = resolveCoordinates(pkg);
 
     var view = {
       name: name,
-      lat: lat,
-      lng: lng,
+      lat: coords.lat,
+      lng: coords.lng,
+      zoom: coords.zoom || 9,
       status: (pkg.brief && pkg.brief.planStatus) || "Plan status available for local review",
       context: (pkg.brief && pkg.brief.context) || "",
       gaps: (pkg.brief && pkg.brief.gaps) || [],
@@ -125,9 +147,10 @@ window.SozoRockPlace = (function () {
     }
     var mapEl = document.getElementById("map");
     if (mapEl) {
-      mapInstance = L.map("map").setView([data.lat, data.lng], 9);
+      var zoom = data.zoom || 9;
+      mapInstance = L.map("map").setView([data.lat, data.lng], zoom);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "© OpenStreetMap"
+        attribution: "\u00a9 OpenStreetMap"
       }).addTo(mapInstance);
       L.marker([data.lat, data.lng]).addTo(mapInstance).bindPopup(escapeHtml(data.name)).openPopup();
 
@@ -246,9 +269,9 @@ window.SozoRockPlace = (function () {
     if (cbcap && cbcap.recommendedHubMix) {
       mixEl.textContent = Object.keys(cbcap.recommendedHubMix).map(function (k) {
         return k + ": " + Math.round(cbcap.recommendedHubMix[k] * 100) + "%";
-      }).join(" · ");
+      }).join(" \u00b7 ");
     } else if (data.hubs && data.hubs.length) {
-      mixEl.textContent = data.hubs.map(function (h) { return h.type + " (" + h.fit + ")"; }).join(" · ");
+      mixEl.textContent = data.hubs.map(function (h) { return h.type + " (" + h.fit + ")"; }).join(" \u00b7 ");
     } else {
       mixEl.textContent = "—";
     }
@@ -260,13 +283,17 @@ window.SozoRockPlace = (function () {
     }
   }
 
+  /**
+   * Correct HTML escaping. Replaces special characters with entities.
+   */
   function escapeHtml(str) {
     if (str == null) return "";
     return String(str)
       .replace(/&/g, "&")
       .replace(/</g, "<")
       .replace(/>/g, ">")
-      .replace(/"/g, """);
+      .replace(/"/g, """)
+      .replace(/'/g, "&#39;");
   }
 
   return {
