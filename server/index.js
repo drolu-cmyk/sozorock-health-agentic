@@ -4,6 +4,7 @@
  * Starts a real HTTP server that:
  * - Serves the frontend
  * - Exposes POST /api/place  (Chief of Staff pipeline)
+ * - Exposes POST /api/cbcap  (CB-CAP planning engine)
  * - Exposes session create / join for shared plans
  * - Exposes health check
  *
@@ -22,7 +23,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: "100kb" }));
 
-// CORS for local development
+// CORS for local development — restrict before any public deployment
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -31,24 +32,36 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---- Place Intelligence API ----
+const auditEvents = [];
+
+function recordAudit(event) {
+  auditEvents.push({
+    id: "aud_" + Date.now().toString(36),
+    action: event.action,
+    fips: event.fips || null,
+    purpose: event.purpose || null,
+    at: new Date().toISOString(),
+    durationMs: event.durationMs || null
+  });
+  console.log("[audit]", event.action, event.fips || "", event.purpose || "");
+}
+
 const placeAPI = createPlaceIntelligenceAPI({
-  onAudit: (event) => {
-    // In production this writes to durable storage
-    console.log("[audit]", event.action, event.fips || "", event.purpose || "");
-  }
+  onAudit: recordAudit
 });
 
-const cbcapEngine = new CBCAPPlanningEngine();
+const cbcapEngine = new CBCAPPlanningEngine({
+  auditSink: recordAudit
+});
 
-// In-memory session store (demo). Production: Redis or Postgres.
+// In-memory session store. Lost on restart. Production: Redis or Postgres.
 const sessions = new Map();
 
 app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
     service: "sozorock-health-agentic",
-    version: "0.4.0",
+    version: "0.4.1",
     time: new Date().toISOString()
   });
 });
@@ -63,14 +76,13 @@ app.post("/api/place", async (req, res) => {
     res.status(result.statusCode).json(result.body);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Internal error", message: err.message });
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
 /**
  * POST /api/cbcap
  * Body: { location: string }
- * Returns full CB-CAP county plan (distinct from place intelligence)
  */
 app.post("/api/cbcap", async (req, res) => {
   try {
@@ -80,12 +92,13 @@ app.post("/api/cbcap", async (req, res) => {
     res.json(plan);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Internal error", message: err.message });
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
 /**
- * Session endpoints — shared live plan across browsers
+ * Session endpoints — shared plan across browsers (in-memory only)
+ * Body may include: location, plan (place package), cbcapPlan
  */
 app.post("/api/sessions", (req, res) => {
   const id = crypto.randomBytes(6).toString("hex");
@@ -95,6 +108,7 @@ app.post("/api/sessions", (req, res) => {
     updatedAt: new Date().toISOString(),
     location: req.body.location || null,
     plan: req.body.plan || null,
+    cbcapPlan: req.body.cbcapPlan || null,
     participants: 1
   };
   sessions.set(id, session);
@@ -110,23 +124,24 @@ app.get("/api/sessions/:id", (req, res) => {
 app.put("/api/sessions/:id", (req, res) => {
   const session = sessions.get(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
-  session.plan = req.body.plan || session.plan;
-  session.location = req.body.location || session.location;
+  if (req.body.plan !== undefined) session.plan = req.body.plan;
+  if (req.body.cbcapPlan !== undefined) session.cbcapPlan = req.body.cbcapPlan;
+  if (req.body.location !== undefined) session.location = req.body.location;
   session.updatedAt = new Date().toISOString();
-  session.participants = (session.participants || 1) + 0; // no increment on update
   sessions.set(req.params.id, session);
   res.json(session);
 });
 
-// Governance audit log (internal only — not exposed in resident UI)
+/**
+ * GET /api/audit
+ * Currently publicly accessible. Production: require authentication and role.
+ */
 app.get("/api/audit", (req, res) => {
-  res.json(placeAPI.getAuditLog());
+  res.json(auditEvents);
 });
 
-// Static frontend
 app.use(express.static(path.join(__dirname, "../frontend")));
 
-// Fallback to index
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../frontend/index.html"));
 });
