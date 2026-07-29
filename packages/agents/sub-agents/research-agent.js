@@ -1,119 +1,120 @@
 /**
  * Research Agent
  *
- * Current state: returns structured public-evidence packages for demonstration counties.
- * Scores are MODELED ESTIMATES derived from public-style indicators, not direct
- * extractions from a live CDC/Census query. Every package carries methodology notes
- * and source citations with release dates.
- *
- * Extension point: replace gather() body with live adapters that:
- *   1. Fetch CDC PLACES / Census / local releases
- *   2. Map specific fields to barrier indicators
- *   3. Record retrieval timestamp and exact source field
+ * Gathers public evidence via national adapters.
+ * If adapters return unavailable, does not invent indicator scores.
+ * Barrier indicators are only emitted when lineage-backed signals exist.
  */
 
+const { CdcPlacesAdapter } = require("../../adapters/cdc-places-adapter");
+const { AcsAdapter } = require("../../adapters/acs-adapter");
+
 class ResearchAgent {
+  constructor() {
+    this.places = new CdcPlacesAdapter();
+    this.acs = new AcsAdapter();
+  }
+
   async gather(fips) {
-    const catalog = {
-      "36095": {
-        planStatus: "Local CHA/CHIP cycle active. Library Health Equity Hub format under review.",
-        context: "Rural county demonstration profile. Transportation and digital-readiness pressures are elevated relative to typical state medians in public estimates.",
-        gaps: [
-          "Transportation barrier pressure elevated in modeled profile",
-          "Digital readiness gap flagged for local review",
-          "Workforce capacity signal for community health roles"
-        ],
-        indicators: {
-          transportation: 72,
-          technology: 58,
-          workforce: 65,
-          cost: 45,
-          language: 18
-        },
-        indicatorNotes: {
-          method: "Modeled demonstration values. Not direct field extractions from a live dataset query.",
-          intendedReplacement: "Map specific CDC PLACES / ACS fields to each indicator with field-level citation."
-        },
-        sources: [
-          {
-            id: "cdc-places-2025",
-            title: "CDC PLACES County Data",
-            releaseDate: "2025-12-04",
-            citation: "Centers for Disease Control and Prevention. PLACES: Local Data for Better Health, 2025 release.",
-            usedFor: "Contextual reference for county-level chronic and access estimates"
-          },
-          {
-            id: "census-tiger-2025",
-            title: "U.S. Census TIGER/Line",
-            releaseDate: "2025-01-01",
-            citation: "U.S. Census Bureau. TIGER/Line Shapefiles, 2025.",
-            usedFor: "Geography boundaries"
-          }
-        ],
-        freshness: "2025-12-04",
-        dataNature: "modeled_demonstration"
-      },
-      "36025": {
-        planStatus: "Public data available. Local plan status requires county-level review.",
-        context: "Delaware County demonstration profile with mixed barrier signals.",
-        gaps: [
-          "Further local review recommended for pathway breaks",
-          "Source freshness check advised for local program data"
-        ],
-        indicators: {
-          transportation: 68,
-          technology: 52,
-          workforce: 60,
-          cost: 48,
-          language: 22
-        },
-        indicatorNotes: {
-          method: "Modeled demonstration values. Not direct field extractions from a live dataset query.",
-          intendedReplacement: "Map specific CDC PLACES / ACS fields to each indicator with field-level citation."
-        },
-        sources: [
-          {
-            id: "cdc-places-2025",
-            title: "CDC PLACES County Data",
-            releaseDate: "2025-12-04",
-            citation: "Centers for Disease Control and Prevention. PLACES: Local Data for Better Health, 2025 release.",
-            usedFor: "Contextual reference"
-          }
-        ],
-        freshness: "2025-12-04",
-        dataNature: "modeled_demonstration"
+    const places = await this.places.fetchForCounty(fips);
+    const acs = await this.acs.fetchForCounty(fips);
+
+    const sources = [];
+    const lineages = [];
+    const indicators = {};
+
+    // Map ACS signals
+    for (const s of acs.signals || []) {
+      lineages.push(s.lineage);
+      if (s.lineage && s.lineage.citation) {
+        sources.push({
+          id: s.lineage.sourceTable + ":" + s.lineage.sourceField,
+          title: s.lineage.sourceTable,
+          releaseDate: s.lineage.release,
+          citation: s.lineage.citation,
+          usedFor: s.name
+        });
       }
+      if (s.name === "no_vehicle_pct") {
+        // Higher no-vehicle share -> higher transportation barrier (0-100 scale)
+        indicators.transportation = Math.min(100, Math.round(s.value * 4));
+      }
+      if (s.name === "broadband_subscription_pct") {
+        // Lower broadband -> higher technology barrier
+        indicators.technology = Math.min(100, Math.round(100 - s.value));
+      }
+    }
+
+    // Map PLACES signals
+    for (const s of places.signals || []) {
+      lineages.push(s.lineage);
+      if (s.lineage && s.lineage.citation) {
+        sources.push({
+          id: s.lineage.sourceTable + ":" + s.lineage.sourceField,
+          title: s.lineage.sourceTable,
+          releaseDate: s.lineage.release,
+          citation: s.lineage.citation,
+          usedFor: s.name
+        });
+      }
+      if (s.name === "healthcare_access_barrier") {
+        indicators.cost = Math.min(100, Math.round(s.value * 3));
+      }
+    }
+
+    const hasAny = Object.keys(indicators).length > 0;
+    const dataNature =
+      places.status === "available" && acs.status === "available"
+        ? "live_or_full_snapshot"
+        : places.status === "unavailable" && acs.status === "unavailable"
+          ? "none"
+          : "partial_snapshot";
+
+    // Defaults only when we have at least some source-backed indicators;
+    // never invent a full profile for unknown counties.
+    if (!hasAny) {
+      return {
+        planStatus: "No source-backed county indicators loaded for this FIPS. Load CDC PLACES and ACS snapshots or connect live APIs.",
+        context: "Geography resolved, but public indicator adapters returned unavailable for this county.",
+        gaps: [
+          "CDC PLACES county row missing",
+          "ACS county row missing",
+          "Connect packages/data/snapshots/ or live adapter endpoints"
+        ],
+        indicators: {},
+        sources: [],
+        lineages: [],
+        freshness: null,
+        dataNature: "none",
+        adapterStatus: { places: places.status, acs: acs.status }
+      };
+    }
+
+    // Fill only missing dimensions with null — scoring layer must handle sparse indicators
+    const fullIndicators = {
+      transportation: indicators.transportation != null ? indicators.transportation : null,
+      technology: indicators.technology != null ? indicators.technology : null,
+      workforce: indicators.workforce != null ? indicators.workforce : null,
+      cost: indicators.cost != null ? indicators.cost : null,
+      language: indicators.language != null ? indicators.language : null
     };
 
-    const record = catalog[fips] || {
-      planStatus: "Public data available. Local plan status requires county-level review.",
-      context: "Generic demonstration profile. Barrier scores are modeled estimates.",
-      gaps: ["Further local review recommended", "Connect live public data adapters for production use"],
-      indicators: {
-        transportation: 40,
-        technology: 35,
-        workforce: 45,
-        cost: 50,
-        language: 25
-      },
-      indicatorNotes: {
-        method: "Modeled demonstration values for unsupported geography.",
-        intendedReplacement: "Live adapter required."
-      },
-      sources: [
-        {
-          id: "cdc-places-2025",
-          title: "CDC PLACES County Data",
-          releaseDate: "2025-12-04",
-          citation: "Centers for Disease Control and Prevention. PLACES: Local Data for Better Health, 2025 release.",
-          usedFor: "Contextual reference"
-        }
-      ],
-      freshness: "2025-12-04",
-      dataNature: "modeled_demonstration"
-    };
+    const freshnessDates = sources.map(s => s.releaseDate).filter(Boolean);
+    const freshness = freshnessDates.sort().slice(-1)[0] || null;
 
-    return record;
+    return {
+      planStatus: "Source-backed indicators available for local planning review.",
+      context: "Indicators derived from public ACS and/or CDC PLACES fields with lineage on each signal.",
+      gaps: Object.entries(fullIndicators)
+        .filter(([, v]) => v == null)
+        .map(([k]) => `No source-backed value for ${k}`),
+      indicators: fullIndicators,
+      sources,
+      lineages,
+      freshness,
+      dataNature,
+      adapterStatus: { places: places.status, acs: acs.status }
+    };
   }
 }
 
