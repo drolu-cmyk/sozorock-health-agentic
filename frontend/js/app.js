@@ -1,6 +1,7 @@
 /**
  * Application bootstrap
  * Wires search, tabs, Voice Access, and server-backed session sharing.
+ * Opening a shared session URL restores and renders the stored plan.
  */
 
 (function () {
@@ -27,7 +28,6 @@
   }
 
   function runPlace(location) {
-    // Reuse the same path Voice Access uses
     window.SozoRockVoice.handle(location);
   }
 
@@ -62,8 +62,17 @@
 
   function initSession() {
     window.SozoRockSession.initFromUrl().then(function (session) {
-      if (session) {
-        document.getElementById("sessionStatus").textContent = "Live session: " + session.id;
+      if (!session) return;
+
+      document.getElementById("sessionStatus").textContent = "Live session: " + session.id;
+
+      // Restore stored plan into the visual layer
+      if (session.plan && window.SozoRockPlace && window.SozoRockPlace.renderFromServer) {
+        window.SozoRockPlace.renderFromServer(session.plan, session.cbcapPlan || null);
+        if (session.location) {
+          var input = document.getElementById("placeInput");
+          if (input) input.value = session.location;
+        }
       }
     });
 
