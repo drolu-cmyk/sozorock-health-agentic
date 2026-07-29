@@ -1,13 +1,6 @@
 /**
  * Runnable server entry point
  *
- * Starts a real HTTP server that:
- * - Serves the frontend
- * - Exposes POST /api/place  (Chief of Staff pipeline)
- * - Exposes POST /api/cbcap  (CB-CAP planning engine)
- * - Exposes session create / join for shared plans
- * - Exposes health check
- *
  * Run:  node server/index.js
  * Or:   npm start
  */
@@ -26,7 +19,7 @@ app.use(express.json({ limit: "100kb" }));
 // CORS for local development — restrict before any public deployment
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -66,10 +59,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-/**
- * POST /api/place
- * Body: { location: string, purpose?: "resident"|"planner"|"funder"|"cbcap" }
- */
 app.post("/api/place", async (req, res) => {
   try {
     const result = await placeAPI.handle(req.body || {});
@@ -80,10 +69,6 @@ app.post("/api/place", async (req, res) => {
   }
 });
 
-/**
- * POST /api/cbcap
- * Body: { location: string }
- */
 app.post("/api/cbcap", async (req, res) => {
   try {
     const location = (req.body && req.body.location) || "";
@@ -96,10 +81,6 @@ app.post("/api/cbcap", async (req, res) => {
   }
 });
 
-/**
- * Session endpoints — shared plan across browsers (in-memory only)
- * Body may include: location, plan (place package), cbcapPlan
- */
 app.post("/api/sessions", (req, res) => {
   const id = crypto.randomBytes(6).toString("hex");
   const session = {
@@ -132,10 +113,7 @@ app.put("/api/sessions/:id", (req, res) => {
   res.json(session);
 });
 
-/**
- * GET /api/audit
- * Currently publicly accessible. Production: require authentication and role.
- */
+/** GET /api/audit — currently public. Production requires auth. */
 app.get("/api/audit", (req, res) => {
   res.json(auditEvents);
 });
