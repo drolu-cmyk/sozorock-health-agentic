@@ -1,10 +1,7 @@
 /**
  * Chief of Staff Agent
  *
- * Receives a high-level task, selects and sequences approved sub-agents,
- * enforces policy, and returns only structured, non-clinical output.
- *
- * This is the single entry point for orchestrated intelligence.
+ * Single entry point for orchestrated place intelligence.
  */
 
 const { GeographyAgent } = require("./sub-agents/geography-agent");
@@ -25,44 +22,87 @@ class ChiefOfStaff {
     this.auditSink = options.auditSink || (() => {});
   }
 
-  /**
-   * Run a full place intelligence task.
-   * @param {object} task
-   * @param {string} task.locationQuery - ZIP, county name, or FIPS
-   * @param {string} [task.purpose] - "resident" | "planner" | "funder" | "cbcap"
-   * @returns {Promise<object>} structured Place Intelligence Package
-   */
   async runPlaceIntelligence(task) {
     const start = Date.now();
     const trace = [];
 
-    // 1. Geography resolution (required)
     const geo = await this.geography.resolve(task.locationQuery);
-    trace.push({ agent: "geography", status: geo ? "ok" : "failed" });
+    trace.push({ agent: "geography", status: geo ? (geo.status || "ok") : "failed" });
+
     if (!geo) {
       return this._fail("Unable to resolve location to a U.S. county", trace);
     }
 
-    // 2. Research / public evidence
-    const evidence = await this.research.gather(geo.fips);
-    trace.push({ agent: "research", status: "ok", sources: evidence.sources.length });
+    if (geo.status === "ambiguous") {
+      return {
+        status: "ambiguous",
+        message: geo.message,
+        matches: geo.matches,
+        meta: {
+          nonClinical: true,
+          generatedAt: new Date().toISOString(),
+          trace
+        }
+      };
+    }
 
-    // 3. Barrier scoring (deterministic)
+    const evidence = await this.research.gather(geo.fips);
+    trace.push({
+      agent: "research",
+      status: evidence.dataNature === "none" ? "no_data" : "ok",
+      sources: (evidence.sources || []).length
+    });
+
+    // Fail closed when geography resolved but no source-backed indicators
+    if (evidence.dataNature === "none" || !(evidence.sources || []).length) {
+      this.auditSink({
+        action: "place_intelligence_no_data",
+        fips: geo.fips,
+        purpose: task.purpose
+      });
+      return {
+        status: "error",
+        message:
+          "Geography resolved (" +
+          (geo.county || geo.fips) +
+          ", " +
+          (geo.state || "") +
+          ") but no source-backed county indicators are loaded. " +
+          "Add ACS/PLACES snapshot rows or live adapter coverage for this FIPS.",
+        location: {
+          query: task.locationQuery,
+          fips: geo.fips,
+          county: geo.county,
+          state: geo.state,
+          lat: geo.lat,
+          lng: geo.lng
+        },
+        meta: {
+          nonClinical: true,
+          sourceTraceable: false,
+          dataNature: "none",
+          generatedAt: new Date().toISOString(),
+          agentVersion: "0.5.1",
+          trace
+        }
+      };
+    }
+
     const barriers = this.barrier.score(evidence.indicators);
     trace.push({ agent: "barrier", status: "ok", composite: barriers.composite });
 
-    // 4. Hub matching
     const hubs = this.hub.match(barriers.scores, geo);
     trace.push({ agent: "hub-matching", status: "ok" });
 
-    // 5. Assemble package
     let package_ = {
       location: {
         query: task.locationQuery,
         fips: geo.fips,
         county: geo.county,
         state: geo.state,
-        zcta: geo.zcta || null
+        zcta: geo.zcta || null,
+        lat: geo.lat || null,
+        lng: geo.lng || null
       },
       brief: {
         planStatus: evidence.planStatus,
@@ -75,7 +115,8 @@ class ChiefOfStaff {
       hubs,
       evidence: {
         sources: evidence.sources,
-        freshness: evidence.freshness
+        freshness: evidence.freshness,
+        lineages: evidence.lineages || []
       },
       actions: this._defaultActions(hubs),
       meta: {
@@ -83,19 +124,18 @@ class ChiefOfStaff {
         sourceTraceable: true,
         sourceFreshness: evidence.freshness,
         purpose: task.purpose || "resident",
+        dataNature: evidence.dataNature,
         generatedAt: new Date().toISOString(),
-        agentVersion: "0.4.0",
+        agentVersion: "0.5.1",
         durationMs: Date.now() - start
       }
     };
 
-    // 6. Report layer FIRST (so compliance can inspect it)
     if (task.purpose === "planner" || task.purpose === "funder" || task.purpose === "cbcap") {
       package_.report = this.report.generate(package_, task.purpose);
       trace.push({ agent: "report", status: "ok" });
     }
 
-    // 7. Compliance gate AFTER report (mandatory)
     const compliance = this.compliance.check(package_);
     trace.push({ agent: "compliance", status: compliance.ok ? "ok" : "blocked" });
 
@@ -112,7 +152,7 @@ class ChiefOfStaff {
       action: "place_intelligence_completed",
       fips: geo.fips,
       purpose: task.purpose,
-      durationMs: package_.meta.durationMs,
+      durationMs: Date.now() - start,
       trace
     });
 
@@ -136,7 +176,6 @@ class ChiefOfStaff {
       message,
       meta: {
         nonClinical: true,
-        sourceTraceable: true,
         generatedAt: new Date().toISOString(),
         trace
       }
