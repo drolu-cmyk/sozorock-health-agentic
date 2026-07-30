@@ -48,14 +48,29 @@ describe("Geography agent", () => {
     const g = await agent.resolve("94102");
     assert.equal(g.fips, "06075");
     assert.equal(g.county, "San Francisco");
+    assert.equal(g.resolvedAs, "zip");
   });
 
-  it("resolves FIPS", async () => {
+  it("resolves five-digit FIPS before treating as ZIP", async () => {
     const g = await agent.resolve("17031");
+    assert.ok(g);
     assert.equal(g.county, "Cook");
+    assert.equal(g.state, "IL");
+    assert.equal(g.resolvedAs, "fips");
   });
 
-  it("returns null for unknown", async () => {
+  it("resolves Schoharie FIPS", async () => {
+    const g = await agent.resolve("36095");
+    assert.equal(g.county, "Schoharie");
+    assert.equal(g.resolvedAs, "fips");
+  });
+
+  it("returns null for unknown five-digit", async () => {
     assert.equal(await agent.resolve("99999"), null);
+  });
+
+  it("resolves name with state", async () => {
+    const g = await agent.resolve("King, WA");
+    assert.equal(g.fips, "53033");
   });
 });
