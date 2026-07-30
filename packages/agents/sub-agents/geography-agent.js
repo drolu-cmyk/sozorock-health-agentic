@@ -1,12 +1,16 @@
 /**
  * Geography Agent
  *
- * Resolves ZIP, FIPS, or county+state to a canonical record.
- * Uses national county table + ZIP crosswalk.
- * Multi-county ZIPs return primary county and flag multiCounty.
+ * Resolution order for five-digit input:
+ *   1. National county table as FIPS
+ *   2. ZIP crosswalk
+ *   3. null (fail closed)
+ *
+ * County name without state:
+ *   Returns ambiguity object when multiple states share the name.
  */
 
-const { getByFips, resolveByName } = require("../../data/national-counties");
+const { getByFips, resolveByName, getTable } = require("../../data/national-counties");
 const { resolveZip } = require("../../data/zip-crosswalk");
 
 class GeographyAgent {
@@ -14,42 +18,48 @@ class GeographyAgent {
     if (!query) return null;
     const q = String(query).trim();
 
-    // ZIP
+    // Five-digit: FIPS first, then ZIP
     if (/^\d{5}$/.test(q)) {
-      const zipResult = resolveZip(q);
-      if (!zipResult) return null;
-      const primary = zipResult.primary;
-      const c = primary.county;
-      return {
-        fips: primary.fips,
-        county: c.name || null,
-        state: c.state || null,
-        zcta: q,
-        lat: c.lat || null,
-        lng: c.lng || null,
-        multiCounty: zipResult.multiCounty,
-        allCounties: zipResult.multiCounty
-          ? zipResult.all.map(a => ({ fips: a.fips, name: a.county.name, resRatio: a.resRatio }))
-          : undefined
-      };
-    }
-
-    // FIPS
-    if (/^\d{5}$/.test(q) || /^\d{4,5}$/.test(q)) {
-      const rec = getByFips(q);
-      if (rec) {
+      const asFips = getByFips(q);
+      if (asFips) {
         return {
-          fips: rec.fips,
-          county: rec.name,
-          state: rec.state,
-          lat: rec.lat,
-          lng: rec.lng,
-          multiCounty: false
+          fips: asFips.fips,
+          county: asFips.name,
+          state: asFips.state,
+          lat: asFips.lat,
+          lng: asFips.lng,
+          multiCounty: false,
+          resolvedAs: "fips"
         };
       }
+
+      const zipResult = resolveZip(q);
+      if (zipResult) {
+        const primary = zipResult.primary;
+        const c = primary.county;
+        return {
+          fips: primary.fips,
+          county: c.name || null,
+          state: c.state || null,
+          zcta: q,
+          lat: c.lat || null,
+          lng: c.lng || null,
+          multiCounty: zipResult.multiCounty,
+          allCounties: zipResult.multiCounty
+            ? zipResult.all.map(a => ({
+                fips: a.fips,
+                name: a.county && a.county.name,
+                resRatio: a.resRatio
+              }))
+            : undefined,
+          resolvedAs: "zip"
+        };
+      }
+
+      return null;
     }
 
-    // "County, ST" or "County County ST"
+    // "County, ST" or "Name ST"
     const m = q.match(/^(.+?)[,\s]+([A-Za-z]{2})$/);
     if (m) {
       const rec = resolveByName(m[1], m[2]);
@@ -60,25 +70,40 @@ class GeographyAgent {
           state: rec.state,
           lat: rec.lat,
           lng: rec.lng,
-          multiCounty: false
+          multiCounty: false,
+          resolvedAs: "name_state"
         };
       }
+      return null;
     }
 
-    // Name only (ambiguous if multiple states share name)
-    const rec = resolveByName(q, null);
-    if (rec) {
+    // Name only — detect ambiguity across states
+    const matches = findAllByName(q);
+    if (matches.length === 1) {
+      const rec = matches[0];
       return {
         fips: rec.fips,
         county: rec.name,
         state: rec.state,
         lat: rec.lat,
         lng: rec.lng,
-        multiCounty: false
+        multiCounty: false,
+        resolvedAs: "name"
+      };
+    }
+    if (matches.length > 1) {
+      return {
+        status: "ambiguous",
+        message: "Multiple counties match this name. Specify state (e.g. \"Orange, CA\").",
+        matches: matches.map(r => ({
+          fips: r.fips,
+          county: r.name,
+          state: r.state
+        }))
       };
     }
 
-    // Legacy string hints for demo ZIPs
+    // Legacy demo hints
     const lower = q.toLowerCase();
     if (lower.includes("schoharie") || lower.includes("cobleskill")) {
       return this.resolve("36095");
@@ -89,6 +114,16 @@ class GeographyAgent {
 
     return null;
   }
+}
+
+function findAllByName(name) {
+  if (!name) return [];
+  const n = String(name).toLowerCase().replace(/\s+county$/i, "").trim();
+  const out = [];
+  for (const rec of Object.values(getTable())) {
+    if (rec.name && rec.name.toLowerCase() === n) out.push(rec);
+  }
+  return out;
 }
 
 module.exports = { GeographyAgent };
