@@ -7,11 +7,12 @@ from pathlib import Path
 from urllib.parse import quote
 
 import psycopg
-from psycopg import sql
 from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg import sql
 
 RUNTIME_ROLE = "cbcap_runtime"
 MIGRATION_TABLE = "cbcap_schema_migration"
+MIGRATION_LOCK_ID = 742915860231
 
 
 def _required_env(name: str) -> str:
@@ -65,6 +66,30 @@ def _sha256(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _transaction_body(path: Path) -> str:
+    """Return a migration body whose transaction is owned by the runner.
+
+    Numbered migration files remain readable, standalone SQL artifacts with an
+    explicit outer BEGIN/COMMIT. The production runner removes only that outer
+    wrapper so the schema changes and migration-ledger insert can commit as one
+    transaction. This closes the crash window where a migration could commit
+    successfully but remain unrecorded.
+    """
+
+    script = path.read_text(encoding="utf-8")
+    if not script.strip():
+        raise RuntimeError(f"migration {path.name} is empty")
+    lines = script.strip().splitlines()
+    if len(lines) < 3 or lines[0].strip().upper() != "BEGIN;" or lines[-1].strip().upper() != "COMMIT;":
+        raise RuntimeError(
+            f"migration {path.name} must have one explicit outer BEGIN/COMMIT wrapper"
+        )
+    body = "\n".join(lines[1:-1]).strip()
+    if not body:
+        raise RuntimeError(f"migration {path.name} has an empty transaction body")
+    return body
+
+
 def _ensure_migration_ledger(connection: psycopg.Connection) -> None:
     connection.execute(
         f"""
@@ -81,28 +106,29 @@ def _ensure_migration_ledger(connection: psycopg.Connection) -> None:
 
 
 def _apply_migrations(connection: psycopg.Connection, root: Path) -> None:
-    _ensure_migration_ledger(connection)
-    for path in _migration_files(root):
-        digest = _sha256(path)
-        existing = connection.execute(
-            f"SELECT migration_hash FROM public.{MIGRATION_TABLE} WHERE migration_name=%s",
-            (path.name,),
-        ).fetchone()
-        if existing is not None:
-            if existing[0] != digest:
-                raise RuntimeError(
-                    f"applied migration {path.name} has changed; append a new migration instead"
-                )
-            continue
+    files = _migration_files(root)
+    with connection.transaction():
+        connection.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_ID,))
+        _ensure_migration_ledger(connection)
 
-        script = path.read_text(encoding="utf-8")
-        if not script.strip():
-            raise RuntimeError(f"migration {path.name} is empty")
-        connection.execute(script, prepare=False)
-        connection.execute(
-            f"INSERT INTO public.{MIGRATION_TABLE} (migration_name, migration_hash) VALUES (%s,%s)",
-            (path.name, digest),
-        )
+        for path in files:
+            digest = _sha256(path)
+            existing = connection.execute(
+                f"SELECT migration_hash FROM public.{MIGRATION_TABLE} WHERE migration_name=%s",
+                (path.name,),
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != digest:
+                    raise RuntimeError(
+                        f"applied migration {path.name} has changed; append a new migration instead"
+                    )
+                continue
+
+            connection.execute(_transaction_body(path), prepare=False)
+            connection.execute(
+                f"INSERT INTO public.{MIGRATION_TABLE} (migration_name, migration_hash) VALUES (%s,%s)",
+                (path.name, digest),
+            )
 
 
 def _ensure_runtime_role(
@@ -180,11 +206,12 @@ def run_migrations() -> None:
 
     with psycopg.connect(master_url, autocommit=True) as connection:
         _apply_migrations(connection, root)
-        _ensure_runtime_role(
-            connection,
-            runtime_password=runtime_password,
-            database_name=database_name,
-        )
+        with connection.transaction():
+            _ensure_runtime_role(
+                connection,
+                runtime_password=runtime_password,
+                database_name=database_name,
+            )
         _setup_checkpoint_schema(master_url, connection)
 
 
