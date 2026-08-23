@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,8 @@ from cbcap_core.http_api import (
     _allowed_origins,
     _safe_http_error,
     app,
+    execute_run,
+    review_run,
     security_response_headers,
 )
 from cbcap_core.runtime_request import RunStateConflict
@@ -73,3 +76,16 @@ def test_invalid_run_lifecycle_maps_to_safe_http_409():
     assert error.status_code == 409
     assert error.detail == "run_state_conflict"
     assert "internal" not in str(error.detail)
+
+
+def test_mutating_http_routes_authorize_and_gate_before_opening_checkpoint_storage():
+    for endpoint, operation in ((execute_run, '"execute"'), (review_run, '"review"')):
+        source = inspect.getsource(endpoint)
+        authorization_index = source.index("authorize_server_owned_run(")
+        lifecycle_index = source.index(f"require_run_operation_state(authorized.run, {operation})")
+        checkpoint_index = source.index("with postgres_checkpointer(")
+        graph_index = source.index("build_county_planning_graph(checkpointer=checkpointer)")
+
+        assert authorization_index < lifecycle_index < checkpoint_index < graph_index
+        assert "tenant_id=authorized.actor.tenant_id" in source
+        assert "lock_for_mutation=True" in source
