@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CB-CAP private runtime container registry.
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: sozorock/cbcap-runtime
+    AllowedPattern: '^[a-z0-9]+(?:[._/-][a-z0-9]+)*$'
+
+Resources:
+  RuntimeRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Retain the newest 40 immutable release images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 40
+                },
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+      Tags:
+        - Key: Product
+          Value: CB-CAP
+        - Key: DataBoundary
+          Value: Private
+
+Outputs:
+  RepositoryName:
+    Value: !Ref RuntimeRepository
+  RepositoryUri:
+    Value: !GetAtt RuntimeRepository.RepositoryUri
