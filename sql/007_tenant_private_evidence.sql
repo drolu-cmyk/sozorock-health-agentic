@@ -73,6 +73,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS tenant_evidence_one_acceptance_idx
   ON cbcap.tenant_evidence_review (document_id)
   WHERE decision = 'accepted';
 
+CREATE UNIQUE INDEX IF NOT EXISTS tenant_evidence_review_timestamp_unique_idx
+  ON cbcap.tenant_evidence_review (document_id, reviewed_at);
+
 CREATE INDEX IF NOT EXISTS tenant_evidence_document_tenant_run_idx
   ON cbcap.tenant_evidence_document (tenant_id, submitted_in_run_id, submitted_at DESC);
 
@@ -125,6 +128,12 @@ BEGIN
 
   IF NEW.decision = 'accepted' AND document_record.admission_state <> 'eligible_for_review' THEN
     RAISE EXCEPTION 'only eligible tenant evidence can be accepted';
+  END IF;
+
+  IF NEW.decision = 'accepted'
+     AND document_record.retention_until IS NOT NULL
+     AND document_record.retention_until < NEW.reviewed_at::date THEN
+    RAISE EXCEPTION 'expired tenant evidence cannot be accepted';
   END IF;
 
   IF NEW.decision = 'needs_revision' AND document_record.admission_state = 'rejected' THEN
