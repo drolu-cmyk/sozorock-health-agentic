@@ -30,6 +30,7 @@ from .runtime_request import (
     require_run_operation_state,
 )
 from .runtime_service import execute_county_run, resume_county_run_review
+from .schema_readiness import assert_runtime_schema_ready
 
 ReviewDecision = Literal["approved", "rejected", "needs_revision", "deferred"]
 
@@ -301,11 +302,7 @@ def readyz():
     dependencies = runtime_dependencies()
     try:
         with postgres_connection(dependencies.settings.persistence) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                row = cursor.fetchone()
-        if row != (1,):
-            raise RuntimeError("database readiness probe returned an unexpected value")
+            assert_runtime_schema_ready(connection)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="not_ready") from exc
     return {"status": "ready"}
