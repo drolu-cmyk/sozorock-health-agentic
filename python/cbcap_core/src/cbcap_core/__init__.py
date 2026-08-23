@@ -53,6 +53,14 @@ from .models import (
     TenantVisibility,
     WorkflowFlags,
 )
+from .planning_evidence import (
+    PlanningDocumentPage,
+    PlanningEvidenceAdmissionRequest,
+    PlanningEvidenceAdmissionResult,
+    PlanningExtractionProposal,
+    PlanningReviewTask,
+    admit_planning_evidence,
+)
 from .planning_research import (
     ApprovedPlanningSource,
     PlanningDocumentCandidate,
@@ -99,9 +107,14 @@ __all__ = [
     "PlanDocument",
     "PlanPriority",
     "PlanningDocumentCandidate",
+    "PlanningDocumentPage",
+    "PlanningEvidenceAdmissionRequest",
+    "PlanningEvidenceAdmissionResult",
+    "PlanningExtractionProposal",
     "PlanningLaneResult",
     "PlanningResearchRequest",
     "PlanningResearchResult",
+    "PlanningReviewTask",
     "PublicationArtifact",
     "PublicEvidencePackage",
     "RejectedPlanningCandidate",
@@ -116,6 +129,7 @@ __all__ = [
     "WorkflowFlags",
     "PUBLIC_EVIDENCE_CORE_COMPATIBILITY",
     "SHARED_EVIDENCE_CONTRACT_VERSION",
+    "admit_planning_evidence",
     "assert_public_package",
     "build_county_planning_graph",
     "build_planning_research_graph",
