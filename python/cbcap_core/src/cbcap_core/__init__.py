@@ -61,6 +61,12 @@ from .planning_evidence import (
     PlanningReviewTask,
     admit_planning_evidence,
 )
+from .planning_pipeline import (
+    PlanningPipelineRequest,
+    PlanningPipelineResult,
+    PlanningTrajectoryEvent,
+    run_planning_pipeline,
+)
 from .planning_research import (
     ApprovedPlanningSource,
     PlanningDocumentCandidate,
@@ -112,9 +118,12 @@ __all__ = [
     "PlanningEvidenceAdmissionResult",
     "PlanningExtractionProposal",
     "PlanningLaneResult",
+    "PlanningPipelineRequest",
+    "PlanningPipelineResult",
     "PlanningResearchRequest",
     "PlanningResearchResult",
     "PlanningReviewTask",
+    "PlanningTrajectoryEvent",
     "PublicationArtifact",
     "PublicEvidencePackage",
     "RejectedPlanningCandidate",
@@ -138,5 +147,6 @@ __all__ = [
     "initial_graph_state",
     "postgres_checkpointer",
     "research_candidates",
+    "run_planning_pipeline",
     "select_county_public_evidence",
 ]
