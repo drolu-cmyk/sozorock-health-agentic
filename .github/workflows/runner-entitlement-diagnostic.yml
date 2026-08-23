@@ -1,0 +1,16 @@
+name: Runner entitlement diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  slim-runner-smoke:
+    runs-on: ubuntu-slim
+    timeout-minutes: 2
+    steps:
+      - name: Prove hosted runner assignment
+        run: echo "github-hosted-runner-assigned"
