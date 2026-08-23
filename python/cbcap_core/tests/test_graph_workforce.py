@@ -1,6 +1,10 @@
 from datetime import date, datetime, timezone
 
-from cbcap_core.gateway import PublicEvidenceMeasure, PublicEvidencePackage
+from cbcap_core.gateway import (
+    PublicEvidenceMeasure,
+    PublicEvidencePackage,
+    SourceCoverageAssertion,
+)
 from cbcap_core.graph import BranchPayload, CountyGraphContext, build_county_planning_graph, initial_graph_state
 from cbcap_core.models import (
     BarrierFamily,
@@ -130,13 +134,51 @@ def ahrf_measure() -> PublicEvidenceMeasure:
     )
 
 
-def package(*, hpsa: PublicEvidenceMeasure | None, include_ahrf=False) -> PublicEvidencePackage:
+def coverage(key: str, status: str, records: int) -> SourceCoverageAssertion:
+    return SourceCoverageAssertion(
+        id=f"coverage:{key}:36001",
+        source_id="hrsa-workforce",
+        source_version_id=source("hrsa-workforce").source_version_id,
+        geography_id=county().id,
+        coverage_key=key,
+        status=status,
+        records_matched=records,
+        evaluated_at=NOW,
+        review_status=ReviewStatus.VERIFIED,
+    )
+
+
+def hpsa_coverage(*, primary_records: int) -> list[SourceCoverageAssertion]:
+    return [
+        coverage(
+            "hpsa:primary_care",
+            "complete_with_records" if primary_records else "complete_no_records",
+            primary_records,
+        ),
+        coverage("hpsa:dental", "complete_no_records", 0),
+        coverage("hpsa:mental_health", "complete_no_records", 0),
+    ]
+
+
+def package(
+    *,
+    hpsa: PublicEvidenceMeasure | None,
+    include_ahrf=False,
+    include_hpsa_coverage=True,
+) -> PublicEvidencePackage:
     measures = [transportation_measure()]
     if hpsa is not None:
         measures.append(hpsa)
     if include_ahrf:
         measures.append(ahrf_measure())
+
     versions = {item.source_version.source_version_id: item.source_version for item in measures}
+    source_coverage: list[SourceCoverageAssertion] = []
+    if include_hpsa_coverage:
+        hrsa_source = source("hrsa-workforce")
+        versions[hrsa_source.source_version_id] = hrsa_source
+        source_coverage = hpsa_coverage(primary_records=1 if hpsa is not None else 0)
+
     return PublicEvidencePackage(
         release_id="controlled-workforce-release",
         generated_at=NOW,
@@ -144,6 +186,7 @@ def package(*, hpsa: PublicEvidenceMeasure | None, include_ahrf=False) -> Public
         metric_semantics=[item.semantics for item in measures],
         measures=measures,
         source_versions=list(versions.values()),
+        source_coverage=source_coverage,
     )
 
 
@@ -220,6 +263,27 @@ def test_facility_hpsa_remains_scoped_context_and_never_becomes_county_barrier()
     )
 
 
+def test_verified_zero_record_hpsa_coverage_allows_no_designation_result():
+    graph = build_county_planning_graph()
+    result = graph.invoke(
+        initial_graph_state(run()),
+        config=config("verified-zero-hpsa"),
+        context=CountyGraphContext(
+            public_evidence_package=package(hpsa=None).model_dump(mode="json")
+        ),
+    )
+    final = CountyRunState.model_validate(result["county_run"])
+    assert final.status == RunStatus.COMPLETED
+    assert BarrierFamily.WORKFORCE not in {
+        item.barrier_family for item in final.barrier_observations
+    }
+    assert any(
+        item["stage"] == "workforce_source_coverage"
+        and item["outcome"] == "complete_no_designations"
+        for item in result["trajectory_events"]
+    )
+
+
 def test_ahrf_capacity_is_retained_separately_from_hpsa_shortage():
     graph = build_county_planning_graph()
     result = graph.invoke(
@@ -246,11 +310,12 @@ def test_ahrf_capacity_cannot_substitute_for_missing_hpsa_coverage():
     graph = build_county_planning_graph()
     result = graph.invoke(
         initial_graph_state(run()),
-        config=config("ahrf-without-hrsa"),
+        config=config("ahrf-without-hpsa-coverage"),
         context=CountyGraphContext(
             public_evidence_package=package(
                 hpsa=None,
                 include_ahrf=True,
+                include_hpsa_coverage=False,
             ).model_dump(mode="json")
         ),
     )
@@ -261,6 +326,7 @@ def test_ahrf_capacity_cannot_substitute_for_missing_hpsa_coverage():
     payload = workforce_payload(result)
     assert len(payload.workforce_capacity_observations) == 1
     assert any(
-        "hrsa_observations_absent_source_coverage_not_proven" in item["reason_codes"]
+        item["stage"] == "workforce_source_coverage"
+        and item["outcome"] == "incomplete"
         for item in result["trajectory_events"]
     )
