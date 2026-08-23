@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from itertools import combinations
+from typing import Literal
 
 from pydantic import Field
 
-from .models import BarrierFamily, BarrierObservation, ReviewStatus, StrictModel
+from .models import (
+    BarrierFamily,
+    BarrierObservation,
+    Measure,
+    ReviewStatus,
+    StrictModel,
+)
 
 
 class BarrierDefinition(StrictModel):
@@ -100,6 +107,213 @@ BARRIER_DEFINITIONS: tuple[BarrierDefinition, ...] = (
         planning_questions=["Which priorities may be constrained by implementation capacity rather than lack of evidence?"],
     ),
 )
+
+
+BarrierClassification = Literal["barrier", "context", "service_gap", "capacity"]
+BarrierAdmissionStatus = Literal["admitted", "context_only", "rejected"]
+
+
+class BarrierMeasureRule(StrictModel):
+    id: str = Field(min_length=1)
+    source_measure_ids: list[str] = Field(min_length=1)
+    classification: BarrierClassification
+    barrier_family: BarrierFamily | None = None
+    required_direction: Literal["adverse", "protective", "contextual", "unknown"] | None = None
+    required_comparison_policy: Literal[
+        "higher_is_concern",
+        "lower_is_concern",
+        "context_only",
+        "not_rankable",
+    ] | None = None
+    rationale: str = Field(min_length=1)
+
+
+class BarrierAdmissionDecision(StrictModel):
+    measure_id: str = Field(min_length=1)
+    rule_id: str | None = None
+    status: BarrierAdmissionStatus
+    reason_codes: list[str] = Field(default_factory=list)
+    observation: BarrierObservation | None = None
+
+
+class BarrierClassificationResult(StrictModel):
+    decisions: list[BarrierAdmissionDecision] = Field(default_factory=list)
+    observations: list[BarrierObservation] = Field(default_factory=list)
+
+
+INITIAL_BARRIER_RULES: tuple[BarrierMeasureRule, ...] = (
+    BarrierMeasureRule(
+        id="barrier:affordability:uninsured",
+        source_measure_ids=["UNINSURED", "uninsured"],
+        classification="barrier",
+        barrier_family=BarrierFamily.AFFORDABILITY_INSURANCE,
+        required_direction="adverse",
+        required_comparison_policy="higher_is_concern",
+        rationale="Lack of current health insurance can constrain affordable access to care.",
+    ),
+    BarrierMeasureRule(
+        id="barrier:transportation:lack-reliable-transport",
+        source_measure_ids=["LACKTRPT", "transportation"],
+        classification="barrier",
+        barrier_family=BarrierFamily.TRANSPORTATION_TRAVEL,
+        required_direction="adverse",
+        required_comparison_policy="higher_is_concern",
+        rationale="Lack of reliable transportation can constrain physical access to services.",
+    ),
+    BarrierMeasureRule(
+        id="barrier:food:food-insecurity",
+        source_measure_ids=["FOODINSECU", "foodInsecurity", "food_insecurity"],
+        classification="barrier",
+        barrier_family=BarrierFamily.FOOD_SECURITY,
+        required_direction="adverse",
+        required_comparison_policy="higher_is_concern",
+        rationale="Food insecurity is an adverse household resource condition relevant to community planning.",
+    ),
+    BarrierMeasureRule(
+        id="barrier:housing:housing-insecurity",
+        source_measure_ids=["HOUSINSECU", "housingInsecurity", "housing_insecurity"],
+        classification="barrier",
+        barrier_family=BarrierFamily.HOUSING,
+        required_direction="adverse",
+        required_comparison_policy="higher_is_concern",
+        rationale="Housing insecurity is an adverse stability condition relevant to access and implementation planning.",
+    ),
+    BarrierMeasureRule(
+        id="barrier:utilities:shutoff-threat",
+        source_measure_ids=["SHUTUTILITY", "utilityShutoff", "utility_shutoff"],
+        classification="barrier",
+        barrier_family=BarrierFamily.UTILITIES,
+        required_direction="adverse",
+        required_comparison_policy="higher_is_concern",
+        rationale="Utility shutoff or threat indicates household resource pressure relevant to planning.",
+    ),
+    BarrierMeasureRule(
+        id="barrier:social:loneliness",
+        source_measure_ids=["LONELINESS", "loneliness"],
+        classification="barrier",
+        barrier_family=BarrierFamily.SOCIAL_CONNECTION,
+        required_direction="adverse",
+        required_comparison_policy="higher_is_concern",
+        rationale="Loneliness is an adverse social-connection condition relevant to community planning.",
+    ),
+    BarrierMeasureRule(
+        id="context:accessibility:disability",
+        source_measure_ids=["DISABILITY", "disability"],
+        classification="context",
+        barrier_family=None,
+        rationale="Disability informs accommodation and accessibility planning and must not itself be labeled a barrier.",
+    ),
+)
+
+
+def _normalized(value: str) -> str:
+    return "".join(character.lower() for character in value if character.isalnum())
+
+
+def find_barrier_rule(
+    measure: Measure,
+    rules: tuple[BarrierMeasureRule, ...] = INITIAL_BARRIER_RULES,
+) -> BarrierMeasureRule | None:
+    candidates = {
+        _normalized(measure.semantics.source_measure_id),
+        _normalized(measure.semantics.id),
+    }
+    matches = [
+        rule
+        for rule in rules
+        if candidates.intersection({_normalized(item) for item in rule.source_measure_ids})
+    ]
+    if len(matches) > 1:
+        raise ValueError(
+            f"measure {measure.id} matches multiple barrier ontology rules: "
+            + ", ".join(item.id for item in matches)
+        )
+    return matches[0] if matches else None
+
+
+def classify_barrier_measure(
+    measure: Measure,
+    *,
+    rules: tuple[BarrierMeasureRule, ...] = INITIAL_BARRIER_RULES,
+) -> BarrierAdmissionDecision:
+    rule = find_barrier_rule(measure, rules)
+    if rule is None:
+        return BarrierAdmissionDecision(
+            measure_id=measure.id,
+            status="rejected",
+            reason_codes=["measure_not_in_barrier_ontology"],
+        )
+
+    if rule.classification == "context":
+        return BarrierAdmissionDecision(
+            measure_id=measure.id,
+            rule_id=rule.id,
+            status="context_only",
+            reason_codes=["context_not_barrier"],
+        )
+
+    reasons: list[str] = []
+    if measure.review_status != ReviewStatus.VERIFIED:
+        reasons.append("measure_not_verified")
+    if measure.semantics.review_status != ReviewStatus.VERIFIED:
+        reasons.append("metric_semantics_not_verified")
+    if rule.required_direction and measure.semantics.direction != rule.required_direction:
+        reasons.append("metric_direction_mismatch")
+    if (
+        rule.required_comparison_policy
+        and measure.semantics.comparison_policy != rule.required_comparison_policy
+    ):
+        reasons.append("comparison_policy_mismatch")
+    if (
+        measure.semantics.allowed_geography_kinds
+        and measure.geography.kind not in measure.semantics.allowed_geography_kinds
+    ):
+        reasons.append("geography_not_allowed_for_metric")
+    if measure.numeric_value is None:
+        reasons.append("numeric_value_required")
+    if rule.barrier_family is None:
+        reasons.append("barrier_family_missing")
+
+    if reasons:
+        return BarrierAdmissionDecision(
+            measure_id=measure.id,
+            rule_id=rule.id,
+            status="rejected",
+            reason_codes=sorted(set(reasons)),
+        )
+
+    observation = BarrierObservation(
+        id=f"barrier-observation:{rule.id}:{measure.geography.id}:{measure.id}",
+        barrier_family=rule.barrier_family,
+        geography=measure.geography,
+        measure_id=measure.id,
+        observed_value=measure.numeric_value,
+        pressure_percentile=None,
+        concentration=None,
+        trend_direction="insufficient_evidence",
+        evidence_quality="high",
+        review_status=ReviewStatus.VERIFIED,
+    )
+    return BarrierAdmissionDecision(
+        measure_id=measure.id,
+        rule_id=rule.id,
+        status="admitted",
+        observation=observation,
+    )
+
+
+def classify_barrier_measures(
+    measures: list[Measure],
+    *,
+    rules: tuple[BarrierMeasureRule, ...] = INITIAL_BARRIER_RULES,
+) -> BarrierClassificationResult:
+    decisions = [classify_barrier_measure(item, rules=rules) for item in measures]
+    observations = [
+        item.observation
+        for item in decisions
+        if item.status == "admitted" and item.observation is not None
+    ]
+    return BarrierClassificationResult(decisions=decisions, observations=observations)
 
 
 class BarrierCooccurrence(StrictModel):
