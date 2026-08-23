@@ -10,11 +10,19 @@ from cbcap_core.gateway import EvidenceGatewayResponse
 from cbcap_core.gateway_transport import EvidenceGatewayFetchResult, package_release_hash
 from cbcap_core.graph import RunBudget
 from cbcap_core.models import CountyRunState, GeographyKind, GeographyRef, ReviewStatus
-from cbcap_core.runtime_service import execute_county_run, resume_county_run_review
+from cbcap_core.runtime_service import (
+    RuntimeActor,
+    execute_county_run,
+    resume_county_run_review,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evidence-gateway-v1.json"
 NOW = datetime(2026, 8, 22, 23, 50, tzinfo=timezone.utc)
 TENANT = "tenant:albany-planning"
+
+
+def actor(*, role="planner", tenant_id=TENANT, actor_id="principal:planner") -> RuntimeActor:
+    return RuntimeActor(actor_id=actor_id, tenant_id=tenant_id, role=role)
 
 
 def run() -> CountyRunState:
@@ -140,7 +148,25 @@ def test_cross_tenant_actor_is_rejected_before_gateway_or_graph_execution():
             gateway,  # type: ignore[arg-type]
             graph,  # type: ignore[arg-type]
             FakeConnection(),
-            actor_tenant_id="tenant:other",
+            actor=actor(tenant_id="tenant:other"),
+        )
+
+    assert gateway.calls == []
+    assert graph.calls == []
+
+
+def test_read_only_actor_cannot_execute_before_network_access():
+    gateway = FakeGatewayClient()
+    graph = FakeGraph()
+
+    with pytest.raises(PermissionError, match="cannot execute"):
+        execute_county_run(
+            run(),
+            RunBudget(max_external_calls=1),
+            gateway,  # type: ignore[arg-type]
+            graph,  # type: ignore[arg-type]
+            FakeConnection(),
+            actor=actor(role="read_only", actor_id="principal:reader"),
         )
 
     assert gateway.calls == []
@@ -158,7 +184,7 @@ def test_execution_fetches_public_evidence_once_and_persists_trajectory():
         gateway,  # type: ignore[arg-type]
         graph,  # type: ignore[arg-type]
         connection,
-        actor_tenant_id=TENANT,
+        actor=actor(),
     )
 
     assert gateway.calls == [("36001", None)]
@@ -184,30 +210,47 @@ def test_interrupted_execution_persists_partial_trajectory_before_review():
         gateway,  # type: ignore[arg-type]
         graph,  # type: ignore[arg-type]
         connection,
-        actor_tenant_id=TENANT,
+        actor=actor(),
     )
     assert result.interrupted is True
     assert len(result.trajectory_events) == 1
 
 
-def test_review_resume_does_not_have_a_gateway_dependency_or_public_package_context():
+def test_only_reviewer_or_admin_can_resume_human_review():
+    graph = FakeGraph()
+    for role in ("read_only", "analyst", "planner"):
+        with pytest.raises(PermissionError, match="cannot resume human review"):
+            resume_county_run_review(
+                run().run_id,
+                graph,  # type: ignore[arg-type]
+                FakeConnection(),
+                actor=actor(role=role, actor_id=f"principal:{role}"),
+                decision="approved",
+                reason="Attempted review without reviewer authority.",
+            )
+    assert graph.calls == []
+
+
+def test_review_resume_uses_authenticated_principal_identity_and_does_not_refetch_evidence():
     graph = FakeGraph()
     connection = FakeConnection()
+    reviewer = actor(role="reviewer", actor_id="principal:reviewer-42")
 
     result = resume_county_run_review(
         run().run_id,
         graph,  # type: ignore[arg-type]
         connection,
-        actor_tenant_id=TENANT,
+        actor=reviewer,
         decision="approved",
-        reviewer="reviewer:1",
         reason="Verified against authoritative source evidence.",
     )
 
     assert len(graph.calls) == 1
-    _, config, context = graph.calls[0]
+    command, config, context = graph.calls[0]
     assert config["configurable"]["thread_id"] == f"cbcap:{TENANT}:county-run:{run().run_id}"
     assert context.public_evidence_package is None
+    assert getattr(command, "resume")["reviewer"] == reviewer.actor_id
+    assert getattr(command, "resume")["decision"] == "approved"
     assert result.prepared is None
     assert len(result.trajectory_events) == 1
 
@@ -219,9 +262,8 @@ def test_invalid_review_decision_fails_before_graph_resume():
             run().run_id,
             graph,  # type: ignore[arg-type]
             FakeConnection(),
-            actor_tenant_id=TENANT,
+            actor=actor(role="reviewer", actor_id="principal:reviewer"),
             decision="publish_now",
-            reviewer="reviewer:1",
             reason="Not an allowed review action.",
         )
     assert graph.calls == []
