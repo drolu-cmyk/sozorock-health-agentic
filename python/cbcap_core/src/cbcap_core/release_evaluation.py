@@ -29,7 +29,7 @@ class CountyReleaseEvaluation:
     release_hash: str
     source_version_count: int
     metric_semantics_count: int
-    observation_count: int
+    measure_count: int
     source_coverage_count: int
     elapsed_ms: int | None
 
@@ -74,8 +74,8 @@ def evaluate_five_county_gateway(
             raise RuntimeError(f"gateway returned no source lineage for {county_fips}")
         if not package.metric_semantics:
             raise RuntimeError(f"gateway returned no metric semantics for {county_fips}")
-        if not package.observations:
-            raise RuntimeError(f"gateway returned no observations for {county_fips}")
+        if not package.measures:
+            raise RuntimeError(f"gateway returned no measures for {county_fips}")
 
         if expected_release_id is None:
             expected_release_id = manifest.release_id
@@ -96,7 +96,7 @@ def evaluate_five_county_gateway(
                 release_hash=manifest.release_hash,
                 source_version_count=len(package.source_versions),
                 metric_semantics_count=len(package.metric_semantics),
-                observation_count=len(package.observations),
+                measure_count=len(package.measures),
                 source_coverage_count=len(package.source_coverage),
                 elapsed_ms=result.elapsed_ms,
             )
