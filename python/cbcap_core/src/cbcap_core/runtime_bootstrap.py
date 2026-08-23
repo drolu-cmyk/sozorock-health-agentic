@@ -73,6 +73,7 @@ def main() -> None:
         port=int(os.getenv("PORT", "8080")),
         workers=1,
         access_log=False,
+        server_header=False,
     )
 
 
