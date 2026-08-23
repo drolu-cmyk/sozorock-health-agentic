@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from langgraph.types import Command
-from pydantic import Field
 
+from .authorization import (
+    AuthorizedActor,
+    RuntimeRole,
+    require_actor_capability,
+)
 from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
 from .gateway import EvidenceGatewayResponse
 from .gateway_transport import EvidenceGatewayHttpClient
@@ -16,7 +20,7 @@ from .graph import (
     build_county_planning_graph,
     initial_graph_state,
 )
-from .models import CountyRunState, StrictModel
+from .models import CountyRunState
 from .persistence import (
     ConnectionLike,
     PersistenceSettings,
@@ -26,24 +30,10 @@ from .persistence import (
 from .run_preparation import PreparedCountyGraphRun, prepare_county_graph_run
 from .trajectory import TrajectoryEvent
 
-RuntimeRole = Literal["read_only", "analyst", "planner", "reviewer", "admin"]
-EXECUTION_ROLES: frozenset[RuntimeRole] = frozenset(
-    {"analyst", "planner", "reviewer", "admin"}
-)
-REVIEW_ROLES: frozenset[RuntimeRole] = frozenset({"reviewer", "admin"})
-
-
-class RuntimeActor(StrictModel):
-    """Authenticated principal projected into the CB-CAP runtime boundary.
-
-    Authentication remains an application-layer responsibility. Runtime code
-    accepts only this typed projection and never accepts an arbitrary reviewer
-    display name or tenant override from a review request.
-    """
-
-    actor_id: str = Field(min_length=1)
-    tenant_id: str | None = None
-    role: RuntimeRole
+# Compatibility name for callers already using RuntimeActor. The canonical
+# authorization model lives in authorization.py so runtime/workspace services
+# cannot drift into separate role systems.
+RuntimeActor = AuthorizedActor
 
 
 class CompiledGraphLike(Protocol):
@@ -69,14 +59,13 @@ def _require_actor_tenant(run_tenant_id: str | None, actor: RuntimeActor) -> Non
         raise ValueError("county run tenant does not match authenticated actor tenant")
 
 
-def _require_execution_role(actor: RuntimeActor) -> None:
-    if actor.role not in EXECUTION_ROLES:
-        raise PermissionError("authenticated actor role cannot execute county planning runs")
-
-
-def _require_review_role(actor: RuntimeActor) -> None:
-    if actor.role not in REVIEW_ROLES:
-        raise PermissionError("authenticated actor role cannot resume human review")
+def _require_execution_authorization(run: CountyRunState, actor: RuntimeActor) -> None:
+    _require_actor_tenant(run.tenant_id, actor)
+    require_actor_capability(
+        actor,
+        "execute_county_run",
+        geography_id=run.county.id,
+    )
 
 
 def _persist_graph_state(
@@ -108,14 +97,12 @@ def execute_county_run(
 ) -> CountyRunExecution:
     """Execute one governed county run from one validated public-evidence fetch.
 
-    Network retrieval occurs before graph fan-out. The resulting immutable public
-    package is reused by all evidence branches. Trajectory state is persisted on
-    both completed and interrupted runs so review checkpoints never erase the
-    path that led to a human decision.
+    Network retrieval occurs only after tenant, capability and geography scope
+    checks. The validated public package is reused by all evidence branches.
+    Trajectory state is persisted on both completed and interrupted runs.
     """
 
-    _require_execution_role(actor)
-    _require_actor_tenant(run.tenant_id, actor)
+    _require_execution_authorization(run, actor)
     prepared = prepare_county_graph_run(
         run,
         budget,
@@ -151,15 +138,22 @@ def resume_county_run_review(
     decision: str,
     reason: str,
 ) -> CountyRunExecution:
-    """Resume a previously interrupted graph without refetching public evidence."""
+    """Resume a specifically authorized interrupted run without refetching evidence."""
 
-    _require_review_role(actor)
     run_id = run_id.strip()
     reason = reason.strip()
     if not run_id or not reason:
         raise ValueError("run_id and reason are required")
     if decision not in {"approved", "rejected", "needs_revision", "deferred"}:
         raise ValueError("invalid review decision")
+
+    # Run scope is checked before the checkpoint is touched. This prevents an
+    # otherwise valid tenant reviewer from probing or resuming another run.
+    require_actor_capability(
+        actor,
+        "resume_human_review",
+        run_id=run_id,
+    )
 
     graph_state = graph.invoke(
         Command(
@@ -174,6 +168,12 @@ def resume_county_run_review(
     )
     canonical_run = CountyRunState.model_validate(graph_state["county_run"])
     _require_actor_tenant(canonical_run.tenant_id, actor)
+    require_actor_capability(
+        actor,
+        "resume_human_review",
+        geography_id=canonical_run.county.id,
+        run_id=run_id,
+    )
     events = _persist_graph_state(
         connection,
         graph_state,
@@ -197,8 +197,7 @@ def execute_county_run_from_env(
 ) -> CountyRunExecution:
     """Production convenience entrypoint. No in-memory or insecure fallback."""
 
-    _require_execution_role(actor)
-    _require_actor_tenant(run.tenant_id, actor)
+    _require_execution_authorization(run, actor)
     endpoint = os.getenv("CB_CAP_EVIDENCE_GATEWAY_URL", "").strip()
     if not endpoint:
         raise RuntimeError("CB_CAP_EVIDENCE_GATEWAY_URL is required")
