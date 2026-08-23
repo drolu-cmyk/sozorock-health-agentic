@@ -74,6 +74,7 @@ def main() -> None:
         workers=1,
         access_log=False,
         server_header=False,
+        headers=[("Strict-Transport-Security", "max-age=31536000")],
     )
 
 
