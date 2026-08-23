@@ -179,6 +179,8 @@ from .run_preparation import (
 )
 from .runtime_service import (
     CountyRunExecution,
+    RuntimeActor,
+    RuntimeRole,
     execute_county_run,
     execute_county_run_from_env,
     resume_county_run_review,
@@ -318,6 +320,8 @@ __all__ = [
     "ReviewStatus",
     "RunBudget",
     "RunStatus",
+    "RuntimeActor",
+    "RuntimeRole",
     "ScenarioAssumption",
     "ScenarioProjectionDecision",
     "SourceCoverageAssertion",
