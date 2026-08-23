@@ -219,6 +219,22 @@ def test_actor_without_county_scope_cannot_reach_network_or_graph():
     assert graph.calls == []
 
 
+def test_actor_without_specific_run_scope_cannot_reach_network_or_graph():
+    gateway = FakeGatewayClient()
+    graph = FakeGraph()
+    with pytest.raises(PermissionError, match="county run"):
+        execute_county_run(
+            run(),
+            RunBudget(max_external_calls=1),
+            gateway,  # type: ignore[arg-type]
+            graph,  # type: ignore[arg-type]
+            FakeConnection(),
+            actor=actor(run_ids=["run:other"]),
+        )
+    assert gateway.calls == []
+    assert graph.calls == []
+
+
 def test_execution_fetches_public_evidence_once_and_persists_trajectory_and_observation():
     gateway = FakeGatewayClient()
     graph = FakeGraph()
