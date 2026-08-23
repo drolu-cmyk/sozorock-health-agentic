@@ -35,10 +35,14 @@ def _headers_lower(headers: Mapping[str, str]) -> dict[str, str]:
 
 
 def package_release_hash(package_payload: Mapping[str, object]) -> str:
+    """Match the public gateway's recursively key-sorted JSON SHA-256 contract."""
+
     serialized = json.dumps(
         package_payload,
         ensure_ascii=False,
+        sort_keys=True,
         separators=(",", ":"),
+        allow_nan=False,
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(serialized).hexdigest()
 
@@ -181,8 +185,13 @@ class EvidenceGatewayHttpClient:
             raise EvidenceGatewayTransportError("Evidence Gateway request failed") from exc
 
         try:
-            document = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            document = json.loads(
+                body.decode("utf-8"),
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(f"invalid JSON constant: {value}")
+                ),
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise EvidenceGatewayTransportError("Evidence Gateway returned invalid JSON") from exc
         if not isinstance(document, dict):
             raise EvidenceGatewayTransportError("Evidence Gateway response must be an object")
