@@ -21,6 +21,7 @@ class PreparedCountyGraphRun:
     evidence_etag: str | None
     evidence_release_hash: str
     evidence_release_id: str
+    evidence_fetch_ms: int = 0
     external_calls_used: int = 1
 
 
@@ -99,4 +100,5 @@ def prepare_county_graph_run(
         evidence_etag=fetched.etag or etag,
         evidence_release_hash=response.manifest.release_hash,
         evidence_release_id=response.manifest.release_id,
+        evidence_fetch_ms=fetched.elapsed_ms or 0,
     )
