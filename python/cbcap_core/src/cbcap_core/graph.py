@@ -6,7 +6,6 @@ from typing import Annotated, Any, Literal, TypedDict
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.runtime import Runtime
 from langgraph.types import RetryPolicy, interrupt
 from pydantic import Field
 
@@ -26,6 +25,7 @@ from .models import (
     StrictModel,
     WorkflowFlags,
 )
+from .planning_pipeline import PlanningPipelineRequest, run_planning_pipeline
 
 BranchName = Literal["public_evidence", "planning_documents", "workforce_designations", "barrier_evidence"]
 REQUIRED_BRANCHES: tuple[BranchName, ...] = (
@@ -109,6 +109,7 @@ class CountyGraphState(TypedDict, total=False):
     branch_results: Annotated[list[dict[str, Any]], _merge_unique_records]
     branch_payloads: Annotated[list[dict[str, Any]], _merge_unique_records]
     audit_events: Annotated[list[dict[str, Any]], _merge_unique_records]
+    trajectory_events: Annotated[list[dict[str, Any]], _merge_unique_records]
     review_outcome: str | None
 
 
@@ -117,6 +118,7 @@ class CountyGraphContext:
     simulate_source_conflict: bool = False
     untrusted_source_text: str | None = None
     public_evidence_package: dict[str, Any] | None = None
+    planning_pipeline_request: dict[str, Any] | None = None
 
 
 def initial_graph_state(county_run: CountyRunState, *, budget: RunBudget | None = None) -> CountyGraphState:
@@ -126,6 +128,7 @@ def initial_graph_state(county_run: CountyRunState, *, budget: RunBudget | None 
         "branch_results": [],
         "branch_payloads": [],
         "audit_events": [],
+        "trajectory_events": [],
         "review_outcome": None,
     }
 
@@ -197,7 +200,13 @@ def _existing_payload(run, branch):
     if branch == "public_evidence":
         return BranchPayload(id=f"{run.run_id}:payload:{branch}", branch=branch, measures=list(run.measures))
     if branch == "planning_documents":
-        return BranchPayload(id=f"{run.run_id}:payload:{branch}", branch=branch, plan_documents=list(run.plan_documents))
+        return BranchPayload(
+            id=f"{run.run_id}:payload:{branch}",
+            branch=branch,
+            source_documents=list(run.source_documents),
+            evidence_claims=list(run.evidence_claims),
+            plan_documents=list(run.plan_documents),
+        )
     if branch == "workforce_designations":
         return BranchPayload(
             id=f"{run.run_id}:payload:{branch}",
@@ -209,12 +218,13 @@ def _existing_payload(run, branch):
     raise ValueError(f"unknown branch: {branch}")
 
 
-def _branch_output(run, payload, *, conflict=False):
+def _branch_output(run, payload, *, conflict=False, complete_override=None, trajectory_events=None):
     evidence_ids = payload.evidence_ids()
+    complete = bool(evidence_ids) if complete_override is None else bool(complete_override and evidence_ids)
     result = BranchResult(
         id=f"{run.run_id}:branch:{payload.branch}",
         branch=payload.branch,
-        complete=bool(evidence_ids),
+        complete=complete,
         conflict=conflict,
         evidence_ids=evidence_ids,
     )
@@ -223,6 +233,7 @@ def _branch_output(run, payload, *, conflict=False):
         "branch_results": [result.model_dump(mode="json")],
         "branch_payloads": [payload.model_dump(mode="json")],
         "audit_events": [_audit(run, payload.branch, action)],
+        "trajectory_events": trajectory_events or [],
     }
 
 
@@ -245,10 +256,51 @@ def public_evidence_branch(state, runtime):
 
 def planning_documents_branch(state, runtime):
     run = _load_run(state)
+    context = _runtime_context(runtime)
+    if context.planning_pipeline_request is None:
+        payload = _existing_payload(run, "planning_documents")
+        return _branch_output(
+            run,
+            payload,
+            conflict=context.simulate_source_conflict,
+        )
+
+    request = PlanningPipelineRequest.model_validate(context.planning_pipeline_request)
+    request_county = request.research.county
+    if request_county.county_fips != run.county.county_fips:
+        payload = BranchPayload(
+            id=f"{run.run_id}:payload:planning_documents",
+            branch="planning_documents",
+        )
+        return _branch_output(
+            run,
+            payload,
+            complete_override=False,
+            trajectory_events=[{
+                "id": f"{run.run_id}:planning-geography-mismatch",
+                "run_id": run.run_id,
+                "stage": "candidate_policy",
+                "entity_id": request_county.id,
+                "outcome": "rejected",
+                "reason_codes": ["planning_request_geography_mismatch"],
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+            }],
+        )
+
+    pipeline_result = run_planning_pipeline(request)
+    payload = BranchPayload(
+        id=f"{run.run_id}:payload:planning_documents",
+        branch="planning_documents",
+        source_documents=pipeline_result.admitted_source_documents,
+        evidence_claims=pipeline_result.admitted_claims,
+        plan_documents=pipeline_result.admitted_plan_documents,
+    )
     return _branch_output(
         run,
-        _existing_payload(run, "planning_documents"),
-        conflict=_runtime_context(runtime).simulate_source_conflict,
+        payload,
+        conflict=context.simulate_source_conflict,
+        complete_override=pipeline_result.ready_for_county_graph,
+        trajectory_events=[item.model_dump(mode="json") for item in pipeline_result.trajectory],
     )
 
 
