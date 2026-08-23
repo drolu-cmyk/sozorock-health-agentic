@@ -31,13 +31,16 @@ def test_eligible_private_evidence_cannot_contain_prohibited_person_level_materi
     assert "usage_rights_confirmed" in sql
 
 
-def test_review_trigger_matches_parent_tenant_and_blocks_acceptance_of_noneligible_document():
+def test_review_trigger_matches_parent_tenant_and_blocks_invalid_acceptance():
     sql = read_sql("007_tenant_private_evidence.sql")
     assert "validate_tenant_evidence_review" in sql
     assert "document_record.tenant_id <> NEW.tenant_id" in sql
     assert "only eligible tenant evidence can be accepted" in sql
+    assert "expired tenant evidence cannot be accepted" in sql
+    assert "document_record.retention_until < NEW.reviewed_at::date" in sql
     assert "tenant_evidence_review_guard" in sql
     assert "tenant_evidence_one_acceptance_idx" in sql
+    assert "tenant_evidence_review_timestamp_unique_idx" in sql
 
 
 def test_tenant_evidence_rollback_refuses_to_erase_document_or_review_history():
