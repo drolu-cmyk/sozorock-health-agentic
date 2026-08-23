@@ -35,14 +35,8 @@
       "trendable": true,
       "forecastable": false,
       "aggregatable": false,
-      "allowed_geography_kinds": [
-        "county"
-      ],
-      "allowed_visualizations": [
-        "choropleth",
-        "ranked_dot",
-        "distribution"
-      ],
+      "allowed_geography_kinds": ["county"],
+      "allowed_visualizations": ["choropleth", "ranked_dot", "distribution"],
       "review_status": "verified"
     }
   ],
@@ -63,14 +57,8 @@
         "trendable": true,
         "forecastable": false,
         "aggregatable": false,
-        "allowed_geography_kinds": [
-          "county"
-        ],
-        "allowed_visualizations": [
-          "choropleth",
-          "ranked_dot",
-          "distribution"
-        ],
+        "allowed_geography_kinds": ["county"],
+        "allowed_visualizations": ["choropleth", "ranked_dot", "distribution"],
         "review_status": "verified"
       },
       "geography": {
@@ -137,5 +125,6 @@
       "schema_version": "evaluation-observations.v1",
       "review_status": "verified"
     }
-  ]
+  ],
+  "source_coverage": []
 }
