@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Protocol
+from typing import Callable, Literal, Protocol
 from uuid import uuid4
 
 from .authorization import AuthorizedActor, require_actor_capability
@@ -13,8 +13,9 @@ from .identity_adapter import (
     VerifiedExternalPrincipal,
     project_verified_identity,
 )
-from .models import CountyRunState, GeographyKind, GeographyRef, ReviewStatus
+from .models import CountyRunState, GeographyKind, GeographyRef, ReviewStatus, RunStatus
 from .persistence import ConnectionLike
+from .runtime_lock import lock_county_run_identity
 from .runtime_registry import (
     RuntimeRunIdentity,
     RuntimeStateVersion,
@@ -28,6 +29,10 @@ from .runtime_registry import (
 
 class AccessTokenVerifier(Protocol):
     def verify(self, token: str) -> VerifiedExternalPrincipal: ...
+
+
+class RunStateConflict(RuntimeError):
+    """The requested mutation is incompatible with canonical run state."""
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,19 @@ def _county_geography_id(county_fips: str) -> str:
     return f"county:{county_fips}"
 
 
+def require_run_operation_state(
+    run: CountyRunState,
+    operation: Literal["execute", "review"],
+) -> None:
+    """Fail closed when a mutating endpoint is used for the wrong lifecycle state."""
+
+    expected = RunStatus.CREATED if operation == "execute" else RunStatus.WAITING_REVIEW
+    if run.status != expected:
+        raise RunStateConflict(
+            f"county run cannot {operation} from canonical status {run.status.value}"
+        )
+
+
 def authorize_server_owned_run(
     connection: ConnectionLike,
     *,
@@ -76,14 +94,17 @@ def authorize_server_owned_run(
     run_id: str,
     token_verifier: AccessTokenVerifier,
     identity_policy: IdentityProjectionPolicy,
+    lock_for_mutation: bool = False,
 ) -> AuthorizedServerRun:
     """Resolve one runtime request without accepting canonical state from a client.
 
     The supplied connection must already be scoped by RLS to `tenant_id`.
-    Authentication occurs before any run lookup. The browser may identify the
-    tenant and run it wants to access, but neither becomes authorized until the
-    verified principal has a current server-side membership for the immutable
-    county identity of that exact run.
+    Authentication occurs before any run lookup. Mutating callers may request a
+    transaction-scoped row lock after token verification and before canonical
+    state is read, preventing duplicate execution and review/execute races.
+    The browser may identify the tenant and run it wants to access, but neither
+    becomes authorized until the verified principal has a current server-side
+    membership for the immutable county identity of that exact run.
     """
 
     tenant_id = _validated_tenant(tenant_id)
@@ -92,6 +113,12 @@ def authorize_server_owned_run(
         raise ValueError("run_id is required")
 
     principal = token_verifier.verify(access_token)
+    if lock_for_mutation:
+        lock_county_run_identity(
+            connection,
+            tenant_id=tenant_id,
+            run_id=run_id,
+        )
     identity = load_run_identity(
         connection,
         tenant_id=tenant_id,
