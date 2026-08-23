@@ -9,7 +9,6 @@ from pydantic import Field, model_validator
 from .models import ReviewStatus, StrictModel
 
 ForecastModelFamily = Literal["statistical", "deterministic_scenario"]
-ForecastModelLifecycle = Literal["candidate", "active", "suspended", "retired"]
 ForecastApprovalDecision = Literal["approved", "rejected", "suspended"]
 BacktestPolicyStatus = Literal["passes", "blocked"]
 ModelExecutionStatus = Literal["ready", "blocked"]
@@ -22,7 +21,6 @@ class ForecastModelRegistration(StrictModel):
     model_family: ForecastModelFamily
     implementation_ref: str = Field(min_length=1)
     implementation_hash: str = Field(pattern=r"^sha256:[0-9a-fA-F]{64}$")
-    lifecycle_status: ForecastModelLifecycle = "candidate"
     supported_metric_semantics_ids: list[str] = Field(min_length=1)
     allowed_source_ids: list[str] = Field(min_length=1)
     minimum_points: int = Field(default=4, ge=2)
@@ -30,6 +28,14 @@ class ForecastModelRegistration(StrictModel):
     intervals_required: bool = True
     registered_by: str = Field(min_length=1)
     registered_at: datetime
+
+    @model_validator(mode="after")
+    def validate_registration(self) -> "ForecastModelRegistration":
+        if len(set(self.supported_metric_semantics_ids)) != len(self.supported_metric_semantics_ids):
+            raise ValueError("supported metric semantics IDs must be unique")
+        if len(set(self.allowed_source_ids)) != len(self.allowed_source_ids):
+            raise ValueError("allowed source IDs must be unique")
+        return self
 
 
 class ForecastBacktestCase(StrictModel):
@@ -59,6 +65,8 @@ class ForecastBacktestCase(StrictModel):
                 raise ValueError("backtest interval lower bound cannot exceed upper bound")
         if self.holdout_measure_id in self.training_measure_ids:
             raise ValueError("holdout observation cannot also be a training observation")
+        if len(set(self.training_measure_ids)) != len(self.training_measure_ids):
+            raise ValueError("training measure IDs must be unique")
         return self
 
     @property
@@ -132,6 +140,8 @@ class BacktestPolicyEvaluation(StrictModel):
 
 
 class ForecastModelApproval(StrictModel):
+    """Human governance decision. This is distinct from deterministic policy evaluation."""
+
     id: str = Field(min_length=1)
     model_version: str = Field(min_length=1)
     metric_semantics_id: str = Field(min_length=1)
@@ -269,8 +279,6 @@ def authorize_forecast_model_execution(
     """Require registration, passing backtests and a separate human approval record."""
 
     reasons: list[str] = []
-    if registration.lifecycle_status != "active":
-        reasons.append("model_not_active")
     if registration.model_version != approval.model_version:
         reasons.append("approval_model_version_mismatch")
     if registration.model_version != policy_evaluation.model_version:
