@@ -104,6 +104,7 @@
         "schema_version": "evaluation-observations.v1",
         "review_status": "verified"
       },
+      "geography_level": "county",
       "value": 14,
       "numeric_value": 14,
       "confidence_low": null,
@@ -111,6 +112,11 @@
       "margin_of_error": null,
       "data_period_start": "2023-01-01",
       "data_period_end": "2023-12-31",
+      "source_metadata": {
+        "evaluationFixture": true,
+        "publishable": false,
+        "comparisonInterpretation": "adverse_signal"
+      },
       "review_status": "verified"
     }
   ],
