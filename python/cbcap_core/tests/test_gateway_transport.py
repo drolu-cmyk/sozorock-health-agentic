@@ -97,6 +97,11 @@ def test_transport_requires_https_and_exact_gateway_path():
     with pytest.raises(ValueError, match="path"):
         EvidenceGatewayHttpClient("https://health.sozorockfoundation.org/explore")
 
+    with pytest.raises(ValueError, match="path"):
+        EvidenceGatewayHttpClient(
+            "https://health.sozorockfoundation.org/internal/api/evidence/v1/gateway"
+        )
+
 
 def test_transport_rejects_embedded_credentials_and_query_configuration():
     with pytest.raises(ValueError, match="authority"):
@@ -108,3 +113,13 @@ def test_transport_rejects_embedded_credentials_and_query_configuration():
         EvidenceGatewayHttpClient(
             "https://health.sozorockfoundation.org/api/evidence/v1/gateway?geoid=36001"
         )
+
+
+def test_transport_rejects_unvalidated_conditional_etag_before_network_access():
+    client = EvidenceGatewayHttpClient(
+        "https://health.sozorockfoundation.org/api/evidence/v1/gateway"
+    )
+    with pytest.raises(ValueError, match="ETag"):
+        client.fetch_county("36001", etag='W/"untrusted-cache-token"')
+    with pytest.raises(ValueError, match="ETag"):
+        client.fetch_county("36001", etag="release\r\nInjected: value")
