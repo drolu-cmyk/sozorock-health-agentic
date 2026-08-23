@@ -14,6 +14,15 @@ from .barriers import (
 )
 from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
 from .evidence_adapter import hydrate_public_evidence, select_county_public_evidence
+from .funding import (
+    FundingApplicantProfile,
+    FundingCriterion,
+    FundingCriterionResult,
+    FundingEvaluationRequest,
+    FundingEvaluationResult,
+    FundingTrajectoryEvent,
+    evaluate_funding_fit,
+)
 from .gateway import (
     PUBLIC_EVIDENCE_CORE_COMPATIBILITY,
     SHARED_EVIDENCE_CONTRACT_VERSION,
@@ -101,6 +110,13 @@ from .visualization import (
     VisualizationRequest,
     select_visualization,
 )
+from .workspace import (
+    DecisionWorkspaceContract,
+    DecisionWorkspaceRequest,
+    WorkspaceBlocker,
+    WorkspaceEvidenceStatus,
+    build_decision_workspace,
+)
 
 __all__ = [
     "AgentRun",
@@ -126,6 +142,8 @@ __all__ = [
     "CountyGraphContext",
     "CountyGraphState",
     "CountyRunState",
+    "DecisionWorkspaceContract",
+    "DecisionWorkspaceRequest",
     "DocumentTrust",
     "EvidenceClaim",
     "EvidenceGatewayManifest",
@@ -133,8 +151,14 @@ __all__ = [
     "EvidenceGatewayResponse",
     "ExtractionMethod",
     "ForecastResult",
+    "FundingApplicantProfile",
+    "FundingCriterion",
+    "FundingCriterionResult",
+    "FundingEvaluationRequest",
+    "FundingEvaluationResult",
     "FundingFit",
     "FundingOpportunity",
+    "FundingTrajectoryEvent",
     "GeographyKind",
     "GeographyRef",
     "GeographyRelationshipRef",
@@ -172,15 +196,19 @@ __all__ = [
     "VisualizationDecision",
     "VisualizationRequest",
     "WorkflowFlags",
+    "WorkspaceBlocker",
+    "WorkspaceEvidenceStatus",
     "PUBLIC_EVIDENCE_CORE_COMPATIBILITY",
     "SHARED_EVIDENCE_CONTRACT_VERSION",
     "admit_planning_evidence",
     "assert_public_package",
     "build_county_planning_graph",
+    "build_decision_workspace",
     "build_planning_research_graph",
     "checkpoint_thread_config",
     "classify_barrier_measure",
     "classify_barrier_measures",
+    "evaluate_funding_fit",
     "find_barrier_rule",
     "hydrate_public_evidence",
     "initial_graph_state",
