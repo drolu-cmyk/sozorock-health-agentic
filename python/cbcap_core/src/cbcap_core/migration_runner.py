@@ -13,6 +13,11 @@ from psycopg import sql
 RUNTIME_ROLE = "cbcap_runtime"
 MIGRATION_TABLE = "cbcap_schema_migration"
 MIGRATION_LOCK_ID = 742915860231
+RUNTIME_SELECT_TABLES = (
+    "workspace_membership_event",
+    "county_run_identity",
+    "county_run_state_version",
+)
 RUNTIME_INSERT_TABLES = (
     "county_run_identity",
     "county_run_state_version",
@@ -130,6 +135,28 @@ def _apply_migrations(connection: psycopg.Connection, root: Path) -> None:
             )
 
 
+def _grant_table_privilege(
+    connection: psycopg.Connection,
+    *,
+    role: sql.Identifier,
+    table_name: str,
+    privilege: str,
+) -> None:
+    relation = connection.execute(
+        "SELECT to_regclass(%s)",
+        (f"cbcap.{table_name}",),
+    ).fetchone()[0]
+    if relation is None:
+        raise RuntimeError(f"required runtime {privilege.lower()} table cbcap.{table_name} is missing")
+    if privilege not in {"SELECT", "INSERT"}:
+        raise ValueError("unsupported runtime table privilege")
+    connection.execute(
+        sql.SQL(f"GRANT {privilege} ON TABLE cbcap.{{}} TO {{}}").format(
+            sql.Identifier(table_name), role
+        )
+    )
+
+
 def _ensure_runtime_role(
     connection: psycopg.Connection,
     *,
@@ -164,42 +191,34 @@ def _ensure_runtime_role(
     )
     connection.execute(sql.SQL("GRANT USAGE ON SCHEMA cbcap TO {}").format(role))
 
-    # The runtime may read governed state, but it must not inherit write access
-    # to every new authority ledger merely because a migration added a table.
-    # Reset existing grants on every migration run, then grant only the write
-    # surfaces exercised by the live runtime API. Membership administration,
-    # forecast governance, publication authorization and tenant-evidence review
-    # remain master/admin-controlled until a separately scoped service exists.
+    # The shared HTTP runtime receives no blanket table privileges. It can read
+    # only the server-owned membership/run state needed to authorize requests,
+    # and can append only the four records produced by live run operations.
+    # Tenant evidence metadata, decision memory, publication authorization,
+    # funding and forecast governance remain inaccessible to this DB principal.
     connection.execute(
         sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA cbcap FROM {}").format(role)
     )
-    connection.execute(
-        sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA cbcap TO {}").format(role)
-    )
-
+    for table_name in RUNTIME_SELECT_TABLES:
+        _grant_table_privilege(
+            connection,
+            role=role,
+            table_name=table_name,
+            privilege="SELECT",
+        )
     for table_name in RUNTIME_INSERT_TABLES:
-        relation = connection.execute(
-            "SELECT to_regclass(%s)",
-            (f"cbcap.{table_name}",),
-        ).fetchone()[0]
-        if relation is None:
-            raise RuntimeError(f"required runtime write table cbcap.{table_name} is missing")
-        connection.execute(
-            sql.SQL("GRANT INSERT ON TABLE cbcap.{} TO {}").format(
-                sql.Identifier(table_name), role
-            )
+        _grant_table_privilege(
+            connection,
+            role=role,
+            table_name=table_name,
+            privilege="INSERT",
         )
 
-    # Future tables default to read-only for the shared runtime role. A future
-    # release must explicitly opt a new table into RUNTIME_INSERT_TABLES.
+    # New migration tables default to no access. A release must explicitly add
+    # a table above after its runtime need and security boundary are reviewed.
     connection.execute(
         sql.SQL(
             "ALTER DEFAULT PRIVILEGES IN SCHEMA cbcap REVOKE ALL ON TABLES FROM {}"
-        ).format(role)
-    )
-    connection.execute(
-        sql.SQL(
-            "ALTER DEFAULT PRIVILEGES IN SCHEMA cbcap GRANT SELECT ON TABLES TO {}"
         ).format(role)
     )
 
