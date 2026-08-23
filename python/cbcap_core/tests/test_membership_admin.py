@@ -58,6 +58,16 @@ def request(*, decision="granted", role="admin", geography_ids=("county:36001",)
     )
 
 
+def membership_env(monkeypatch):
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_DECISION", "granted")
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_ROLE", "planner")
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_TENANT_ID", TENANT)
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_VERSION", "grant:v1")
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_RECORDED_BY", "aws-admin")
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_GEOGRAPHY_IDS", "county:36001,county:36093")
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_EXPIRES_AT", "2027-08-23T18:30:00Z")
+
+
 def test_admin_principal_key_matches_runtime_authorization_identity():
     principal = VerifiedExternalPrincipal(
         subject=SUBJECT,
@@ -71,15 +81,10 @@ def test_admin_principal_key_matches_runtime_authorization_identity():
 
 
 def test_admin_environment_requires_canonical_county_scope(monkeypatch):
-    monkeypatch.setenv("CB_CAP_MEMBERSHIP_DECISION", "granted")
-    monkeypatch.setenv("CB_CAP_MEMBERSHIP_ROLE", "planner")
-    monkeypatch.setenv("CB_CAP_MEMBERSHIP_TENANT_ID", TENANT)
-    monkeypatch.setenv("CB_CAP_MEMBERSHIP_VERSION", "grant:v1")
-    monkeypatch.setenv("CB_CAP_MEMBERSHIP_RECORDED_BY", "aws-admin")
+    membership_env(monkeypatch)
     monkeypatch.setenv("CB_CAP_MEMBERSHIP_PRINCIPAL_ISSUER", ISSUER)
     monkeypatch.setenv("CB_CAP_MEMBERSHIP_PRINCIPAL_SUBJECT", SUBJECT)
-    monkeypatch.setenv("CB_CAP_MEMBERSHIP_GEOGRAPHY_IDS", "county:36001,county:36093")
-    monkeypatch.setenv("CB_CAP_MEMBERSHIP_EXPIRES_AT", "2027-08-23T18:30:00Z")
+    monkeypatch.delenv("CB_CAP_MEMBERSHIP_PRINCIPAL_KEY", raising=False)
 
     parsed = MembershipAdminRequest.from_env()
     assert parsed.role == "planner"
@@ -91,14 +96,28 @@ def test_admin_environment_requires_canonical_county_scope(monkeypatch):
         MembershipAdminRequest.from_env()
 
 
+def test_admin_environment_prefers_opaque_principal_key_without_raw_subject(monkeypatch):
+    membership_env(monkeypatch)
+    opaque = _principal_key(issuer=ISSUER, subject=SUBJECT)
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_PRINCIPAL_KEY", opaque)
+    monkeypatch.delenv("CB_CAP_MEMBERSHIP_PRINCIPAL_ISSUER", raising=False)
+    monkeypatch.delenv("CB_CAP_MEMBERSHIP_PRINCIPAL_SUBJECT", raising=False)
+
+    parsed = MembershipAdminRequest.from_env()
+    assert parsed.principal_key == opaque
+
+    monkeypatch.setenv("CB_CAP_MEMBERSHIP_PRINCIPAL_KEY", "principal:raw-subject")
+    with pytest.raises(ValueError, match="PRINCIPAL_KEY is invalid"):
+        MembershipAdminRequest.from_env()
+
+
 def test_grant_requires_at_least_one_county_but_revoke_may_be_empty(monkeypatch):
     common = {
         "CB_CAP_MEMBERSHIP_ROLE": "admin",
         "CB_CAP_MEMBERSHIP_TENANT_ID": TENANT,
         "CB_CAP_MEMBERSHIP_VERSION": "event:v1",
         "CB_CAP_MEMBERSHIP_RECORDED_BY": "aws-admin",
-        "CB_CAP_MEMBERSHIP_PRINCIPAL_ISSUER": ISSUER,
-        "CB_CAP_MEMBERSHIP_PRINCIPAL_SUBJECT": SUBJECT,
+        "CB_CAP_MEMBERSHIP_PRINCIPAL_KEY": _principal_key(issuer=ISSUER, subject=SUBJECT),
         "CB_CAP_MEMBERSHIP_GEOGRAPHY_IDS": "",
     }
     for key, value in common.items():
