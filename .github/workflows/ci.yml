@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  node-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,3 +16,15 @@ jobs:
           node-version: "20"
       - run: npm install
       - run: npm test
+
+  cbcap-contract-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CB-CAP core
+        run: python -m pip install -e "python/cbcap_core[test]"
+      - name: Run typed contract tests
+        run: pytest python/cbcap_core/tests
