@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Callable, Protocol
 from uuid import uuid4
 
-from .authorization import AuthorizedActor
+from .authorization import AuthorizedActor, require_actor_capability
 from .gateway_transport import EvidenceGatewayHttpClient
 from .identity_adapter import (
     IdentityProjectionPolicy,
@@ -139,8 +139,8 @@ def create_server_owned_run(
 
     Only the county FIPS is accepted as selection input. Run ID, canonical county
     geography, run state, actor, role and capabilities are produced server side.
-    Public evidence is fetched only after a verified principal has a current
-    membership grant for the selected county.
+    Public evidence is fetched only after a verified principal has both current
+    membership and execution authority for the selected county.
     """
 
     tenant_id = _validated_tenant(tenant_id)
@@ -167,6 +167,13 @@ def create_server_owned_run(
         principal,
         membership,
         identity_policy,
+        as_of=now,
+    )
+    require_actor_capability(
+        actor,
+        "execute_county_run",
+        geography_id=expected_geography_id,
+        run_id=run_id,
         as_of=now,
     )
 
