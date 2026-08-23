@@ -37,6 +37,21 @@ class GeographyKind(StrEnum):
     COUNTY_SUBDIVISION = "county_subdivision"
 
 
+ObservationGeographyLevel = Literal[
+    "state",
+    "county",
+    "census_place",
+    "zcta",
+    "postal_zip",
+    "planning_region",
+    "census_tract",
+    "county_subdivision",
+    "population_group",
+    "facility",
+    "source_designation",
+]
+
+
 class Confidence(StrEnum):
     HIGH = "high"
     MODERATE = "moderate"
@@ -248,6 +263,7 @@ class Measure(StrictModel):
     semantics: MetricSemantics
     geography: GeographyRef
     source_version: SourceVersionRef
+    geography_level: ObservationGeographyLevel | None = None
     value: float | int | str | bool | None
     numeric_value: float | None = None
     confidence_low: float | None = None
@@ -255,6 +271,7 @@ class Measure(StrictModel):
     margin_of_error: float | None = None
     data_period_start: date | None = None
     data_period_end: date | None = None
+    source_metadata: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
     review_status: ReviewStatus
 
 
