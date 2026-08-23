@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 import psycopg
@@ -24,6 +25,7 @@ RUNTIME_INSERT_TABLES = (
     "trajectory_event",
     "run_observation",
 )
+RuntimeTablePrivilege = Literal["SELECT", "INSERT"]
 
 
 def _required_env(name: str) -> str:
@@ -140,7 +142,7 @@ def _grant_table_privilege(
     *,
     role: sql.Identifier,
     table_name: str,
-    privilege: str,
+    privilege: RuntimeTablePrivilege,
 ) -> None:
     relation = connection.execute(
         "SELECT to_regclass(%s)",
@@ -148,13 +150,14 @@ def _grant_table_privilege(
     ).fetchone()[0]
     if relation is None:
         raise RuntimeError(f"required runtime {privilege.lower()} table cbcap.{table_name} is missing")
-    if privilege not in {"SELECT", "INSERT"}:
+
+    if privilege == "SELECT":
+        statement = sql.SQL("GRANT SELECT ON TABLE cbcap.{} TO {}")
+    elif privilege == "INSERT":
+        statement = sql.SQL("GRANT INSERT ON TABLE cbcap.{} TO {}")
+    else:  # pragma: no cover - Literal plus explicit branches are defense in depth.
         raise ValueError("unsupported runtime table privilege")
-    connection.execute(
-        sql.SQL(f"GRANT {privilege} ON TABLE cbcap.{{}} TO {{}}").format(
-            sql.Identifier(table_name), role
-        )
-    )
+    connection.execute(statement.format(sql.Identifier(table_name), role))
 
 
 def _ensure_runtime_role(
