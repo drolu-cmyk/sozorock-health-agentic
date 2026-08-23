@@ -11,6 +11,10 @@ from .identity_adapter import VerifiedExternalPrincipal
 from .models import StrictModel
 
 
+class CognitoAuthenticationError(PermissionError):
+    """Authentication failure safe for mapping to an HTTP 401 boundary."""
+
+
 class CognitoVerifierSettings(StrictModel):
     region: str = Field(pattern=r"^[a-z]{2}(?:-gov)?-[a-z]+-\d$")
     user_pool_id: str = Field(pattern=r"^[a-z]{2}(?:-gov)?-[a-z]+-\d_[A-Za-z0-9]+$")
@@ -62,27 +66,33 @@ class CognitoAccessTokenVerifier:
     def _required_string(payload: dict[str, Any], name: str) -> str:
         value = payload.get(name)
         if not isinstance(value, str) or not value.strip():
-            raise PermissionError(f"verified Cognito token is missing required {name} claim")
+            raise CognitoAuthenticationError(
+                f"verified Cognito token is missing required {name} claim"
+            )
         return value
 
     @staticmethod
     def _required_epoch(payload: dict[str, Any], name: str) -> datetime:
         value = payload.get(name)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise PermissionError(f"verified Cognito token has invalid {name} claim")
+            raise CognitoAuthenticationError(
+                f"verified Cognito token has invalid {name} claim"
+            )
         try:
             return datetime.fromtimestamp(float(value), tz=timezone.utc)
         except (OverflowError, OSError, ValueError) as exc:
-            raise PermissionError(f"verified Cognito token has invalid {name} claim") from exc
+            raise CognitoAuthenticationError(
+                f"verified Cognito token has invalid {name} claim"
+            ) from exc
 
     def verify(self, token: str) -> VerifiedExternalPrincipal:
         candidate = token.strip()
         if not candidate:
-            raise PermissionError("Cognito access token is required")
+            raise CognitoAuthenticationError("Cognito access token is required")
         if len(candidate.encode("utf-8")) > self.settings.max_token_bytes:
-            raise PermissionError("Cognito access token exceeds the accepted size")
+            raise CognitoAuthenticationError("Cognito access token exceeds the accepted size")
         if candidate.count(".") != 2:
-            raise PermissionError("Cognito access token format is invalid")
+            raise CognitoAuthenticationError("Cognito access token format is invalid")
 
         try:
             signing_key = self._jwks.get_signing_key_from_jwt(candidate)
@@ -106,29 +116,33 @@ class CognitoAccessTokenVerifier:
                 },
             )
         except (InvalidTokenError, PyJWKClientError, OSError, TimeoutError) as exc:
-            raise PermissionError("Cognito access token verification failed") from exc
+            raise CognitoAuthenticationError("Cognito access token verification failed") from exc
 
         if not isinstance(payload, dict):
-            raise PermissionError("Cognito access token payload is invalid")
+            raise CognitoAuthenticationError("Cognito access token payload is invalid")
         if self._required_string(payload, "iss") != self.settings.issuer:
-            raise PermissionError("Cognito access token issuer is invalid")
+            raise CognitoAuthenticationError("Cognito access token issuer is invalid")
         if self._required_string(payload, "client_id") != self.settings.app_client_id:
-            raise PermissionError("Cognito access token app client is invalid")
+            raise CognitoAuthenticationError("Cognito access token app client is invalid")
         if self._required_string(payload, "token_use") != "access":
-            raise PermissionError("Cognito token is not an access token")
+            raise CognitoAuthenticationError("Cognito token is not an access token")
 
         if self.settings.resource_audience is not None:
             audience = payload.get("aud")
             if audience != self.settings.resource_audience:
-                raise PermissionError("Cognito access token resource audience is invalid")
+                raise CognitoAuthenticationError(
+                    "Cognito access token resource audience is invalid"
+                )
 
         scope_value = payload.get("scope", "")
         if scope_value is not None and not isinstance(scope_value, str):
-            raise PermissionError("Cognito access token scope claim is invalid")
+            raise CognitoAuthenticationError("Cognito access token scope claim is invalid")
         token_scopes = set((scope_value or "").split())
         missing_scopes = sorted(set(self.settings.required_scopes) - token_scopes)
         if missing_scopes:
-            raise PermissionError("Cognito access token is missing required API scope")
+            raise CognitoAuthenticationError(
+                "Cognito access token is missing required API scope"
+            )
 
         subject = self._required_string(payload, "sub")
         token_id = self._required_string(payload, "jti")
@@ -136,9 +150,11 @@ class CognitoAccessTokenVerifier:
         expires_at = self._required_epoch(payload, "exp")
         issued_at = self._required_epoch(payload, "iat")
         if authenticated_at > issued_at:
-            raise PermissionError("Cognito access token authentication time is invalid")
+            raise CognitoAuthenticationError(
+                "Cognito access token authentication time is invalid"
+            )
         if issued_at >= expires_at:
-            raise PermissionError("Cognito access token lifetime is invalid")
+            raise CognitoAuthenticationError("Cognito access token lifetime is invalid")
 
         return VerifiedExternalPrincipal(
             subject=subject,
