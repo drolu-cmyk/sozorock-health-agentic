@@ -2,6 +2,16 @@ BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS cbcap;
 
+CREATE OR REPLACE FUNCTION cbcap.prevent_immutable_record_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION
+    '%.% is append-only; create a new record instead of mutating history',
+    TG_TABLE_SCHEMA,
+    TG_TABLE_NAME;
+END;
+$$;
+
 CREATE TABLE IF NOT EXISTS cbcap.decision_memory (
   id text PRIMARY KEY,
   tenant_id text NOT NULL CHECK (length(btrim(tenant_id)) > 0),
@@ -72,8 +82,13 @@ CREATE POLICY decision_memory_tenant_isolation
     tenant_id = nullif(current_setting('app.tenant_id', true), '')
   );
 
+DROP TRIGGER IF EXISTS decision_memory_append_only ON cbcap.decision_memory;
+CREATE TRIGGER decision_memory_append_only
+BEFORE UPDATE OR DELETE ON cbcap.decision_memory
+FOR EACH ROW EXECUTE FUNCTION cbcap.prevent_immutable_record_mutation();
+
 COMMENT ON TABLE cbcap.decision_memory IS
-  'Tenant-private reviewed planning decisions and proposals. This table stores structured institutional memory, not conversation transcripts.';
+  'Tenant-private append-only planning decisions and proposals. This table stores structured institutional memory, not conversation transcripts.';
 
 COMMENT ON COLUMN cbcap.decision_memory.evidence_entity_ids IS
   'Evidence Graph entity IDs that support the decision. Reviewed memory should remain traceable to governed evidence.';
