@@ -1,4 +1,6 @@
+import json
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 from langgraph.types import Command
 
@@ -18,6 +20,7 @@ from cbcap_core.models import (
 )
 
 NOW = datetime(2026, 8, 22, 22, 0, tzinfo=timezone.utc)
+FIXTURE = Path(__file__).parent / "fixtures" / "evidence-gateway-v1.json"
 
 
 def county() -> GeographyRef:
@@ -116,6 +119,10 @@ def hydrated_run(*, run_id: str = "run-graph") -> CountyRunState:
     )
 
 
+def gateway_package() -> dict:
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
 def config(thread_id: str) -> dict:
     return {"configurable": {"thread_id": thread_id}}
 
@@ -144,6 +151,32 @@ def test_hydrated_graph_run_completes_without_model_tokens():
     assert final.flags.safe_to_publish is True
     assert budget.model_tokens_used == 0
     assert budget.model_cost_usd == 0
+    assert len(result["branch_payloads"]) == 4
+
+
+def test_public_gateway_package_isolated_then_merged_at_join():
+    graph = build_county_planning_graph()
+    run = hydrated_run(run_id="gateway-run")
+    run_payload = run.model_dump(mode="python")
+    run_payload["measures"] = [
+        item for item in run.measures if item.source_version.source_id.startswith(("hrsa", "ahrf"))
+    ]
+    run = CountyRunState.model_validate(run_payload)
+
+    result = graph.invoke(
+        initial_graph_state(run),
+        config=config("gateway"),
+        context=CountyGraphContext(public_evidence_package=gateway_package()),
+    )
+    final = CountyRunState.model_validate(result["county_run"])
+    assert final.status == RunStatus.COMPLETED
+    assert "observation:albany-adverse" in {item.id for item in final.measures}
+
+    public_payload = next(
+        item for item in result["branch_payloads"] if item["branch"] == "public_evidence"
+    )
+    assert public_payload["source_release_ids"] == ["cross-repo-fixture-v1"]
+    assert [item["id"] for item in public_payload["measures"]] == ["observation:albany-adverse"]
 
 
 def test_conflict_interrupt_requires_review_and_can_resume():
@@ -184,3 +217,4 @@ def test_cancelled_run_never_fans_out():
     assert final.status == RunStatus.CANCELLED
     assert final.flags.safe_to_publish is False
     assert result["branch_results"] == []
+    assert result["branch_payloads"] == []
