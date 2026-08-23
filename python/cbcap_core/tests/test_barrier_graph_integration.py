@@ -15,6 +15,7 @@ from cbcap_core import (
     build_county_planning_graph,
     initial_graph_state,
 )
+from cbcap_core.gateway import PublicEvidencePackage, SourceCoverageAssertion
 
 NOW = datetime(2026, 8, 22, 22, 0, tzinfo=timezone.utc)
 
@@ -71,50 +72,107 @@ def transportation_measure() -> Measure:
         semantics=semantics,
         geography=county(),
         source_version=source("cdc-places", "PLACES"),
+        geography_level="county",
         value=9.4,
         numeric_value=9.4,
+        source_metadata={},
         review_status=ReviewStatus.VERIFIED,
     )
 
 
-def public_package() -> dict:
-    measure = transportation_measure()
-    return {
-        "contract_version": "sozorock.evidence-gateway.v1",
-        "release_id": "barrier-integration-release",
-        "generated_at": NOW.isoformat(),
-        "geographies": [county().model_dump(mode="json")],
-        "geography_relationships": [],
-        "metric_semantics": [measure.semantics.model_dump(mode="json")],
-        "measures": [measure.model_dump(mode="json")],
-        "source_versions": [measure.source_version.model_dump(mode="json")],
-    }
-
-
-def run_with_non_barrier_requirements() -> CountyRunState:
-    workforce_semantics = MetricSemantics(
-        id="primary_care_shortage",
-        source_measure_id="HPSA_PRIMARY_CARE",
-        name="Primary care shortage context",
-        description="Controlled workforce evidence.",
+def hpsa_measure() -> Measure:
+    semantics = MetricSemantics(
+        id="hpsa-designation",
+        source_measure_id="HPSA_DESIGNATION",
+        name="Current HRSA shortage-area designation",
+        description="Official HPSA designation with retained source scope.",
         direction="contextual",
         higher_value_meaning="context_dependent",
         unit="designation",
-        universe="county",
+        universe="HRSA shortage-area designations",
         adjustment="not_applicable",
         comparison_policy="context_only",
         allowed_geography_kinds=[GeographyKind.COUNTY],
         review_status=ReviewStatus.VERIFIED,
     )
-    workforce = Measure(
-        id="measure:primary-care-shortage:36001",
-        semantics=workforce_semantics,
+    return Measure(
+        id="measure:hpsa:primary-care:36001",
+        semantics=semantics,
         geography=county(),
         source_version=source("hrsa-workforce", "HPSA"),
-        value=True,
-        numeric_value=None,
+        geography_level="county",
+        value="Designated",
+        numeric_value=17.0,
+        data_period_start=date(2024, 1, 1),
+        source_metadata={
+            "designationName": "Albany County Primary Care HPSA",
+            "designationType": "Geographic HPSA",
+            "componentType": "Single County",
+            "discipline": "Primary Care",
+            "designationStatus": "Designated",
+            "lastUpdateDate": "2026-08-20",
+            "wholeCountyGeographicDesignation": True,
+            "sourceGeographyIdentificationNumber": "36001",
+        },
         review_status=ReviewStatus.VERIFIED,
     )
+
+
+def hpsa_coverage() -> list[SourceCoverageAssertion]:
+    hrsa = source("hrsa-workforce", "HPSA")
+    return [
+        SourceCoverageAssertion(
+            id="coverage:hpsa:primary:36001",
+            source_id="hrsa-workforce",
+            source_version_id=hrsa.source_version_id,
+            geography_id=county().id,
+            coverage_key="hpsa:primary_care",
+            status="complete_with_records",
+            records_matched=1,
+            evaluated_at=NOW,
+            review_status=ReviewStatus.VERIFIED,
+        ),
+        SourceCoverageAssertion(
+            id="coverage:hpsa:dental:36001",
+            source_id="hrsa-workforce",
+            source_version_id=hrsa.source_version_id,
+            geography_id=county().id,
+            coverage_key="hpsa:dental",
+            status="complete_no_records",
+            records_matched=0,
+            evaluated_at=NOW,
+            review_status=ReviewStatus.VERIFIED,
+        ),
+        SourceCoverageAssertion(
+            id="coverage:hpsa:mental:36001",
+            source_id="hrsa-workforce",
+            source_version_id=hrsa.source_version_id,
+            geography_id=county().id,
+            coverage_key="hpsa:mental_health",
+            status="complete_no_records",
+            records_matched=0,
+            evaluated_at=NOW,
+            review_status=ReviewStatus.VERIFIED,
+        ),
+    ]
+
+
+def public_package() -> dict:
+    transportation = transportation_measure()
+    hpsa = hpsa_measure()
+    package = PublicEvidencePackage(
+        release_id="barrier-integration-release",
+        generated_at=NOW,
+        geographies=[county()],
+        metric_semantics=[transportation.semantics, hpsa.semantics],
+        measures=[transportation, hpsa],
+        source_versions=[transportation.source_version, hpsa.source_version],
+        source_coverage=hpsa_coverage(),
+    )
+    return package.model_dump(mode="json")
+
+
+def run_with_non_barrier_requirements() -> CountyRunState:
     plan = PlanDocument(
         id="plan:albany-chip",
         source_document_id="document:albany-chip",
@@ -132,7 +190,6 @@ def run_with_non_barrier_requirements() -> CountyRunState:
         run_id="barrier-auto-run",
         county=county(),
         requested_at=NOW,
-        measures=[workforce],
         plan_documents=[plan],
     )
 
@@ -148,9 +205,15 @@ def test_public_gateway_measure_creates_barrier_observation_without_model_call()
     final = CountyRunState.model_validate(result["county_run"])
     assert final.status == RunStatus.COMPLETED
     assert final.flags.safe_to_publish is True
-    assert len(final.barrier_observations) == 1
-    assert final.barrier_observations[0].barrier_family == BarrierFamily.TRANSPORTATION_TRAVEL
-    assert final.barrier_observations[0].observed_value == 9.4
+    assert {item.barrier_family for item in final.barrier_observations} == {
+        BarrierFamily.TRANSPORTATION_TRAVEL,
+        BarrierFamily.WORKFORCE,
+    }
+    transportation = next(
+        item for item in final.barrier_observations
+        if item.barrier_family == BarrierFamily.TRANSPORTATION_TRAVEL
+    )
+    assert transportation.observed_value == 9.4
     assert any(
         item["stage"] == "barrier_classification" and item["outcome"] == "admitted"
         for item in result["trajectory_events"]
@@ -173,7 +236,9 @@ def test_unmapped_public_measure_blocks_barrier_branch_instead_of_guessing():
     final = CountyRunState.model_validate(result["county_run"])
     assert final.status == RunStatus.BLOCKED
     assert final.flags.safe_to_publish is False
-    assert final.barrier_observations == []
+    assert {item.barrier_family for item in final.barrier_observations} == {
+        BarrierFamily.WORKFORCE
+    }
     assert any(
         item["stage"] == "barrier_classification"
         and item["outcome"] == "rejected"
