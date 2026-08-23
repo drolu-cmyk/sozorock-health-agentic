@@ -10,24 +10,24 @@ from langgraph.runtime import Runtime
 from langgraph.types import RetryPolicy, interrupt
 from pydantic import Field
 
+from .evidence_adapter import select_county_public_evidence
 from .models import (
+    BarrierObservation,
     Conflict,
     CountyRunState,
+    EvidenceClaim,
+    Measure,
+    Organization,
+    PlanDocument,
     ReviewDecision,
     ReviewStatus,
     RunStatus,
+    SourceDocument,
     StrictModel,
     WorkflowFlags,
 )
 
-
-BranchName = Literal[
-    "public_evidence",
-    "planning_documents",
-    "workforce_designations",
-    "barrier_evidence",
-]
-
+BranchName = Literal["public_evidence", "planning_documents", "workforce_designations", "barrier_evidence"]
 REQUIRED_BRANCHES: tuple[BranchName, ...] = (
     "public_evidence",
     "planning_documents",
@@ -37,8 +37,6 @@ REQUIRED_BRANCHES: tuple[BranchName, ...] = (
 
 
 class RunBudget(StrictModel):
-    """Run-level cost and activity budget independent of any model provider."""
-
     max_model_tokens: int = Field(default=0, ge=0)
     max_model_cost_usd: float = Field(default=0.0, ge=0)
     max_external_calls: int = Field(default=100, ge=0)
@@ -65,6 +63,28 @@ class BranchResult(StrictModel):
     external_calls_used: int = Field(default=0, ge=0)
 
 
+class BranchPayload(StrictModel):
+    id: str = Field(min_length=1)
+    branch: BranchName
+    source_release_ids: list[str] = Field(default_factory=list)
+    source_documents: list[SourceDocument] = Field(default_factory=list)
+    evidence_claims: list[EvidenceClaim] = Field(default_factory=list)
+    measures: list[Measure] = Field(default_factory=list)
+    barrier_observations: list[BarrierObservation] = Field(default_factory=list)
+    plan_documents: list[PlanDocument] = Field(default_factory=list)
+    organizations: list[Organization] = Field(default_factory=list)
+
+    def evidence_ids(self) -> list[str]:
+        return [
+            *[item.id for item in self.source_documents],
+            *[item.id for item in self.evidence_claims],
+            *[item.id for item in self.measures],
+            *[item.id for item in self.barrier_observations],
+            *[item.id for item in self.plan_documents],
+            *[item.id for item in self.organizations],
+        ]
+
+
 class GraphAuditEvent(StrictModel):
     id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)
@@ -73,13 +93,8 @@ class GraphAuditEvent(StrictModel):
     occurred_at: datetime
 
 
-def _merge_unique_records(
-    existing: list[dict[str, Any]] | None,
-    incoming: list[dict[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    """Replay-safe reducer keyed by stable record id."""
-
-    merged: dict[str, dict[str, Any]] = {}
+def _merge_unique_records(existing, incoming):
+    merged = {}
     for record in [*(existing or []), *(incoming or [])]:
         record_id = str(record.get("id", ""))
         if not record_id:
@@ -89,223 +104,220 @@ def _merge_unique_records(
 
 
 class CountyGraphState(TypedDict, total=False):
-    """Operational graph envelope around canonical CountyRunState."""
-
     county_run: dict[str, Any]
     budget: dict[str, Any]
     branch_results: Annotated[list[dict[str, Any]], _merge_unique_records]
+    branch_payloads: Annotated[list[dict[str, Any]], _merge_unique_records]
     audit_events: Annotated[list[dict[str, Any]], _merge_unique_records]
     review_outcome: str | None
 
 
 @dataclass(frozen=True)
 class CountyGraphContext:
-    """Immutable runtime context. External prose is never graph control state."""
-
     simulate_source_conflict: bool = False
     untrusted_source_text: str | None = None
+    public_evidence_package: dict[str, Any] | None = None
 
 
-def initial_graph_state(
-    county_run: CountyRunState,
-    *,
-    budget: RunBudget | None = None,
-) -> CountyGraphState:
+def initial_graph_state(county_run: CountyRunState, *, budget: RunBudget | None = None) -> CountyGraphState:
     return {
         "county_run": county_run.model_dump(mode="json"),
         "budget": (budget or RunBudget()).model_dump(mode="json"),
         "branch_results": [],
+        "branch_payloads": [],
         "audit_events": [],
         "review_outcome": None,
     }
 
 
-def _load_run(state: CountyGraphState) -> CountyRunState:
+def _load_run(state):
     return CountyRunState.model_validate(state["county_run"])
 
 
-def _load_budget(state: CountyGraphState) -> RunBudget:
+def _load_budget(state):
     return RunBudget.model_validate(state.get("budget", {}))
 
 
-def _validated_run_copy(run: CountyRunState, **updates: Any) -> CountyRunState:
+def _validated_run_copy(run, **updates):
     payload = run.model_dump(mode="python")
     payload.update(updates)
     return CountyRunState.model_validate(payload)
 
 
-def _with_flags(run: CountyRunState, **changes: Any) -> CountyRunState:
+def _with_flags(run, **changes):
     flags_payload = run.flags.model_dump(mode="python")
     flags_payload.update(changes)
-    flags = WorkflowFlags.model_validate(flags_payload)
-    return _validated_run_copy(run, flags=flags)
+    return _validated_run_copy(run, flags=WorkflowFlags.model_validate(flags_payload))
 
 
-def _dump_run(run: CountyRunState) -> dict[str, Any]:
+def _dump_run(run):
     return run.model_dump(mode="json")
 
 
-def _audit(run: CountyRunState, node: str, action: str) -> dict[str, Any]:
-    event = GraphAuditEvent(
+def _audit(run, node, action):
+    return GraphAuditEvent(
         id=f"{run.run_id}:{node}:{action}",
         run_id=run.run_id,
         node=node,
         action=action,
         occurred_at=datetime.now(timezone.utc),
-    )
-    return event.model_dump(mode="json")
+    ).model_dump(mode="json")
 
 
-def _runtime_context(runtime: Runtime[CountyGraphContext]) -> CountyGraphContext:
+def _runtime_context(runtime):
     return runtime.context or CountyGraphContext()
 
 
-def resolve_geography(state: CountyGraphState) -> CountyGraphState:
+def _merge_entities(existing, incoming):
+    merged = {item.id: item for item in existing}
+    for item in incoming:
+        merged[item.id] = item
+    return list(merged.values())
+
+
+def resolve_geography(state):
     run = _load_run(state)
     verified = run.county.review_status == ReviewStatus.VERIFIED
     run = _with_flags(run, geography_verified=verified)
-    return {
-        "county_run": _dump_run(run),
-        "audit_events": [_audit(run, "resolve_geography", "verified" if verified else "unverified")],
-    }
+    return {"county_run": _dump_run(run), "audit_events": [_audit(run, "resolve_geography", "verified" if verified else "unverified")]}
 
 
-def establish_run_state(state: CountyGraphState) -> CountyGraphState:
+def establish_run_state(state):
     run = _load_run(state)
     status = RunStatus.CANCELLED if run.flags.cancel_requested else RunStatus.RUNNING
     run = _validated_run_copy(run, status=status)
-    return {
-        "county_run": _dump_run(run),
-        "audit_events": [_audit(run, "establish_run_state", status.value)],
-    }
+    return {"county_run": _dump_run(run), "audit_events": [_audit(run, "establish_run_state", status.value)]}
 
 
-def route_after_establish(
-    state: CountyGraphState,
-) -> list[BranchName] | Literal["cancelled"]:
-    run = _load_run(state)
-    if run.flags.cancel_requested:
-        return "cancelled"
-    return list(REQUIRED_BRANCHES)
+def route_after_establish(state):
+    return "cancelled" if _load_run(state).flags.cancel_requested else list(REQUIRED_BRANCHES)
 
 
-def _evidence_ids_for_branch(run: CountyRunState, branch: BranchName) -> list[str]:
-    """Return authoritative typed evidence available to a research branch.
-
-    Phase 3 is intentionally code-first. Later adapters and specialist subgraphs
-    will hydrate these collections. Branches cannot declare success from prose,
-    prompts, or an empty result.
-    """
-
+def _existing_payload(run, branch):
     if branch == "public_evidence":
-        return [item.id for item in run.measures]
+        return BranchPayload(id=f"{run.run_id}:payload:{branch}", branch=branch, measures=list(run.measures))
     if branch == "planning_documents":
-        return [item.id for item in run.plan_documents]
+        return BranchPayload(id=f"{run.run_id}:payload:{branch}", branch=branch, plan_documents=list(run.plan_documents))
     if branch == "workforce_designations":
-        return [
-            item.id
-            for item in run.measures
-            if item.source_version.source_id.startswith(("hrsa", "ahrf"))
-        ]
+        return BranchPayload(
+            id=f"{run.run_id}:payload:{branch}",
+            branch=branch,
+            measures=[item for item in run.measures if item.source_version.source_id.startswith(("hrsa", "ahrf"))],
+        )
     if branch == "barrier_evidence":
-        return [item.id for item in run.barrier_observations]
+        return BranchPayload(id=f"{run.run_id}:payload:{branch}", branch=branch, barrier_observations=list(run.barrier_observations))
     raise ValueError(f"unknown branch: {branch}")
 
 
-def _branch_result(
-    state: CountyGraphState,
-    branch: BranchName,
-    *,
-    conflict: bool = False,
-) -> CountyGraphState:
-    run = _load_run(state)
-    evidence_ids = _evidence_ids_for_branch(run, branch)
+def _branch_output(run, payload, *, conflict=False):
+    evidence_ids = payload.evidence_ids()
     result = BranchResult(
-        id=f"{run.run_id}:branch:{branch}",
-        branch=branch,
+        id=f"{run.run_id}:branch:{payload.branch}",
+        branch=payload.branch,
         complete=bool(evidence_ids),
         conflict=conflict,
         evidence_ids=evidence_ids,
-        model_tokens_used=0,
-        model_cost_usd=0,
-        external_calls_used=0,
     )
     action = "completed" if result.complete else "missing_evidence"
     return {
         "branch_results": [result.model_dump(mode="json")],
-        "audit_events": [_audit(run, branch, action)],
+        "branch_payloads": [payload.model_dump(mode="json")],
+        "audit_events": [_audit(run, payload.branch, action)],
     }
 
 
-def public_evidence_branch(
-    state: CountyGraphState,
-    runtime: Runtime[CountyGraphContext],
-) -> CountyGraphState:
-    _ = _runtime_context(runtime).untrusted_source_text
-    return _branch_result(state, "public_evidence")
+def public_evidence_branch(state, runtime):
+    run = _load_run(state)
+    context = _runtime_context(runtime)
+    _ = context.untrusted_source_text
+    if context.public_evidence_package is None:
+        payload = _existing_payload(run, "public_evidence")
+    else:
+        measures, release_id = select_county_public_evidence(run, context.public_evidence_package)
+        payload = BranchPayload(
+            id=f"{run.run_id}:payload:public_evidence",
+            branch="public_evidence",
+            source_release_ids=[release_id],
+            measures=measures,
+        )
+    return _branch_output(run, payload)
 
 
-def planning_documents_branch(
-    state: CountyGraphState,
-    runtime: Runtime[CountyGraphContext],
-) -> CountyGraphState:
-    return _branch_result(
-        state,
-        "planning_documents",
+def planning_documents_branch(state, runtime):
+    run = _load_run(state)
+    return _branch_output(
+        run,
+        _existing_payload(run, "planning_documents"),
         conflict=_runtime_context(runtime).simulate_source_conflict,
     )
 
 
-def workforce_designations_branch(
-    state: CountyGraphState,
-    runtime: Runtime[CountyGraphContext],
-) -> CountyGraphState:
+def workforce_designations_branch(state, runtime):
+    run = _load_run(state)
     _ = _runtime_context(runtime).untrusted_source_text
-    return _branch_result(state, "workforce_designations")
+    return _branch_output(run, _existing_payload(run, "workforce_designations"))
 
 
-def barrier_evidence_branch(
-    state: CountyGraphState,
-    runtime: Runtime[CountyGraphContext],
-) -> CountyGraphState:
+def barrier_evidence_branch(state, runtime):
+    run = _load_run(state)
     _ = _runtime_context(runtime).untrusted_source_text
-    return _branch_result(state, "barrier_evidence")
+    return _branch_output(run, _existing_payload(run, "barrier_evidence"))
 
 
-def validate_join(state: CountyGraphState) -> CountyGraphState:
+def _merge_branch_payloads(run, payloads):
+    source_documents = list(run.source_documents)
+    evidence_claims = list(run.evidence_claims)
+    measures = list(run.measures)
+    barrier_observations = list(run.barrier_observations)
+    plan_documents = list(run.plan_documents)
+    organizations = list(run.organizations)
+    for payload in payloads:
+        source_documents = _merge_entities(source_documents, payload.source_documents)
+        evidence_claims = _merge_entities(evidence_claims, payload.evidence_claims)
+        measures = _merge_entities(measures, payload.measures)
+        barrier_observations = _merge_entities(barrier_observations, payload.barrier_observations)
+        plan_documents = _merge_entities(plan_documents, payload.plan_documents)
+        organizations = _merge_entities(organizations, payload.organizations)
+    return _validated_run_copy(
+        run,
+        source_documents=source_documents,
+        evidence_claims=evidence_claims,
+        measures=measures,
+        barrier_observations=barrier_observations,
+        plan_documents=plan_documents,
+        organizations=organizations,
+    )
+
+
+def validate_join(state):
     run = _load_run(state)
     results = [BranchResult.model_validate(item) for item in state.get("branch_results", [])]
+    payloads = [BranchPayload.model_validate(item) for item in state.get("branch_payloads", [])]
     by_branch = {result.branch: result for result in results}
     all_present = all(branch in by_branch for branch in REQUIRED_BRANCHES)
     all_complete = all_present and all(by_branch[branch].complete for branch in REQUIRED_BRANCHES)
     has_conflict = any(result.conflict for result in results)
-
+    run = _merge_branch_payloads(run, payloads)
     conflicts = list(run.conflicts)
     conflict_id = f"{run.run_id}:source-conflict"
     if has_conflict and not any(item.id == conflict_id for item in conflicts):
-        conflicts.append(
-            Conflict(
-                id=conflict_id,
-                geography_id=run.county.id,
-                entity_type="evidence",
-                entity_ids=["branch:public_evidence", "branch:planning_documents"],
-                conflict_type="source_disagreement",
-                summary="Parallel evidence branches produced a source disagreement requiring review.",
-                blocking=True,
-                review_status=ReviewStatus.PROVISIONAL,
-            )
-        )
-
+        conflicts.append(Conflict(
+            id=conflict_id,
+            geography_id=run.county.id,
+            entity_type="evidence",
+            entity_ids=["branch:public_evidence", "branch:planning_documents"],
+            conflict_type="source_disagreement",
+            summary="Parallel evidence branches produced a source disagreement requiring review.",
+            blocking=True,
+            review_status=ReviewStatus.PROVISIONAL,
+        ))
     budget = _load_budget(state)
-    budget = RunBudget.model_validate(
-        {
-            **budget.model_dump(mode="python"),
-            "model_tokens_used": sum(item.model_tokens_used for item in results),
-            "model_cost_usd": sum(item.model_cost_usd for item in results),
-            "external_calls_used": sum(item.external_calls_used for item in results),
-        }
-    )
-
+    budget = RunBudget.model_validate({
+        **budget.model_dump(mode="python"),
+        "model_tokens_used": sum(item.model_tokens_used for item in results),
+        "model_cost_usd": sum(item.model_cost_usd for item in results),
+        "external_calls_used": sum(item.external_calls_used for item in results),
+    })
     run = _validated_run_copy(run, conflicts=conflicts)
     run = _with_flags(
         run,
@@ -322,7 +334,7 @@ def validate_join(state: CountyGraphState) -> CountyGraphState:
     }
 
 
-def policy_gate(state: CountyGraphState) -> CountyGraphState:
+def policy_gate(state):
     run = _load_run(state)
     budget = _load_budget(state)
     budget_exceeded = budget.exceeded()
@@ -333,20 +345,11 @@ def policy_gate(state: CountyGraphState) -> CountyGraphState:
         and not budget_exceeded
         and not run.flags.cancel_requested
     )
-    run = _with_flags(
-        run,
-        budget_exceeded=budget_exceeded,
-        policy_passed=policy_passed,
-    )
-    return {
-        "county_run": _dump_run(run),
-        "audit_events": [_audit(run, "policy_gate", "passed" if policy_passed else "blocked")],
-    }
+    run = _with_flags(run, budget_exceeded=budget_exceeded, policy_passed=policy_passed)
+    return {"county_run": _dump_run(run), "audit_events": [_audit(run, "policy_gate", "passed" if policy_passed else "blocked")]}
 
 
-def route_after_policy(
-    state: CountyGraphState,
-) -> Literal["mark_review", "finalize", "blocked", "cancelled"]:
+def route_after_policy(state):
     run = _load_run(state)
     if run.flags.cancel_requested:
         return "cancelled"
@@ -357,29 +360,22 @@ def route_after_policy(
     return "finalize"
 
 
-def mark_review(state: CountyGraphState) -> CountyGraphState:
-    run = _load_run(state)
-    run = _validated_run_copy(run, status=RunStatus.WAITING_REVIEW)
-    return {
-        "county_run": _dump_run(run),
-        "audit_events": [_audit(run, "mark_review", "waiting")],
-    }
+def mark_review(state):
+    run = _validated_run_copy(_load_run(state), status=RunStatus.WAITING_REVIEW)
+    return {"county_run": _dump_run(run), "audit_events": [_audit(run, "mark_review", "waiting")]}
 
 
-def human_review(state: CountyGraphState) -> CountyGraphState:
+def human_review(state):
     run = _load_run(state)
-    response = interrupt(
-        {
-            "type": "cbcap_human_review",
-            "run_id": run.run_id,
-            "county": run.county.display_name,
-            "conflict_ids": [item.id for item in run.conflicts if item.blocking],
-            "allowed_decisions": ["approved", "rejected", "needs_revision", "deferred"],
-        }
-    )
+    response = interrupt({
+        "type": "cbcap_human_review",
+        "run_id": run.run_id,
+        "county": run.county.display_name,
+        "conflict_ids": [item.id for item in run.conflicts if item.blocking],
+        "allowed_decisions": ["approved", "rejected", "needs_revision", "deferred"],
+    })
     if not isinstance(response, dict):
         raise ValueError("review resume payload must be an object")
-
     decision_value = str(response.get("decision", ""))
     if decision_value not in {"approved", "rejected", "needs_revision", "deferred"}:
         raise ValueError("invalid review decision")
@@ -387,7 +383,6 @@ def human_review(state: CountyGraphState) -> CountyGraphState:
     reason = str(response.get("reason", "")).strip()
     if not reviewer or not reason:
         raise ValueError("reviewer and reason are required")
-
     decision = ReviewDecision(
         id=f"{run.run_id}:review:{len(run.reviews) + 1}",
         tenant_id=run.tenant_id,
@@ -399,20 +394,13 @@ def human_review(state: CountyGraphState) -> CountyGraphState:
         reason=reason,
     )
     approved = decision_value == "approved"
-
     conflicts = list(run.conflicts)
     if approved:
-        conflicts = [
-            Conflict.model_validate(
-                {
-                    **item.model_dump(mode="python"),
-                    "blocking": False if item.blocking else item.blocking,
-                    "review_status": ReviewStatus.VERIFIED if item.blocking else item.review_status,
-                }
-            )
-            for item in conflicts
-        ]
-
+        conflicts = [Conflict.model_validate({
+            **item.model_dump(mode="python"),
+            "blocking": False if item.blocking else item.blocking,
+            "review_status": ReviewStatus.VERIFIED if item.blocking else item.review_status,
+        }) for item in conflicts]
     run = _validated_run_copy(
         run,
         reviews=[*run.reviews, decision],
@@ -427,57 +415,36 @@ def human_review(state: CountyGraphState) -> CountyGraphState:
         review_complete=True,
         policy_passed=run.flags.policy_passed if approved else False,
     )
-    return {
-        "county_run": _dump_run(run),
-        "review_outcome": decision_value,
-        "audit_events": [_audit(run, "human_review", decision_value)],
-    }
+    return {"county_run": _dump_run(run), "review_outcome": decision_value, "audit_events": [_audit(run, "human_review", decision_value)]}
 
 
-def route_after_review(state: CountyGraphState) -> Literal["finalize", "blocked"]:
+def route_after_review(state):
     return "finalize" if state.get("review_outcome") == "approved" else "blocked"
 
 
-def finalize(state: CountyGraphState) -> CountyGraphState:
+def finalize(state):
     run = _load_run(state)
     flags_payload = run.flags.model_dump(mode="python")
     flags_payload["safe_to_publish"] = run.flags.publication_preconditions_met()
     flags = WorkflowFlags.model_validate(flags_payload)
     status = RunStatus.COMPLETED if flags.safe_to_publish else RunStatus.BLOCKED
     run = _validated_run_copy(run, flags=flags, status=status)
-    return {
-        "county_run": _dump_run(run),
-        "audit_events": [_audit(run, "finalize", status.value)],
-    }
+    return {"county_run": _dump_run(run), "audit_events": [_audit(run, "finalize", status.value)]}
 
 
-def blocked(state: CountyGraphState) -> CountyGraphState:
-    run = _load_run(state)
-    run = _with_flags(run, safe_to_publish=False)
+def blocked(state):
+    run = _with_flags(_load_run(state), safe_to_publish=False)
     run = _validated_run_copy(run, status=RunStatus.BLOCKED)
-    return {
-        "county_run": _dump_run(run),
-        "audit_events": [_audit(run, "blocked", "blocked")],
-    }
+    return {"county_run": _dump_run(run), "audit_events": [_audit(run, "blocked", "blocked")]}
 
 
-def cancelled(state: CountyGraphState) -> CountyGraphState:
-    run = _load_run(state)
-    run = _with_flags(run, safe_to_publish=False, policy_passed=False)
+def cancelled(state):
+    run = _with_flags(_load_run(state), safe_to_publish=False, policy_passed=False)
     run = _validated_run_copy(run, status=RunStatus.CANCELLED)
-    return {
-        "county_run": _dump_run(run),
-        "audit_events": [_audit(run, "cancelled", "cancelled")],
-    }
+    return {"county_run": _dump_run(run), "audit_events": [_audit(run, "cancelled", "cancelled")]}
 
 
 def build_county_planning_graph(*, checkpointer: Any | None = None):
-    """Compile the first CB-CAP County Planning Graph.
-
-    The default in-memory saver is only for tests and local development.
-    Production must inject a durable checkpointer, initially Postgres-backed.
-    """
-
     retry_policy = RetryPolicy(max_attempts=3)
     builder = StateGraph(CountyGraphState, context_schema=CountyGraphContext)
     builder.add_node("resolve_geography", resolve_geography)
@@ -493,40 +460,26 @@ def build_county_planning_graph(*, checkpointer: Any | None = None):
     builder.add_node("finalize", finalize)
     builder.add_node("blocked", blocked)
     builder.add_node("cancelled", cancelled)
-
     builder.add_edge(START, "resolve_geography")
     builder.add_edge("resolve_geography", "establish_run_state")
-    builder.add_conditional_edges(
-        "establish_run_state",
-        route_after_establish,
-        {
-            "public_evidence": "public_evidence",
-            "planning_documents": "planning_documents",
-            "workforce_designations": "workforce_designations",
-            "barrier_evidence": "barrier_evidence",
-            "cancelled": "cancelled",
-        },
-    )
+    builder.add_conditional_edges("establish_run_state", route_after_establish, {
+        "public_evidence": "public_evidence",
+        "planning_documents": "planning_documents",
+        "workforce_designations": "workforce_designations",
+        "barrier_evidence": "barrier_evidence",
+        "cancelled": "cancelled",
+    })
     builder.add_edge(list(REQUIRED_BRANCHES), "validate_join")
     builder.add_edge("validate_join", "policy_gate")
-    builder.add_conditional_edges(
-        "policy_gate",
-        route_after_policy,
-        {
-            "mark_review": "mark_review",
-            "finalize": "finalize",
-            "blocked": "blocked",
-            "cancelled": "cancelled",
-        },
-    )
+    builder.add_conditional_edges("policy_gate", route_after_policy, {
+        "mark_review": "mark_review",
+        "finalize": "finalize",
+        "blocked": "blocked",
+        "cancelled": "cancelled",
+    })
     builder.add_edge("mark_review", "human_review")
-    builder.add_conditional_edges(
-        "human_review",
-        route_after_review,
-        {"finalize": "finalize", "blocked": "blocked"},
-    )
+    builder.add_conditional_edges("human_review", route_after_review, {"finalize": "finalize", "blocked": "blocked"})
     builder.add_edge("finalize", END)
     builder.add_edge("blocked", END)
     builder.add_edge("cancelled", END)
-
     return builder.compile(checkpointer=checkpointer or InMemorySaver())
