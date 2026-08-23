@@ -21,7 +21,14 @@ from .models import (
 )
 
 
-REQUIRED_BRANCHES = (
+BranchName = Literal[
+    "public_evidence",
+    "planning_documents",
+    "workforce_designations",
+    "barrier_evidence",
+]
+
+REQUIRED_BRANCHES: tuple[BranchName, ...] = (
     "public_evidence",
     "planning_documents",
     "workforce_designations",
@@ -49,12 +56,7 @@ class RunBudget(StrictModel):
 
 class BranchResult(StrictModel):
     id: str = Field(min_length=1)
-    branch: Literal[
-        "public_evidence",
-        "planning_documents",
-        "workforce_designations",
-        "barrier_evidence",
-    ]
+    branch: BranchName
     complete: bool = True
     conflict: bool = False
     evidence_ids: list[str] = Field(default_factory=list)
@@ -153,6 +155,10 @@ def _audit(run: CountyRunState, node: str, action: str) -> dict[str, Any]:
     return event.model_dump(mode="json")
 
 
+def _runtime_context(runtime: Runtime[CountyGraphContext]) -> CountyGraphContext:
+    return runtime.context or CountyGraphContext()
+
+
 def resolve_geography(state: CountyGraphState) -> CountyGraphState:
     run = _load_run(state)
     verified = run.county.review_status == ReviewStatus.VERIFIED
@@ -165,10 +171,7 @@ def resolve_geography(state: CountyGraphState) -> CountyGraphState:
 
 def establish_run_state(state: CountyGraphState) -> CountyGraphState:
     run = _load_run(state)
-    if run.flags.cancel_requested:
-        status = RunStatus.CANCELLED
-    else:
-        status = RunStatus.RUNNING
+    status = RunStatus.CANCELLED if run.flags.cancel_requested else RunStatus.RUNNING
     run = _validated_run_copy(run, status=status)
     return {
         "county_run": _dump_run(run),
@@ -176,9 +179,18 @@ def establish_run_state(state: CountyGraphState) -> CountyGraphState:
     }
 
 
+def route_after_establish(
+    state: CountyGraphState,
+) -> list[BranchName] | Literal["cancelled"]:
+    run = _load_run(state)
+    if run.flags.cancel_requested:
+        return "cancelled"
+    return list(REQUIRED_BRANCHES)
+
+
 def _branch_result(
     state: CountyGraphState,
-    branch: BranchResult["branch"] if False else str,
+    branch: BranchName,
     *,
     conflict: bool = False,
 ) -> CountyGraphState:
@@ -204,7 +216,7 @@ def public_evidence_branch(
 ) -> CountyGraphState:
     # External source text is deliberately ignored as control input. This node
     # will eventually call a typed Evidence Gateway adapter.
-    _ = runtime.context.untrusted_source_text
+    _ = _runtime_context(runtime).untrusted_source_text
     return _branch_result(state, "public_evidence")
 
 
@@ -215,7 +227,7 @@ def planning_documents_branch(
     return _branch_result(
         state,
         "planning_documents",
-        conflict=runtime.context.simulate_source_conflict,
+        conflict=_runtime_context(runtime).simulate_source_conflict,
     )
 
 
@@ -223,7 +235,7 @@ def workforce_designations_branch(
     state: CountyGraphState,
     runtime: Runtime[CountyGraphContext],
 ) -> CountyGraphState:
-    _ = runtime.context.untrusted_source_text
+    _ = _runtime_context(runtime).untrusted_source_text
     return _branch_result(state, "workforce_designations")
 
 
@@ -231,7 +243,7 @@ def barrier_evidence_branch(
     state: CountyGraphState,
     runtime: Runtime[CountyGraphContext],
 ) -> CountyGraphState:
-    _ = runtime.context.untrusted_source_text
+    _ = _runtime_context(runtime).untrusted_source_text
     return _branch_result(state, "barrier_evidence")
 
 
@@ -244,10 +256,11 @@ def validate_join(state: CountyGraphState) -> CountyGraphState:
     has_conflict = any(result.conflict for result in results)
 
     conflicts = list(run.conflicts)
-    if has_conflict and not any(item.id == f"{run.run_id}:source-conflict" for item in conflicts):
+    conflict_id = f"{run.run_id}:source-conflict"
+    if has_conflict and not any(item.id == conflict_id for item in conflicts):
         conflicts.append(
             Conflict(
-                id=f"{run.run_id}:source-conflict",
+                id=conflict_id,
                 geography_id=run.county.id,
                 entity_type="evidence",
                 entity_ids=["branch:public_evidence", "branch:planning_documents"],
@@ -348,12 +361,25 @@ def human_review(state: CountyGraphState) -> CountyGraphState:
         decided_at=datetime.now(timezone.utc),
         reason=reason,
     )
-    reviews = [*run.reviews, decision]
-
     approved = decision_value == "approved"
+
+    conflicts = list(run.conflicts)
+    if approved:
+        conflicts = [
+            Conflict.model_validate(
+                {
+                    **item.model_dump(mode="python"),
+                    "blocking": False if item.blocking else item.blocking,
+                    "review_status": ReviewStatus.VERIFIED if item.blocking else item.review_status,
+                }
+            )
+            for item in conflicts
+        ]
+
     run = _validated_run_copy(
         run,
-        reviews=reviews,
+        reviews=[*run.reviews, decision],
+        conflicts=conflicts,
         status=RunStatus.RUNNING if approved else RunStatus.BLOCKED,
     )
     run = _with_flags(
@@ -433,10 +459,17 @@ def build_county_planning_graph(*, checkpointer: Any | None = None):
 
     builder.add_edge(START, "resolve_geography")
     builder.add_edge("resolve_geography", "establish_run_state")
-
-    for branch in REQUIRED_BRANCHES:
-        builder.add_edge("establish_run_state", branch)
-
+    builder.add_conditional_edges(
+        "establish_run_state",
+        route_after_establish,
+        {
+            "public_evidence": "public_evidence",
+            "planning_documents": "planning_documents",
+            "workforce_designations": "workforce_designations",
+            "barrier_evidence": "barrier_evidence",
+            "cancelled": "cancelled",
+        },
+    )
     builder.add_edge(list(REQUIRED_BRANCHES), "validate_join")
     builder.add_edge("validate_join", "policy_gate")
     builder.add_conditional_edges(
