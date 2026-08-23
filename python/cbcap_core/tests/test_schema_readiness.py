@@ -5,6 +5,7 @@ import pytest
 from cbcap_core.migration_runner import (
     RUNTIME_INSERT_TABLES,
     RUNTIME_SELECT_TABLES,
+    RUNTIME_UPDATE_COLUMNS,
     _migration_files,
     _sha256,
 )
@@ -46,6 +47,21 @@ class Cursor:
                 for table_name, privileges in sorted(source.items())
             ]
             self.row = None
+        elif normalized.startswith("SELECT c.relname, a.attname, has_column_privilege"):
+            all_columns = {
+                ("county_run_identity", "run_id"),
+                ("county_run_identity", "tenant_id"),
+                ("county_run_identity", "geography_id"),
+                ("county_run_state_version", "run_id"),
+                ("workspace_membership_event", "principal_key"),
+                ("tenant_evidence_document", "id"),
+            }
+            all_columns.update(self.connection.update_columns)
+            self.rows = [
+                (table_name, column_name, (table_name, column_name) in self.connection.update_columns)
+                for table_name, column_name in sorted(all_columns)
+            ]
+            self.row = None
         elif normalized == "SELECT to_regclass(%s)":
             table = params[0]
             self.row = (table,) if table in self.connection.tables else (None,)
@@ -66,10 +82,19 @@ class Cursor:
         return self.row
 
 
+def expected_update_columns():
+    return {
+        (table_name, column_name)
+        for table_name, column_names in RUNTIME_UPDATE_COLUMNS.items()
+        for column_name in column_names
+    }
+
+
 def default_cbcap_grants():
     table_names = {
         *RUNTIME_SELECT_TABLES,
         *RUNTIME_INSERT_TABLES,
+        *RUNTIME_UPDATE_COLUMNS,
         "tenant_evidence_document",
         "tenant_evidence_review",
         "decision_memory",
@@ -103,6 +128,7 @@ class Connection:
         isolation=None,
         cbcap_grants=None,
         public_grants=None,
+        update_columns=None,
     ):
         self.ledger = ledger
         self.tables = set(tables)
@@ -115,6 +141,9 @@ class Connection:
         )
         self.public_grants = (
             default_public_grants() if public_grants is None else public_grants
+        )
+        self.update_columns = (
+            expected_update_columns() if update_columns is None else set(update_columns)
         )
         self.executions = []
 
@@ -144,6 +173,10 @@ def test_runtime_schema_ready_requires_exact_image_migrations_grants_tables_and_
         if entry[0].startswith("SELECT tablename, has_table_privilege")
     ]
     assert [entry[1][0] for entry in grant_queries] == ["cbcap", "public"]
+    assert any(
+        entry[0].startswith("SELECT c.relname, a.attname, has_column_privilege")
+        for entry in connection.executions
+    )
     checkpoint_queries = [entry for entry in connection.executions if entry[0] == "SELECT to_regclass(%s)"]
     assert [entry[1][0] for entry in checkpoint_queries] == list(CHECKPOINT_TABLES)
     rls_queries = [entry for entry in connection.executions if entry[0].startswith("SELECT c.relrowsecurity")]
@@ -206,7 +239,7 @@ def test_runtime_schema_ready_rejects_missing_required_run_read_privilege(tmp_pa
         )
 
 
-def test_runtime_schema_ready_rejects_update_or_delete_on_cbcap_tables(tmp_path):
+def test_runtime_schema_ready_rejects_table_level_update_or_delete_on_cbcap_tables(tmp_path):
     migration(tmp_path / "001_first.sql", "SELECT 1;")
     grants = default_cbcap_grants()
     grants["county_run_state_version"] = (True, True, True, False)
@@ -214,6 +247,24 @@ def test_runtime_schema_ready_rejects_update_or_delete_on_cbcap_tables(tmp_path)
     with pytest.raises(RuntimeError, match="privilege boundary"):
         assert_runtime_schema_ready(
             Connection(ledger=expected_ledger(tmp_path), cbcap_grants=grants),
+            migration_root=tmp_path,
+        )
+
+
+def test_runtime_schema_ready_requires_only_the_run_id_column_update_for_row_locking(tmp_path):
+    migration(tmp_path / "001_first.sql", "SELECT 1;")
+    ledger = expected_ledger(tmp_path)
+
+    with pytest.raises(RuntimeError, match="privilege boundary"):
+        assert_runtime_schema_ready(
+            Connection(ledger=ledger, update_columns=set()),
+            migration_root=tmp_path,
+        )
+
+    excessive = expected_update_columns() | {("county_run_identity", "tenant_id")}
+    with pytest.raises(RuntimeError, match="privilege boundary"):
+        assert_runtime_schema_ready(
+            Connection(ledger=ledger, update_columns=excessive),
             migration_root=tmp_path,
         )
 
