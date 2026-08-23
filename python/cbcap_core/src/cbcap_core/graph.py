@@ -27,6 +27,7 @@ from .models import (
     WorkflowFlags,
 )
 from .planning_pipeline import PlanningPipelineRequest, run_planning_pipeline
+from .workforce import WorkforceDesignation, classify_workforce_measures
 
 BranchName = Literal["public_evidence", "planning_documents", "workforce_designations", "barrier_evidence"]
 REQUIRED_BRANCHES: tuple[BranchName, ...] = (
@@ -72,6 +73,7 @@ class BranchPayload(StrictModel):
     evidence_claims: list[EvidenceClaim] = Field(default_factory=list)
     measures: list[Measure] = Field(default_factory=list)
     barrier_observations: list[BarrierObservation] = Field(default_factory=list)
+    workforce_designations: list[WorkforceDesignation] = Field(default_factory=list)
     plan_documents: list[PlanDocument] = Field(default_factory=list)
     organizations: list[Organization] = Field(default_factory=list)
 
@@ -81,6 +83,7 @@ class BranchPayload(StrictModel):
             *[item.id for item in self.evidence_claims],
             *[item.id for item in self.measures],
             *[item.id for item in self.barrier_observations],
+            *[item.id for item in self.workforce_designations],
             *[item.id for item in self.plan_documents],
             *[item.id for item in self.organizations],
         ]
@@ -321,8 +324,41 @@ def planning_documents_branch(state, runtime):
 
 def workforce_designations_branch(state, runtime):
     run = _load_run(state)
-    _ = _runtime_context(runtime).untrusted_source_text
-    return _branch_output(run, _existing_payload(run, "workforce_designations"))
+    context = _runtime_context(runtime)
+    _ = context.untrusted_source_text
+    if context.public_evidence_package is None:
+        return _branch_output(run, _existing_payload(run, "workforce_designations"))
+
+    measures, release_id = select_county_public_evidence(run, context.public_evidence_package)
+    hrsa_measures = [
+        item for item in measures if item.source_version.source_id == "hrsa-workforce"
+    ]
+    if not hrsa_measures:
+        return _branch_output(run, _existing_payload(run, "workforce_designations"))
+
+    classification = classify_workforce_measures(hrsa_measures)
+    payload = BranchPayload(
+        id=f"{run.run_id}:payload:workforce_designations",
+        branch="workforce_designations",
+        source_release_ids=[release_id],
+        workforce_designations=classification.designations,
+    )
+    trajectory = [
+        _trajectory_event(
+            run,
+            stage="workforce_classification",
+            entity_id=decision.measure_id,
+            outcome=decision.status,
+            reason_codes=decision.reason_codes,
+        )
+        for decision in classification.decisions
+    ]
+    return _branch_output(
+        run,
+        payload,
+        complete_override=bool(classification.designations),
+        trajectory_events=trajectory,
+    )
 
 
 def barrier_evidence_branch(state, runtime):
