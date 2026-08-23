@@ -111,8 +111,8 @@ def execute_county_run(
 ) -> CountyRunExecution:
     """Execute one governed county run from one validated public-evidence fetch.
 
-    Network retrieval occurs only after tenant, capability, geography and run
-    scope checks. The validated public package is reused by all evidence
+    Network retrieval occurs only after tenant, capability, geography and exact
+    run-scope checks. The validated public package is reused by all evidence
     branches. Trajectory and operational observation records are persisted on
     both completed and interrupted runs.
     """
@@ -258,17 +258,22 @@ def execute_county_run_from_env(
     """Production convenience entrypoint. No in-memory or insecure fallback."""
 
     _require_execution_authorization(run, actor)
+    if not actor.tenant_id:
+        raise ValueError("production county execution requires an authenticated tenant")
     endpoint = os.getenv("CB_CAP_EVIDENCE_GATEWAY_URL", "").strip()
     if not endpoint:
         raise RuntimeError("CB_CAP_EVIDENCE_GATEWAY_URL is required")
     gateway_client = EvidenceGatewayHttpClient(endpoint)
 
-    with postgres_checkpointer(checkpoint_settings) as checkpointer:
-        graph = build_county_planning_graph(checkpointer=checkpointer)
-        with postgres_connection(
-            persistence_settings,
+    with postgres_connection(
+        persistence_settings,
+        tenant_id=actor.tenant_id,
+    ) as connection:
+        with postgres_checkpointer(
+            checkpoint_settings,
             tenant_id=actor.tenant_id,
-        ) as connection:
+        ) as checkpointer:
+            graph = build_county_planning_graph(checkpointer=checkpointer)
             return execute_county_run(
                 run,
                 budget,
