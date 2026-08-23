@@ -30,6 +30,7 @@ from .gateway import (
     EvidenceGatewayQuery,
     EvidenceGatewayResponse,
     GeographyRelationshipRef,
+    PublicEvidenceMeasure,
     PublicEvidencePackage,
     assert_public_package,
 )
@@ -110,6 +111,13 @@ from .visualization import (
     VisualizationRequest,
     select_visualization,
 )
+from .workforce import (
+    WorkforceAdmissionDecision,
+    WorkforceClassificationResult,
+    WorkforceDesignation,
+    classify_workforce_measure,
+    classify_workforce_measures,
+)
 from .workspace import (
     DecisionWorkspaceContract,
     DecisionWorkspaceRequest,
@@ -183,6 +191,7 @@ __all__ = [
     "PlanningViewDecision",
     "PlanningViewRequest",
     "PublicationArtifact",
+    "PublicEvidenceMeasure",
     "PublicEvidencePackage",
     "RejectedPlanningCandidate",
     "ReviewDecision",
@@ -195,6 +204,9 @@ __all__ = [
     "TenantVisibility",
     "VisualizationDecision",
     "VisualizationRequest",
+    "WorkforceAdmissionDecision",
+    "WorkforceClassificationResult",
+    "WorkforceDesignation",
     "WorkflowFlags",
     "WorkspaceBlocker",
     "WorkspaceEvidenceStatus",
@@ -208,6 +220,8 @@ __all__ = [
     "checkpoint_thread_config",
     "classify_barrier_measure",
     "classify_barrier_measures",
+    "classify_workforce_measure",
+    "classify_workforce_measures",
     "evaluate_funding_fit",
     "find_barrier_rule",
     "hydrate_public_evidence",
