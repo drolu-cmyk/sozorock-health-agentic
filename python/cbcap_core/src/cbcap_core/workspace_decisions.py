@@ -5,6 +5,7 @@ from typing import Literal, cast
 
 from pydantic import Field
 
+from .authorization import AuthorizedActor, require_actor_capability
 from .decision_memory import (
     DecisionMemoryProposal,
     DecisionMemoryRecord,
@@ -17,7 +18,6 @@ from .decision_memory import (
 from .models import CountyRunState, StrictModel
 from .persistence import ConnectionLike, persist_decision_memory
 from .planning_views import PlanningQuestion
-from .runtime_service import RuntimeActor
 from .workspace import (
     DecisionWorkspaceContract,
     DecisionWorkspaceRequest,
@@ -34,8 +34,6 @@ WorkspaceDecisionAction = Literal[
 ]
 WorkspaceMemoryDecisionType = Literal[
     "planning_interpretation",
-    "funding_fit",
-    "partner_requirement",
     "scenario_decision",
     "evidence_correction",
 ]
@@ -46,7 +44,10 @@ _ACTION_DECISION_TYPES: dict[WorkspaceDecisionAction, frozenset[MemoryDecisionTy
     "compare_plans": frozenset({"planning_interpretation"}),
     "review_conflicts": frozenset({"planning_interpretation", "evidence_correction"}),
     "create_scenario": frozenset({"scenario_decision"}),
-    "inspect_funding": frozenset({"funding_fit", "partner_requirement"}),
+    # Funding fit, partner requirements and pursuit decisions have dedicated
+    # governed services. The generic workspace may only remember an
+    # interpretation about funding evidence, never create a funding decision.
+    "inspect_funding": frozenset({"planning_interpretation"}),
 }
 
 
@@ -100,9 +101,17 @@ def _run_entity_ids(run: CountyRunState) -> set[str]:
     return ids
 
 
+def _required_memory_capability(actor: AuthorizedActor) -> str:
+    return (
+        "record_workspace_review"
+        if actor.role in {"reviewer", "admin"}
+        else "record_workspace_proposal"
+    )
+
+
 def _validate_workspace_decision(
     request: WorkspaceDecisionRequest,
-    actor: RuntimeActor,
+    actor: AuthorizedActor,
     workspace: DecisionWorkspaceContract,
 ) -> None:
     run = request.county_run
@@ -110,8 +119,14 @@ def _validate_workspace_decision(
         raise ValueError("institutional workspace decisions require a tenant-scoped county run")
     if run.tenant_id != actor.tenant_id:
         raise ValueError("workspace decision tenant does not match authenticated actor tenant")
-    if actor.role == "read_only":
-        raise PermissionError("read-only actors cannot record institutional decisions")
+
+    require_actor_capability(
+        actor,
+        cast(AnyRuntimeCapability, _required_memory_capability(actor)),
+        geography_id=run.county.id,
+        run_id=run.run_id,
+    )
+
     if request.action not in workspace.allowed_actions:
         raise PermissionError("workspace action is not authorized by the current governed workspace")
     if request.decision_type not in _ACTION_DECISION_TYPES[request.action]:
@@ -156,13 +171,14 @@ def _validate_workspace_decision(
 def prepare_workspace_decision(
     request: WorkspaceDecisionRequest,
     *,
-    actor: RuntimeActor,
+    actor: AuthorizedActor,
 ) -> WorkspaceDecisionResult:
     """Rebuild governed state and convert decision intent into institutional memory.
 
-    Review status, actor identity, tenant identity and decision time are derived
-    inside the trusted service boundary. Publication approval is intentionally
-    excluded because it must be atomic with canonical workflow-state mutation.
+    Review status, identity, tenant and time are derived inside the trusted
+    service boundary. Publication approval is excluded because it must be atomic
+    with canonical workflow-state mutation. Funding decisions remain in their
+    dedicated review and pursuit services.
     """
 
     workspace = build_decision_workspace(
@@ -176,7 +192,7 @@ def prepare_workspace_decision(
     _validate_workspace_decision(request, actor, workspace)
 
     tenant_id = request.county_run.tenant_id
-    if tenant_id is None:  # narrowed above; explicit for static typing
+    if tenant_id is None:
         raise ValueError("institutional workspace decisions require tenant identity")
 
     proposal = DecisionMemoryProposal(
@@ -210,7 +226,7 @@ def record_workspace_decision(
     connection: ConnectionLike,
     request: WorkspaceDecisionRequest,
     *,
-    actor: RuntimeActor,
+    actor: AuthorizedActor,
 ) -> WorkspaceDecisionResult:
     result = prepare_workspace_decision(request, actor=actor)
     tenant_id = request.county_run.tenant_id
@@ -222,3 +238,7 @@ def record_workspace_decision(
         actor_tenant_id=tenant_id,
     )
     return result
+
+
+# Narrow alias used only for the cast above, avoiding a second capability type.
+from .authorization import RuntimeCapability as AnyRuntimeCapability
