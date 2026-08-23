@@ -1,3 +1,4 @@
+from .evidence_adapter import hydrate_public_evidence, select_county_public_evidence
 from .gateway import (
     PUBLIC_EVIDENCE_CORE_COMPATIBILITY,
     SHARED_EVIDENCE_CONTRACT_VERSION,
@@ -9,6 +10,7 @@ from .gateway import (
     assert_public_package,
 )
 from .graph import (
+    BranchPayload,
     BranchResult,
     CountyGraphContext,
     CountyGraphState,
@@ -57,6 +59,7 @@ __all__ = [
     "BarrierFamily",
     "BarrierObservation",
     "BarrierPattern",
+    "BranchPayload",
     "BranchResult",
     "CitationLocator",
     "Confidence",
@@ -97,5 +100,7 @@ __all__ = [
     "SHARED_EVIDENCE_CONTRACT_VERSION",
     "assert_public_package",
     "build_county_planning_graph",
+    "hydrate_public_evidence",
     "initial_graph_state",
+    "select_county_public_evidence",
 ]
