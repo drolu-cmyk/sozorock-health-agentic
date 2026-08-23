@@ -53,10 +53,21 @@ from .models import (
     TenantVisibility,
     WorkflowFlags,
 )
+from .planning_research import (
+    ApprovedPlanningSource,
+    PlanningDocumentCandidate,
+    PlanningLaneResult,
+    PlanningResearchRequest,
+    PlanningResearchResult,
+    RejectedPlanningCandidate,
+    build_planning_research_graph,
+    research_candidates,
+)
 
 __all__ = [
     "AgentRun",
     "AgentRunStatus",
+    "ApprovedPlanningSource",
     "BarrierFamily",
     "BarrierObservation",
     "BarrierPattern",
@@ -87,8 +98,13 @@ __all__ = [
     "Organization",
     "PlanDocument",
     "PlanPriority",
+    "PlanningDocumentCandidate",
+    "PlanningLaneResult",
+    "PlanningResearchRequest",
+    "PlanningResearchResult",
     "PublicationArtifact",
     "PublicEvidencePackage",
+    "RejectedPlanningCandidate",
     "ReviewDecision",
     "ReviewStatus",
     "RunBudget",
@@ -102,9 +118,11 @@ __all__ = [
     "SHARED_EVIDENCE_CONTRACT_VERSION",
     "assert_public_package",
     "build_county_planning_graph",
+    "build_planning_research_graph",
     "checkpoint_thread_config",
     "hydrate_public_evidence",
     "initial_graph_state",
     "postgres_checkpointer",
+    "research_candidates",
     "select_county_public_evidence",
 ]
