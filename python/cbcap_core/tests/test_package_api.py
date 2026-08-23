@@ -4,6 +4,11 @@ from cbcap_core import decision_memory, institutional_memory
 
 def test_package_exports_governed_memory_trajectory_forecast_workspace_and_runtime_surface():
     required = {
+        "AuthorizationGrant",
+        "AuthorizedActor",
+        "RuntimeCapability",
+        "ROLE_CAPABILITIES",
+        "require_actor_capability",
         "DecisionMemoryRecord",
         "DecisionMemoryProposal",
         "DecisionMemoryWriteRequest",
@@ -19,6 +24,7 @@ def test_package_exports_governed_memory_trajectory_forecast_workspace_and_runti
         "persist_trajectory_evaluation_labels",
         "persist_trajectory_corrections",
         "persist_decision_memory",
+        "FundingFitReviewRequest",
         "FundingFitReviewResult",
         "apply_funding_fit_review",
         "FundingPursuitDecisionRequest",
@@ -61,6 +67,10 @@ def test_package_exports_governed_memory_trajectory_forecast_workspace_and_runti
     }
     missing = sorted(name for name in required if not hasattr(cbcap_core, name))
     assert missing == []
+
+
+def test_runtime_actor_remains_the_authorized_actor_compatibility_alias():
+    assert cbcap_core.RuntimeActor is cbcap_core.AuthorizedActor
 
 
 def test_institutional_memory_compatibility_module_reexports_canonical_models():
