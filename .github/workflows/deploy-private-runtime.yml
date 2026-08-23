@@ -26,6 +26,7 @@ jobs:
       REGISTRY_STACK: cbcap-private-runtime-registry
       RUNTIME_STACK: cbcap-private-runtime
       API_DOMAIN: api.cbcap.sozorockfoundation.org
+      CB_CAP_EVIDENCE_GATEWAY_URL: https://health.sozorockfoundation.org/api/evidence/v1/gateway
       DEPLOY_ROLE_ARN: ${{ vars.CBCAP_PRIVATE_AWS_DEPLOY_ROLE_ARN }}
       CLOUDFORMATION_ROLE_ARN: ${{ vars.CBCAP_PRIVATE_CLOUDFORMATION_ROLE_ARN }}
 
@@ -62,6 +63,15 @@ jobs:
           test "$origin_main" = "$approved_commit"
           test -z "$(git status --porcelain --untracked-files=no)"
           echo "APPROVED_COMMIT=$approved_commit" >> "$GITHUB_ENV"
+
+      - name: Prove the five-county public evidence dependency
+        run: |
+          set -euo pipefail
+          python -m cbcap_core.release_evaluation > /tmp/cbcap-five-county-evaluation.json
+          jq -e '.contract == "sozorock.evidence-gateway.v1"' /tmp/cbcap-five-county-evaluation.json >/dev/null
+          jq -e '.counties | length == 5' /tmp/cbcap-five-county-evaluation.json >/dev/null
+          jq -e '.release_hash | startswith("sha256:")' /tmp/cbcap-five-county-evaluation.json >/dev/null
+          cat /tmp/cbcap-five-county-evaluation.json
 
       - name: Require governed AWS deployment configuration
         run: |
