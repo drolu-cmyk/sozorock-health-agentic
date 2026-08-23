@@ -367,22 +367,27 @@ def execute_run(tenant_id: str, run_id: str, request: Request):
     dependencies = runtime_dependencies()
     token = _access_token(request)
     try:
-        with postgres_checkpointer(dependencies.settings.checkpoint) as checkpointer:
-            graph = build_county_planning_graph(checkpointer=checkpointer)
-            with postgres_connection(
-                dependencies.settings.persistence,
+        with postgres_connection(
+            dependencies.settings.persistence,
+            tenant_id=tenant_id,
+        ) as connection:
+            authorized = authorize_server_owned_run(
+                connection,
+                access_token=token,
                 tenant_id=tenant_id,
-            ) as connection:
-                authorized = authorize_server_owned_run(
-                    connection,
-                    access_token=token,
-                    tenant_id=tenant_id,
-                    run_id=run_id,
-                    token_verifier=dependencies.token_verifier,
-                    identity_policy=dependencies.settings.identity_policy,
-                    lock_for_mutation=True,
-                )
-                require_run_operation_state(authorized.run, "execute")
+                run_id=run_id,
+                token_verifier=dependencies.token_verifier,
+                identity_policy=dependencies.settings.identity_policy,
+                lock_for_mutation=True,
+            )
+            require_run_operation_state(authorized.run, "execute")
+            if not authorized.actor.tenant_id:
+                raise PermissionError("tenant-scoped execution requires authenticated tenant identity")
+            with postgres_checkpointer(
+                dependencies.settings.checkpoint,
+                tenant_id=authorized.actor.tenant_id,
+            ) as checkpointer:
+                graph = build_county_planning_graph(checkpointer=checkpointer)
                 execution = execute_county_run(
                     authorized.run,
                     dependencies.settings.run_budget.model_copy(deep=True),
@@ -391,12 +396,12 @@ def execute_run(tenant_id: str, run_id: str, request: Request):
                     connection,
                     actor=authorized.actor,
                 )
-                final_run = CountyRunState.model_validate(execution.graph_state["county_run"])
-                state_version = append_county_run_state(
-                    connection,
-                    final_run,
-                    actor=authorized.actor,
-                )
+            final_run = CountyRunState.model_validate(execution.graph_state["county_run"])
+            state_version = append_county_run_state(
+                connection,
+                final_run,
+                actor=authorized.actor,
+            )
         return _run_response(
             final_run,
             state_version=state_version.version_no,
@@ -421,22 +426,27 @@ def review_run(
     dependencies = runtime_dependencies()
     token = _access_token(request)
     try:
-        with postgres_checkpointer(dependencies.settings.checkpoint) as checkpointer:
-            graph = build_county_planning_graph(checkpointer=checkpointer)
-            with postgres_connection(
-                dependencies.settings.persistence,
+        with postgres_connection(
+            dependencies.settings.persistence,
+            tenant_id=tenant_id,
+        ) as connection:
+            authorized = authorize_server_owned_run(
+                connection,
+                access_token=token,
                 tenant_id=tenant_id,
-            ) as connection:
-                authorized = authorize_server_owned_run(
-                    connection,
-                    access_token=token,
-                    tenant_id=tenant_id,
-                    run_id=run_id,
-                    token_verifier=dependencies.token_verifier,
-                    identity_policy=dependencies.settings.identity_policy,
-                    lock_for_mutation=True,
-                )
-                require_run_operation_state(authorized.run, "review")
+                run_id=run_id,
+                token_verifier=dependencies.token_verifier,
+                identity_policy=dependencies.settings.identity_policy,
+                lock_for_mutation=True,
+            )
+            require_run_operation_state(authorized.run, "review")
+            if not authorized.actor.tenant_id:
+                raise PermissionError("tenant-scoped review requires authenticated tenant identity")
+            with postgres_checkpointer(
+                dependencies.settings.checkpoint,
+                tenant_id=authorized.actor.tenant_id,
+            ) as checkpointer:
+                graph = build_county_planning_graph(checkpointer=checkpointer)
                 execution = resume_county_run_review(
                     run_id,
                     graph,
@@ -445,12 +455,12 @@ def review_run(
                     decision=payload.decision,
                     reason=payload.reason.strip(),
                 )
-                final_run = CountyRunState.model_validate(execution.graph_state["county_run"])
-                state_version = append_county_run_state(
-                    connection,
-                    final_run,
-                    actor=authorized.actor,
-                )
+            final_run = CountyRunState.model_validate(execution.graph_state["county_run"])
+            state_version = append_county_run_state(
+                connection,
+                final_run,
+                actor=authorized.actor,
+            )
         return _run_response(
             final_run,
             state_version=state_version.version_no,
