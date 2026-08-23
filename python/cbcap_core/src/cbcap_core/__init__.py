@@ -214,6 +214,12 @@ from .workspace import (
     WorkspaceEvidenceStatus,
     build_decision_workspace,
 )
+from .workspace_decisions import (
+    WorkspaceDecisionRequest,
+    WorkspaceDecisionResult,
+    prepare_workspace_decision,
+    record_workspace_decision,
+)
 
 __all__ = [
     "AgentRun",
@@ -341,6 +347,8 @@ __all__ = [
     "WorkforceDesignation",
     "WorkflowFlags",
     "WorkspaceBlocker",
+    "WorkspaceDecisionRequest",
+    "WorkspaceDecisionResult",
     "WorkspaceEvidenceStatus",
     "admit_planning_evidence",
     "apply_funding_fit_review",
@@ -387,7 +395,9 @@ __all__ = [
     "postgres_checkpointer",
     "postgres_connection",
     "prepare_county_graph_run",
+    "prepare_workspace_decision",
     "query_decision_memory",
+    "record_workspace_decision",
     "research_candidates",
     "resume_county_run_review",
     "run_planning_pipeline",
