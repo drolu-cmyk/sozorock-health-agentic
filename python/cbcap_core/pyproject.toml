@@ -15,7 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 production = [
   "fastapi>=0.141.1,<0.142",
-  "langgraph-checkpoint-postgres>=3.1.2,<4",
+  "langgraph-checkpoint-postgres==3.1.2",
   "psycopg[binary,pool]>=3.2,<4",
   "pycryptodome>=3.23,<4",
   "PyJWT[crypto]>=2.10.1,<3",
