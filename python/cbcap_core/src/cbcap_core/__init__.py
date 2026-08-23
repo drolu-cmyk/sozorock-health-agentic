@@ -14,6 +14,13 @@ from .barriers import (
 )
 from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
 from .evidence_adapter import hydrate_public_evidence, select_county_public_evidence
+from .evidence_graph import (
+    EvidenceGraphEdge,
+    EvidenceGraphIntegrityIssue,
+    EvidenceGraphNode,
+    EvidenceGraphSnapshot,
+)
+from .evidence_graph_policy import build_governed_evidence_graph
 from .forecasting import (
     ForecastAuthorizationDecision,
     ForecastModelAdapter,
@@ -164,6 +171,10 @@ __all__ = [
     "EvidenceGatewayManifest",
     "EvidenceGatewayQuery",
     "EvidenceGatewayResponse",
+    "EvidenceGraphEdge",
+    "EvidenceGraphIntegrityIssue",
+    "EvidenceGraphNode",
+    "EvidenceGraphSnapshot",
     "ExtractionMethod",
     "ForecastAuthorizationDecision",
     "ForecastModelAdapter",
@@ -227,6 +238,7 @@ __all__ = [
     "authorize_forecast",
     "build_county_planning_graph",
     "build_decision_workspace",
+    "build_governed_evidence_graph",
     "build_planning_research_graph",
     "build_scenario_projection",
     "checkpoint_thread_config",
