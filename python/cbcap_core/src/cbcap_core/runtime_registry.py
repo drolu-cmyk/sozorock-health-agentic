@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import Field
 
-from .authorization import AuthorizedActor, RuntimeRole, require_actor_capability
+from .authorization import AuthorizedActor, require_actor_capability
 from .identity_adapter import ResolvedWorkspaceMembership, VerifiedExternalPrincipal
 from .models import CountyRunState, StrictModel
 from .persistence import ConnectionLike
@@ -137,6 +137,10 @@ def resolve_workspace_membership(
         raise RuntimeError("workspace membership history has an ambiguous latest timestamp")
 
     decision, role, geography_ids_raw, membership_version, recorded_at, expires_at = rows[0]
+    if recorded_at.tzinfo is None or recorded_at.utcoffset() is None:
+        raise RuntimeError("workspace membership event time must be timezone-aware")
+    if recorded_at > now:
+        raise RuntimeError("workspace membership event is in the future")
     if decision != "granted":
         raise PermissionError("workspace membership is revoked")
     if expires_at is not None and now >= expires_at:
@@ -218,7 +222,7 @@ def persist_county_run_identity(
     if county_fips is None:
         raise ValueError("county run identity requires county FIPS")
     created_at = datetime.now(timezone.utc)
-    identity = RuntimeRunIdentity(
+    requested = RuntimeRunIdentity(
         run_id=run.run_id,
         tenant_id=run.tenant_id,
         geography_id=run.county.id,
@@ -235,30 +239,40 @@ def persist_county_run_identity(
             ON CONFLICT (run_id) DO NOTHING
             """,
             (
-                identity.run_id,
-                identity.tenant_id,
-                identity.geography_id,
-                identity.county_fips,
-                identity.created_by,
-                identity.created_at,
+                requested.run_id,
+                requested.tenant_id,
+                requested.geography_id,
+                requested.county_fips,
+                requested.created_by,
+                requested.created_at,
             ),
         )
         cursor.execute(
             """
-            SELECT tenant_id, geography_id, county_fips
+            SELECT run_id, tenant_id, geography_id, county_fips, created_by, created_at
               FROM cbcap.county_run_identity
              WHERE run_id=%s
             """,
-            (identity.run_id,),
+            (requested.run_id,),
         )
         existing = cursor.fetchone()
-    if existing is None or tuple(existing) != (
-        identity.tenant_id,
-        identity.geography_id,
-        identity.county_fips,
+    if existing is None:
+        raise RuntimeError("county run identity insert did not produce a durable record")
+    durable = RuntimeRunIdentity(
+        run_id=existing[0],
+        tenant_id=existing[1],
+        geography_id=existing[2],
+        county_fips=existing[3],
+        created_by=existing[4],
+        created_at=existing[5],
+    )
+    if (
+        durable.tenant_id != requested.tenant_id
+        or durable.geography_id != requested.geography_id
+        or durable.county_fips != requested.county_fips
     ):
         raise RuntimeError("existing county run identity conflicts with requested immutable scope")
-    return identity
+    return durable
 
 
 def append_county_run_state(
@@ -296,7 +310,7 @@ def append_county_run_state(
 
         cursor.execute(
             """
-            SELECT version_no, state_hash
+            SELECT id, version_no, state_hash, status, recorded_by, recorded_at
               FROM cbcap.county_run_state_version
              WHERE tenant_id=%s AND run_id=%s
              ORDER BY version_no DESC
@@ -305,18 +319,18 @@ def append_county_run_state(
             (run.tenant_id, run.run_id),
         )
         latest = cursor.fetchone()
-        if latest is not None and latest[1] == state_hash:
+        if latest is not None and latest[2] == state_hash:
             return RuntimeStateVersion(
-                id=state_id,
+                id=latest[0],
                 tenant_id=run.tenant_id,
                 run_id=run.run_id,
-                version_no=int(latest[0]),
-                state_hash=state_hash,
-                status=run.status.value if hasattr(run.status, "value") else str(run.status),
-                recorded_by=actor.actor_id,
-                recorded_at=recorded_at,
+                version_no=int(latest[1]),
+                state_hash=latest[2],
+                status=latest[3],
+                recorded_by=latest[4],
+                recorded_at=latest[5],
             )
-        next_version = 1 if latest is None else int(latest[0]) + 1
+        next_version = 1 if latest is None else int(latest[1]) + 1
         status = run.status.value if hasattr(run.status, "value") else str(run.status)
         cursor.execute(
             """
