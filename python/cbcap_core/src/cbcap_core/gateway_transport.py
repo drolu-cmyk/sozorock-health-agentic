@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from time import perf_counter_ns
 from typing import Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -28,10 +29,15 @@ class EvidenceGatewayFetchResult:
     response: EvidenceGatewayResponse | None
     etag: str | None
     not_modified: bool = False
+    elapsed_ms: int | None = None
 
 
 def _headers_lower(headers: Mapping[str, str]) -> dict[str, str]:
     return {str(key).lower(): str(value) for key, value in headers.items()}
+
+
+def _elapsed_ms(started_ns: int) -> int:
+    return max(0, (perf_counter_ns() - started_ns) // 1_000_000)
 
 
 def package_release_hash(package_payload: Mapping[str, object]) -> str:
@@ -156,6 +162,7 @@ class EvidenceGatewayHttpClient:
             method="GET",
             headers=request_headers,
         )
+        started_ns = perf_counter_ns()
 
         try:
             response = self._opener.open(request, timeout=self._timeout_seconds)
@@ -177,6 +184,7 @@ class EvidenceGatewayHttpClient:
                     response=None,
                     etag=etag,
                     not_modified=True,
+                    elapsed_ms=_elapsed_ms(started_ns),
                 )
             raise EvidenceGatewayTransportError(
                 f"Evidence Gateway request failed with HTTP {exc.code}"
@@ -205,4 +213,5 @@ class EvidenceGatewayHttpClient:
             response=validated,
             etag=headers.get("ETag") or headers.get("etag"),
             not_modified=False,
+            elapsed_ms=_elapsed_ms(started_ns),
         )
