@@ -70,7 +70,7 @@ jobs:
           python -m cbcap_core.release_evaluation > /tmp/cbcap-five-county-evaluation.json
           jq -e '.contract == "sozorock.evidence-gateway.v1"' /tmp/cbcap-five-county-evaluation.json >/dev/null
           jq -e '.counties | length == 5' /tmp/cbcap-five-county-evaluation.json >/dev/null
-          jq -e '.release_hash | startswith("sha256:")' /tmp/cbcap-five-county-evaluation.json >/dev/null
+          jq -e 'all(.counties[]; (.release_hash | test("^sha256:[0-9a-f]{64}$")))' /tmp/cbcap-five-county-evaluation.json >/dev/null
           cat /tmp/cbcap-five-county-evaluation.json
 
       - name: Require governed AWS deployment configuration
