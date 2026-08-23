@@ -7,6 +7,7 @@ from .migration_runner import (
     MIGRATION_TABLE,
     RUNTIME_INSERT_TABLES,
     RUNTIME_SELECT_TABLES,
+    RUNTIME_UPDATE_COLUMNS,
     _migration_files,
     _sha256,
 )
@@ -51,11 +52,40 @@ def _table_grants(connection: ConnectionLike, schema_name: str) -> dict[str, tup
         }
 
 
+def _effective_update_columns(connection: ConnectionLike) -> set[tuple[str, str]]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT c.relname,
+                   a.attname,
+                   has_column_privilege(
+                     current_user,
+                     format('%I.%I', n.nspname, c.relname),
+                     a.attname,
+                     'UPDATE'
+                   )
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid=c.relnamespace
+              JOIN pg_attribute a ON a.attrelid=c.oid
+             WHERE n.nspname='cbcap'
+               AND c.relkind IN ('r', 'p')
+               AND a.attnum > 0
+               AND NOT a.attisdropped
+             ORDER BY c.relname, a.attnum
+            """
+        )
+        return {
+            (str(row[0]), str(row[1]))
+            for row in cursor.fetchall()
+            if bool(row[2])
+        }
+
+
 def _assert_runtime_cbcap_grants(connection: ConnectionLike) -> None:
     grants = _table_grants(connection, "cbcap")
     expected_select = set(RUNTIME_SELECT_TABLES)
     expected_insert = set(RUNTIME_INSERT_TABLES)
-    required = expected_select | expected_insert
+    required = expected_select | expected_insert | set(RUNTIME_UPDATE_COLUMNS)
     if not required.issubset(grants):
         raise RuntimeError("runtime database privilege boundary is incomplete")
 
@@ -68,6 +98,14 @@ def _assert_runtime_cbcap_grants(connection: ConnectionLike) -> None:
         )
         if (can_select, can_insert, can_update, can_delete) != expected:
             raise RuntimeError("runtime database privilege boundary is incomplete")
+
+    expected_update_columns = {
+        (table_name, column_name)
+        for table_name, column_names in RUNTIME_UPDATE_COLUMNS.items()
+        for column_name in column_names
+    }
+    if _effective_update_columns(connection) != expected_update_columns:
+        raise RuntimeError("runtime database privilege boundary is incomplete")
 
 
 def _assert_runtime_public_grants(connection: ConnectionLike) -> None:
@@ -88,10 +126,10 @@ def assert_runtime_schema_ready(
     Liveness is intentionally separate from readiness. A task is ready only
     when every numbered CB-CAP migration bundled into its immutable image is
     present with the exact recorded hash, the runtime database principal has
-    only the reviewed table privileges, and durable LangGraph checkpoint tables
-    retain forced tenant RLS plus the expected policies. An older image against
-    a newer database also fails closed, preventing accidental rollback across an
-    incompatible schema boundary.
+    only the reviewed table and row-lock column privileges, and durable
+    LangGraph checkpoint tables retain forced tenant RLS plus the expected
+    policies. An older image against a newer database also fails closed,
+    preventing accidental rollback across an incompatible schema boundary.
     """
 
     root = migration_root or Path(
