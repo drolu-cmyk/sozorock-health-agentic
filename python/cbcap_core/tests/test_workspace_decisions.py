@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 import pytest
 from pydantic import ValidationError
 
+from cbcap_core.authorization import AuthorizationGrant, ROLE_CAPABILITIES
 from cbcap_core.models import (
     BarrierFamily,
     BarrierObservation,
@@ -22,20 +23,45 @@ from cbcap_core.workspace_decisions import (
 )
 
 NOW = datetime(2026, 8, 22, 23, 55, tzinfo=timezone.utc)
+AUTH_ISSUED = datetime(2026, 1, 1, tzinfo=timezone.utc)
+AUTH_EXPIRES = datetime(2027, 1, 1, tzinfo=timezone.utc)
 TENANT = "tenant:albany-planning"
+COUNTY_ID = "county:36001"
+RUN_ID = "workspace-decision-run"
 
 
-def actor(*, role="analyst", tenant_id=TENANT, actor_id=None) -> RuntimeActor:
+def actor(
+    *,
+    role="analyst",
+    tenant_id=TENANT,
+    actor_id=None,
+    capabilities=None,
+    geography_ids=None,
+    run_ids=None,
+) -> RuntimeActor:
+    principal = actor_id or f"principal:{role}"
+    grant = AuthorizationGrant(
+        grant_id=f"grant:{principal}",
+        actor_id=principal,
+        tenant_id=tenant_id,
+        capabilities=capabilities or sorted(ROLE_CAPABILITIES[role]),
+        geography_ids=geography_ids if geography_ids is not None else [COUNTY_ID],
+        run_ids=run_ids if run_ids is not None else [RUN_ID],
+        issuer="test-identity-verifier",
+        issued_at=AUTH_ISSUED,
+        expires_at=AUTH_EXPIRES,
+    )
     return RuntimeActor(
-        actor_id=actor_id or f"principal:{role}",
+        actor_id=principal,
         tenant_id=tenant_id,
         role=role,
+        authorization=grant,
     )
 
 
 def county() -> GeographyRef:
     return GeographyRef(
-        id="county:36001",
+        id=COUNTY_ID,
         kind=GeographyKind.COUNTY,
         authority="census",
         authority_id="36001",
@@ -120,7 +146,7 @@ def run(*, tenant_id: str | None = TENANT, provisional: bool = False) -> CountyR
             barrier("food", BarrierFamily.FOOD_SECURITY, status=ReviewStatus.PROVISIONAL)
         )
     return CountyRunState(
-        run_id="workspace-decision-run",
+        run_id=RUN_ID,
         tenant_id=tenant_id,
         county=county(),
         requested_at=NOW,
@@ -198,7 +224,7 @@ def test_caller_cannot_supply_actor_review_status_or_decision_timestamp():
         WorkspaceDecisionRequest.model_validate(payload)
 
 
-def test_analyst_decision_is_proposed_and_identity_comes_from_runtime_actor():
+def test_analyst_decision_is_proposed_and_identity_comes_from_authorized_actor():
     result = prepare_workspace_decision(
         decision_request(run()),
         actor=actor(role="analyst", actor_id="principal:analyst-7"),
@@ -247,6 +273,28 @@ def test_evidence_correction_can_target_provisional_entity_with_authoritative_su
     assert corrected.memory.evidence_entity_ids == ["measure:transportation"]
 
 
+def test_workspace_memory_requires_explicit_capability_county_and_run_scope():
+    request = decision_request(run())
+    with pytest.raises(PermissionError, match="record_workspace_proposal"):
+        prepare_workspace_decision(
+            request,
+            actor=actor(
+                role="analyst",
+                capabilities=["read_workspace", "execute_county_run"],
+            ),
+        )
+    with pytest.raises(PermissionError, match="geography"):
+        prepare_workspace_decision(
+            request,
+            actor=actor(role="analyst", geography_ids=["county:42029"]),
+        )
+    with pytest.raises(PermissionError, match="county run"):
+        prepare_workspace_decision(
+            request,
+            actor=actor(role="analyst", run_ids=["run:other"]),
+        )
+
+
 def test_action_must_be_currently_allowed_and_compatible_with_decision_type():
     with pytest.raises(PermissionError, match="not authorized"):
         prepare_workspace_decision(
@@ -266,7 +314,7 @@ def test_action_must_be_currently_allowed_and_compatible_with_decision_type():
 
 
 def test_read_only_cross_tenant_and_unknown_entity_boundaries_fail_closed():
-    with pytest.raises(PermissionError, match="read-only"):
+    with pytest.raises(PermissionError, match="record_workspace_proposal"):
         prepare_workspace_decision(
             decision_request(run(), action="inspect_evidence"),
             actor=actor(role="read_only"),
@@ -297,9 +345,9 @@ def test_read_only_cross_tenant_and_unknown_entity_boundaries_fail_closed():
         )
 
 
-def test_publication_is_not_a_memory_only_workspace_command():
-    payload = decision_request(run()).model_dump(mode="python")
-    payload.update(
+def test_publication_and_funding_decisions_cannot_use_generic_workspace_memory_path():
+    publication_payload = decision_request(run()).model_dump(mode="python")
+    publication_payload.update(
         {
             "action": "approve_publication",
             "decision_type": "publication_decision",
@@ -307,7 +355,12 @@ def test_publication_is_not_a_memory_only_workspace_command():
         }
     )
     with pytest.raises(ValidationError):
-        WorkspaceDecisionRequest.model_validate(payload)
+        WorkspaceDecisionRequest.model_validate(publication_payload)
+
+    funding_payload = decision_request(run(), action="inspect_funding").model_dump(mode="python")
+    funding_payload["decision_type"] = "funding_fit"
+    with pytest.raises(ValidationError):
+        WorkspaceDecisionRequest.model_validate(funding_payload)
 
 
 def test_record_workspace_decision_persists_rebuilt_governed_memory():
