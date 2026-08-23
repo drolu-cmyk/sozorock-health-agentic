@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .gateway import PublicEvidencePackage, assert_public_package
-from .models import CountyRunState, GeographyKind, Measure
+from .gateway import PublicEvidenceMeasure, PublicEvidencePackage, assert_public_package
+from .models import CountyRunState, GeographyKind
 
 
 def _validated_package(
@@ -15,7 +15,7 @@ def _validated_package(
 def _county_measures(
     run: CountyRunState,
     package: PublicEvidencePackage,
-) -> list[Measure]:
+) -> list[PublicEvidenceMeasure]:
     county_fips = run.county.county_fips
     if county_fips is None:
         raise ValueError("county run must have county_fips before public evidence hydration")
@@ -40,8 +40,13 @@ def _county_measures(
 def select_county_public_evidence(
     run: CountyRunState,
     payload: dict[str, Any] | PublicEvidencePackage,
-) -> tuple[list[Measure], str]:
-    """Validate a public package and select only evidence for the run's county."""
+) -> tuple[list[PublicEvidenceMeasure], str]:
+    """Validate a public package and select only evidence for the run's county.
+
+    Observation scope and bounded source metadata are retained so specialist
+    branches can distinguish whole-county evidence from population-group,
+    facility, and source-designation records.
+    """
 
     package = _validated_package(payload)
     return _county_measures(run, package), package.release_id
@@ -51,10 +56,10 @@ def hydrate_public_evidence(
     run: CountyRunState,
     payload: dict[str, Any] | PublicEvidencePackage,
 ) -> tuple[CountyRunState, list[str], str]:
-    """Hydrate one county run from a validated public Evidence Gateway package.
+    """Hydrate canonical county state with the provider-neutral base measures.
 
-    Matching is by county FIPS, not display label or free text. Unknown/private
-    fields fail closed in `PublicEvidencePackage` before they can enter run state.
+    Specialist source scope remains available from the validated public package;
+    canonical Measure state intentionally stays compact.
     """
 
     measures, release_id = select_county_public_evidence(run, payload)
