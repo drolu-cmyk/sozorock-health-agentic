@@ -1,3 +1,4 @@
+from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
 from .evidence_adapter import hydrate_public_evidence, select_county_public_evidence
 from .gateway import (
     PUBLIC_EVIDENCE_CORE_COMPATIBILITY,
@@ -61,6 +62,7 @@ __all__ = [
     "BarrierPattern",
     "BranchPayload",
     "BranchResult",
+    "CheckpointSettings",
     "CitationLocator",
     "Confidence",
     "Conflict",
@@ -100,7 +102,9 @@ __all__ = [
     "SHARED_EVIDENCE_CONTRACT_VERSION",
     "assert_public_package",
     "build_county_planning_graph",
+    "checkpoint_thread_config",
     "hydrate_public_evidence",
     "initial_graph_state",
+    "postgres_checkpointer",
     "select_county_public_evidence",
 ]
