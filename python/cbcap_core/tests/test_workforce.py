@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 
 from cbcap_core.gateway import PublicEvidenceMeasure
 from cbcap_core.models import (
+    BarrierFamily,
     GeographyKind,
     GeographyRef,
     MetricSemantics,
@@ -99,9 +100,12 @@ def test_whole_county_hpsa_requires_both_scope_and_source_confirmation():
     assert decision.designation.scope == "county"
     assert decision.designation.is_whole_county is True
     assert decision.designation.discipline == "primary_care"
+    assert decision.county_barrier_observation is not None
+    assert decision.county_barrier_observation.barrier_family == BarrierFamily.WORKFORCE
+    assert decision.county_barrier_observation.pressure_percentile is None
 
 
-def test_population_group_designation_remains_population_group_context():
+def test_population_group_designation_remains_context_and_not_county_barrier():
     decision = classify_workforce_measure(
         measure(
             geography_level="population_group",
@@ -114,6 +118,7 @@ def test_population_group_designation_remains_population_group_context():
     assert decision.designation is not None
     assert decision.designation.scope == "population_group"
     assert decision.designation.is_whole_county is False
+    assert decision.county_barrier_observation is None
 
 
 def test_facility_designation_is_not_promoted_to_county_shortage():
@@ -129,6 +134,7 @@ def test_facility_designation_is_not_promoted_to_county_shortage():
     assert decision.designation is not None
     assert decision.designation.scope == "facility"
     assert decision.designation.is_whole_county is False
+    assert decision.county_barrier_observation is None
 
 
 def test_county_scope_without_source_confirmation_fails_closed():
@@ -138,14 +144,13 @@ def test_county_scope_without_source_confirmation_fails_closed():
 
 
 def test_missing_observation_scope_fails_closed():
-    candidate = measure()
-    candidate = candidate.model_copy(update={"geography_level": None})
+    candidate = measure().model_copy(update={"geography_level": None})
     decision = classify_workforce_measure(candidate)
     assert decision.status == "rejected"
     assert "observation_scope_missing" in decision.reason_codes
 
 
-def test_batch_keeps_county_and_facility_designations_separate():
+def test_batch_keeps_scoped_designations_but_only_whole_county_creates_barrier():
     county_designation = measure()
     facility_designation = measure(
         geography_level="facility",
@@ -157,3 +162,5 @@ def test_batch_keeps_county_and_facility_designations_separate():
     result = classify_workforce_measures([county_designation, facility_designation])
     assert len(result.designations) == 2
     assert {item.scope for item in result.designations} == {"county", "facility"}
+    assert len(result.county_barrier_observations) == 1
+    assert result.county_barrier_observations[0].measure_id == county_designation.id
