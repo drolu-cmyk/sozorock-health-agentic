@@ -6,6 +6,7 @@ DOCKERFILE = REPO_ROOT / "Dockerfile.runtime"
 DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 REGISTRY_STACK = REPO_ROOT / "infrastructure" / "cloudformation" / "cbcap-runtime-registry.yml"
 RUNTIME_STACK = REPO_ROOT / "infrastructure" / "cloudformation" / "cbcap-private-runtime.yml"
+BOOTSTRAP_STACK = REPO_ROOT / "infrastructure" / "cloudformation" / "cbcap-private-deployment-bootstrap.yml"
 DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-private-runtime.yml"
 
 
@@ -80,6 +81,18 @@ def test_migrations_are_a_separate_task_before_runtime_scale_up():
     assert "CB_CAP_MIGRATION_ROOT, Value: /app/sql" in stack
 
 
+def test_deployment_identity_roles_cannot_manage_themselves():
+    stack = _text(BOOTSTRAP_STACK)
+    assert "RoleName: cbcap-private-cloudformation" in stack
+    assert "RoleName: cbcap-private-github-deploy" in stack
+    assert "token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepository}:environment:${GitHubEnvironment}" in stack
+    assert "Default: cbcap-private-runtime-" in stack
+    assert "role/${RuntimeRolePrefix}*" in stack
+    assert "role/${RuntimeStackPrefix}*" not in stack
+    assert "iam:PassedToService: cloudformation.amazonaws.com" in stack
+    assert "iam:PassedToService: ecs-tasks.amazonaws.com" in stack
+
+
 def test_deployment_workflow_keeps_migration_before_service_enablement():
     workflow = _text(DEPLOY_WORKFLOW)
     zero_index = workflow.index("DesiredCount=0")
@@ -89,3 +102,5 @@ def test_deployment_workflow_keeps_migration_before_service_enablement():
     assert "api.cbcap.sozorockfoundation.org/healthz" in workflow
     assert "api.cbcap.sozorockfoundation.org/readyz" in workflow
     assert "CBCAP_PRIVATE_AWS_DEPLOY_ROLE_ARN" in workflow
+    assert "CBCAP_PRIVATE_CLOUDFORMATION_ROLE_ARN" in workflow
+    assert "image-scan-complete" in workflow
