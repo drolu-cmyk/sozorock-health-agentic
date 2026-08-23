@@ -83,6 +83,14 @@ def test_migrations_are_a_separate_task_before_runtime_scale_up():
     assert "CB_CAP_MIGRATION_ROOT, Value: /app/sql" in stack
 
 
+def test_migration_task_receives_the_runtime_role_password_secret():
+    stack = _text(RUNTIME_STACK)
+    migration = stack.split("  MigrationTaskDefinition:", 1)[1].split("\n  Certificate:", 1)[0]
+    assert "- Name: CB_CAP_DATABASE_PASSWORD\n              ValueFrom: !Ref RuntimeDatabasePassword" in migration
+    assert "- Name: CB_CAP_MIGRATION_DATABASE_USERNAME" in migration
+    assert "- Name: CB_CAP_MIGRATION_DATABASE_PASSWORD" in migration
+
+
 def test_deployment_identity_roles_cannot_manage_themselves():
     stack = _text(BOOTSTRAP_STACK)
     assert "RoleName: cbcap-private-cloudformation" in stack
