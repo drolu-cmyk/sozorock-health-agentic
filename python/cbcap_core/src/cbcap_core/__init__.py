@@ -68,6 +68,13 @@ from .gateway import (
     SourceCoverageAssertion,
     assert_public_package,
 )
+from .gateway_transport import (
+    EvidenceGatewayFetchResult,
+    EvidenceGatewayHttpClient,
+    EvidenceGatewayTransportError,
+    package_release_hash,
+    validate_gateway_http_document,
+)
 from .graph import (
     BranchPayload,
     BranchResult,
@@ -147,6 +154,17 @@ from .planning_research import (
     research_candidates,
 )
 from .planning_views import PlanningViewDecision, PlanningViewRequest, select_planning_view
+from .run_preparation import (
+    CountyRunPreparationError,
+    PreparedCountyGraphRun,
+    prepare_county_graph_run,
+)
+from .runtime_service import (
+    CountyRunExecution,
+    execute_county_run,
+    execute_county_run_from_env,
+    resume_county_run_review,
+)
 from .trajectory import TrajectoryCorrection, TrajectoryEvaluationLabel, TrajectoryEvent
 from .visualization import VisualizationDecision, VisualizationRequest, select_visualization
 from .workforce import (
@@ -206,6 +224,8 @@ __all__ = [
     "Conflict",
     "CountyGraphContext",
     "CountyGraphState",
+    "CountyRunExecution",
+    "CountyRunPreparationError",
     "CountyRunState",
     "DecisionMemoryProposal",
     "DecisionMemoryQuery",
@@ -215,9 +235,12 @@ __all__ = [
     "DecisionWorkspaceRequest",
     "DocumentTrust",
     "EvidenceClaim",
+    "EvidenceGatewayFetchResult",
+    "EvidenceGatewayHttpClient",
     "EvidenceGatewayManifest",
     "EvidenceGatewayQuery",
     "EvidenceGatewayResponse",
+    "EvidenceGatewayTransportError",
     "EvidenceGraphEdge",
     "EvidenceGraphIntegrityIssue",
     "EvidenceGraphNode",
@@ -261,6 +284,7 @@ __all__ = [
     "PlanningTrajectoryEvent",
     "PlanningViewDecision",
     "PlanningViewRequest",
+    "PreparedCountyGraphRun",
     "PublicationArtifact",
     "PublicEvidenceMeasure",
     "PublicEvidencePackage",
@@ -311,10 +335,13 @@ __all__ = [
     "classify_workforce_measure",
     "classify_workforce_measures",
     "evaluate_funding_fit",
+    "execute_county_run",
+    "execute_county_run_from_env",
     "find_ahrf_rule",
     "find_barrier_rule",
     "hydrate_public_evidence",
     "initial_graph_state",
+    "package_release_hash",
     "persist_county_graph_trajectory",
     "persist_decision_memory",
     "persist_trajectory_corrections",
@@ -322,8 +349,10 @@ __all__ = [
     "persist_trajectory_events",
     "postgres_checkpointer",
     "postgres_connection",
+    "prepare_county_graph_run",
     "query_decision_memory",
     "research_candidates",
+    "resume_county_run_review",
     "run_planning_pipeline",
     "select_county_public_evidence",
     "select_county_source_coverage",
@@ -331,4 +360,5 @@ __all__ = [
     "select_visualization",
     "summarize_barriers",
     "supersede_decision_memory",
+    "validate_gateway_http_document",
 ]
