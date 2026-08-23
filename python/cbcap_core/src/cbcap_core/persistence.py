@@ -8,6 +8,14 @@ from typing import Any, Iterable, Protocol
 from urllib.parse import parse_qs, urlparse
 
 from .decision_memory import DecisionMemoryRecord
+from .forecast_governance import (
+    BacktestPolicyEvaluation,
+    ForecastBacktestCase,
+    ForecastBacktestPolicy,
+    ForecastBacktestSummary,
+    ForecastModelApproval,
+    ForecastModelRegistration,
+)
 from .models import CountyRunState
 from .trajectory import TrajectoryCorrection, TrajectoryEvaluationLabel, TrajectoryEvent
 
@@ -193,7 +201,12 @@ def _set_tenant_scope(cursor: CursorLike, tenant_id: str | None) -> None:
     cursor.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
 
 
-def _require_matching_tenant(record_tenant_id: str | None, actor_tenant_id: str | None, *, label: str) -> None:
+def _require_matching_tenant(
+    record_tenant_id: str | None,
+    actor_tenant_id: str | None,
+    *,
+    label: str,
+) -> None:
     if record_tenant_id != actor_tenant_id:
         raise ValueError(f"{label} tenant does not match authenticated actor tenant")
 
@@ -377,5 +390,211 @@ def persist_decision_memory(
                 record.applicability,
                 record.supersedes_memory_id,
                 record.expires_at,
+            ),
+        )
+
+
+def persist_forecast_model_registration(
+    connection: ConnectionLike,
+    registration: ForecastModelRegistration,
+) -> None:
+    """Persist one immutable global forecast implementation registration."""
+
+    with connection.cursor() as cursor:
+        _set_tenant_scope(cursor, None)
+        cursor.execute(
+            """
+            INSERT INTO cbcap.forecast_model_registration (
+              model_version, model_family, implementation_ref, implementation_hash,
+              supported_metric_semantics_ids, allowed_source_ids, minimum_points,
+              maximum_horizon_days, intervals_required, registered_by, registered_at
+            ) VALUES (%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s,%s)
+            ON CONFLICT (model_version) DO NOTHING
+            """,
+            (
+                registration.model_version,
+                registration.model_family,
+                registration.implementation_ref,
+                registration.implementation_hash,
+                json.dumps(registration.supported_metric_semantics_ids),
+                json.dumps(registration.allowed_source_ids),
+                registration.minimum_points,
+                registration.maximum_horizon_days,
+                registration.intervals_required,
+                registration.registered_by,
+                registration.registered_at,
+            ),
+        )
+
+
+def persist_forecast_backtest_cases(
+    connection: ConnectionLike,
+    cases: Iterable[ForecastBacktestCase],
+) -> int:
+    count = 0
+    with connection.cursor() as cursor:
+        _set_tenant_scope(cursor, None)
+        for case in cases:
+            cursor.execute(
+                """
+                INSERT INTO cbcap.forecast_backtest_case (
+                  id, model_version, metric_semantics_id, geography_id,
+                  forecast_origin, horizon_end, training_measure_ids,
+                  holdout_measure_id, predicted_value, actual_value,
+                  interval_low, interval_high, executed_at, input_state_hash
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    case.id,
+                    case.model_version,
+                    case.metric_semantics_id,
+                    case.geography_id,
+                    case.forecast_origin,
+                    case.horizon_end,
+                    json.dumps(case.training_measure_ids),
+                    case.holdout_measure_id,
+                    case.predicted_value,
+                    case.actual_value,
+                    case.interval_low,
+                    case.interval_high,
+                    case.executed_at,
+                    case.input_state_hash,
+                ),
+            )
+            count += 1
+    return count
+
+
+def persist_forecast_backtest_summary(
+    connection: ConnectionLike,
+    summary: ForecastBacktestSummary,
+) -> None:
+    with connection.cursor() as cursor:
+        _set_tenant_scope(cursor, None)
+        cursor.execute(
+            """
+            INSERT INTO cbcap.forecast_backtest_summary (
+              id, model_version, metric_semantics_id, case_count, geography_count,
+              mean_absolute_error, root_mean_squared_error, mean_signed_error,
+              maximum_absolute_error, interval_case_count, interval_coverage,
+              minimum_horizon_days, maximum_horizon_days, backtest_case_ids,
+              computed_at, review_status
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                summary.id,
+                summary.model_version,
+                summary.metric_semantics_id,
+                summary.case_count,
+                summary.geography_count,
+                summary.mean_absolute_error,
+                summary.root_mean_squared_error,
+                summary.mean_signed_error,
+                summary.maximum_absolute_error,
+                summary.interval_case_count,
+                summary.interval_coverage,
+                summary.minimum_horizon_days,
+                summary.maximum_horizon_days,
+                json.dumps(summary.backtest_case_ids),
+                summary.computed_at,
+                summary.review_status.value,
+            ),
+        )
+
+
+def persist_forecast_backtest_policy(
+    connection: ConnectionLike,
+    policy: ForecastBacktestPolicy,
+) -> None:
+    with connection.cursor() as cursor:
+        _set_tenant_scope(cursor, None)
+        cursor.execute(
+            """
+            INSERT INTO cbcap.forecast_backtest_policy (
+              id, model_version, metric_semantics_id, minimum_cases,
+              maximum_mean_absolute_error, maximum_root_mean_squared_error,
+              maximum_absolute_mean_signed_error, minimum_interval_coverage,
+              intervals_required, maximum_horizon_days, rationale,
+              reviewed_by, reviewed_at, review_status
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                policy.id,
+                policy.model_version,
+                policy.metric_semantics_id,
+                policy.minimum_cases,
+                policy.maximum_mean_absolute_error,
+                policy.maximum_root_mean_squared_error,
+                policy.maximum_absolute_mean_signed_error,
+                policy.minimum_interval_coverage,
+                policy.intervals_required,
+                policy.maximum_horizon_days,
+                policy.rationale,
+                policy.reviewed_by,
+                policy.reviewed_at,
+                policy.review_status.value,
+            ),
+        )
+
+
+def persist_backtest_policy_evaluation(
+    connection: ConnectionLike,
+    evaluation: BacktestPolicyEvaluation,
+) -> None:
+    with connection.cursor() as cursor:
+        _set_tenant_scope(cursor, None)
+        cursor.execute(
+            """
+            INSERT INTO cbcap.forecast_backtest_policy_evaluation (
+              id, model_version, metric_semantics_id, summary_id, policy_id,
+              status, reason_codes, evaluated_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                evaluation.id,
+                evaluation.model_version,
+                evaluation.metric_semantics_id,
+                evaluation.summary_id,
+                evaluation.policy_id,
+                evaluation.status,
+                json.dumps(evaluation.reason_codes),
+                evaluation.evaluated_at,
+            ),
+        )
+
+
+def persist_forecast_model_approval(
+    connection: ConnectionLike,
+    approval: ForecastModelApproval,
+) -> None:
+    with connection.cursor() as cursor:
+        _set_tenant_scope(cursor, None)
+        cursor.execute(
+            """
+            INSERT INTO cbcap.forecast_model_approval (
+              id, model_version, metric_semantics_id, policy_id,
+              backtest_summary_id, policy_evaluation_id, decision, reason_codes,
+              decided_by, decided_at, valid_from, valid_until, review_status
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                approval.id,
+                approval.model_version,
+                approval.metric_semantics_id,
+                approval.policy_id,
+                approval.backtest_summary_id,
+                approval.policy_evaluation_id,
+                approval.decision,
+                json.dumps(approval.reason_codes),
+                approval.decided_by,
+                approval.decided_at,
+                approval.valid_from,
+                approval.valid_until,
+                approval.review_status.value,
             ),
         )
