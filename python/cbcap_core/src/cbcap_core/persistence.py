@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Protocol
 from urllib.parse import parse_qs, urlparse
 
-from .institutional_memory import DecisionMemoryRecord
+from .decision_memory import DecisionMemoryRecord
 from .models import CountyRunState
-from .trajectory import TrajectoryEvent
+from .trajectory import TrajectoryCorrection, TrajectoryEvaluationLabel, TrajectoryEvent
 
 
 class CursorLike(Protocol):
@@ -54,7 +54,7 @@ def postgres_connection(
     *,
     tenant_id: str | None = None,
 ):
-    """Open a production PostgreSQL transaction with optional tenant RLS scope.
+    """Open a production PostgreSQL transaction with explicit tenant RLS scope.
 
     There is intentionally no SQLite or in-memory production fallback. The
     psycopg dependency is loaded only when production persistence is requested.
@@ -70,12 +70,8 @@ def postgres_connection(
         ) from exc
 
     with psycopg.connect(resolved.database_url) as connection:
-        if tenant_id is not None:
-            tenant = tenant_id.strip()
-            if not tenant:
-                raise ValueError("tenant_id cannot be blank")
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
+        with connection.cursor() as cursor:
+            _set_tenant_scope(cursor, tenant_id)
         try:
             yield connection
             connection.commit()
@@ -191,12 +187,15 @@ def canonicalize_trajectory_events(
 
 
 def _set_tenant_scope(cursor: CursorLike, tenant_id: str | None) -> None:
-    if tenant_id is None:
-        return
-    tenant = tenant_id.strip()
-    if not tenant:
+    tenant = "" if tenant_id is None else tenant_id.strip()
+    if tenant_id is not None and not tenant:
         raise ValueError("tenant_id cannot be blank")
     cursor.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
+
+
+def _require_matching_tenant(record_tenant_id: str | None, actor_tenant_id: str | None, *, label: str) -> None:
+    if record_tenant_id != actor_tenant_id:
+        raise ValueError(f"{label} tenant does not match authenticated actor tenant")
 
 
 def persist_trajectory_events(
@@ -205,19 +204,13 @@ def persist_trajectory_events(
     *,
     actor_tenant_id: str | None,
 ) -> int:
-    """Append canonical trajectory events idempotently.
-
-    A tenant-scoped event may only be written by the same authenticated tenant.
-    Foundation/public events use tenant_id=None and remain separated by schema
-    policy from tenant-private organizational state.
-    """
+    """Append canonical trajectory events idempotently."""
 
     count = 0
     with connection.cursor() as cursor:
         _set_tenant_scope(cursor, actor_tenant_id)
         for event in events:
-            if event.tenant_id != actor_tenant_id:
-                raise ValueError("trajectory event tenant does not match authenticated actor tenant")
+            _require_matching_tenant(event.tenant_id, actor_tenant_id, label="trajectory event")
             cursor.execute(
                 """
                 INSERT INTO cbcap.trajectory_event (
@@ -261,6 +254,75 @@ def persist_trajectory_events(
     return count
 
 
+def persist_trajectory_evaluation_labels(
+    connection: ConnectionLike,
+    labels: Iterable[TrajectoryEvaluationLabel],
+    *,
+    actor_tenant_id: str | None,
+) -> int:
+    count = 0
+    with connection.cursor() as cursor:
+        _set_tenant_scope(cursor, actor_tenant_id)
+        for label in labels:
+            _require_matching_tenant(label.tenant_id, actor_tenant_id, label="trajectory evaluation label")
+            cursor.execute(
+                """
+                INSERT INTO cbcap.trajectory_evaluation_label (
+                  id, trajectory_event_id, tenant_id, label, reason_codes,
+                  evaluator_id, evaluator_type, evaluator_version, created_at
+                ) VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    label.id,
+                    label.trajectory_event_id,
+                    label.tenant_id,
+                    label.label,
+                    json.dumps(label.reason_codes),
+                    label.evaluator_id,
+                    label.evaluator_type,
+                    label.evaluator_version,
+                    label.created_at,
+                ),
+            )
+            count += 1
+    return count
+
+
+def persist_trajectory_corrections(
+    connection: ConnectionLike,
+    corrections: Iterable[TrajectoryCorrection],
+    *,
+    actor_tenant_id: str | None,
+) -> int:
+    count = 0
+    with connection.cursor() as cursor:
+        _set_tenant_scope(cursor, actor_tenant_id)
+        for correction in corrections:
+            _require_matching_tenant(correction.tenant_id, actor_tenant_id, label="trajectory correction")
+            cursor.execute(
+                """
+                INSERT INTO cbcap.trajectory_correction (
+                  id, trajectory_event_id, tenant_id, corrected_entity_id,
+                  correction_type, reason_codes, corrected_by, corrected_at
+                ) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s,%s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    correction.id,
+                    correction.trajectory_event_id,
+                    correction.tenant_id,
+                    correction.corrected_entity_id,
+                    correction.correction_type,
+                    json.dumps(correction.reason_codes),
+                    correction.corrected_by,
+                    correction.corrected_at,
+                ),
+            )
+            count += 1
+    return count
+
+
 def persist_county_graph_trajectory(
     connection: ConnectionLike,
     graph_state: dict[str, Any],
@@ -268,8 +330,7 @@ def persist_county_graph_trajectory(
     actor_tenant_id: str | None,
 ) -> list[TrajectoryEvent]:
     run = CountyRunState.model_validate(graph_state["county_run"])
-    if run.tenant_id != actor_tenant_id:
-        raise ValueError("county run tenant does not match authenticated actor tenant")
+    _require_matching_tenant(run.tenant_id, actor_tenant_id, label="county run")
     events = canonicalize_trajectory_events(graph_state.get("trajectory_events", []), run)
     persist_trajectory_events(connection, events, actor_tenant_id=actor_tenant_id)
     return events
@@ -281,8 +342,7 @@ def persist_decision_memory(
     *,
     actor_tenant_id: str,
 ) -> None:
-    if record.tenant_id != actor_tenant_id:
-        raise ValueError("decision memory tenant does not match authenticated actor tenant")
+    _require_matching_tenant(record.tenant_id, actor_tenant_id, label="decision memory")
     with connection.cursor() as cursor:
         _set_tenant_scope(cursor, actor_tenant_id)
         cursor.execute(
