@@ -13,6 +13,7 @@ RUN groupadd --gid 10001 cbcap \
 
 COPY python/cbcap_core/pyproject.toml /app/python/cbcap_core/pyproject.toml
 COPY python/cbcap_core/src /app/python/cbcap_core/src
+COPY sql /app/sql
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install "/app/python/cbcap_core[production]" \
