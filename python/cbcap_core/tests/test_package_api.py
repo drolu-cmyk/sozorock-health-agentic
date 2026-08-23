@@ -24,6 +24,18 @@ def test_package_exports_governed_memory_trajectory_and_persistence_surface():
         "FundingPursuitDecisionRequest",
         "FundingPursuitDecisionResult",
         "build_funding_pursuit_decision",
+        "EvidenceGatewayHttpClient",
+        "EvidenceGatewayTransportError",
+        "EvidenceGatewayFetchResult",
+        "validate_gateway_http_document",
+        "package_release_hash",
+        "PreparedCountyGraphRun",
+        "CountyRunPreparationError",
+        "prepare_county_graph_run",
+        "CountyRunExecution",
+        "execute_county_run",
+        "execute_county_run_from_env",
+        "resume_county_run_review",
     }
     missing = sorted(name for name in required if not hasattr(cbcap_core, name))
     assert missing == []
