@@ -3,7 +3,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .migration_runner import MIGRATION_TABLE, _migration_files, _sha256
+from .migration_runner import (
+    MIGRATION_TABLE,
+    RUNTIME_INSERT_TABLES,
+    RUNTIME_SELECT_TABLES,
+    _migration_files,
+    _sha256,
+)
 from .persistence import ConnectionLike
 
 CHECKPOINT_DATA_POLICIES = {
@@ -15,6 +21,61 @@ CHECKPOINT_TABLES = (
     *CHECKPOINT_DATA_POLICIES.keys(),
     "public.checkpoint_migrations",
 )
+PUBLIC_RUNTIME_GRANTS = {
+    "public.checkpoints": (True, True, True, True),
+    "public.checkpoint_blobs": (True, True, True, True),
+    "public.checkpoint_writes": (True, True, True, True),
+    "public.checkpoint_migrations": (True, False, False, False),
+    f"public.{MIGRATION_TABLE}": (True, False, False, False),
+}
+
+
+def _table_grants(connection: ConnectionLike, schema_name: str) -> dict[str, tuple[bool, bool, bool, bool]]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT tablename,
+                   has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'SELECT'),
+                   has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT'),
+                   has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE'),
+                   has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE')
+              FROM pg_tables
+             WHERE schemaname=%s
+             ORDER BY tablename
+            """,
+            (schema_name,),
+        )
+        return {
+            str(row[0]): (bool(row[1]), bool(row[2]), bool(row[3]), bool(row[4]))
+            for row in cursor.fetchall()
+        }
+
+
+def _assert_runtime_cbcap_grants(connection: ConnectionLike) -> None:
+    grants = _table_grants(connection, "cbcap")
+    expected_select = set(RUNTIME_SELECT_TABLES)
+    expected_insert = set(RUNTIME_INSERT_TABLES)
+    required = expected_select | expected_insert
+    if not required.issubset(grants):
+        raise RuntimeError("runtime database privilege boundary is incomplete")
+
+    for table_name, (can_select, can_insert, can_update, can_delete) in grants.items():
+        expected = (
+            table_name in expected_select,
+            table_name in expected_insert,
+            False,
+            False,
+        )
+        if (can_select, can_insert, can_update, can_delete) != expected:
+            raise RuntimeError("runtime database privilege boundary is incomplete")
+
+
+def _assert_runtime_public_grants(connection: ConnectionLike) -> None:
+    grants = _table_grants(connection, "public")
+    for qualified_name, expected in PUBLIC_RUNTIME_GRANTS.items():
+        _, table_name = qualified_name.split(".", 1)
+        if grants.get(table_name) != expected:
+            raise RuntimeError("runtime database privilege boundary is incomplete")
 
 
 def assert_runtime_schema_ready(
@@ -26,10 +87,10 @@ def assert_runtime_schema_ready(
 
     Liveness is intentionally separate from readiness. A task is ready only
     when every numbered CB-CAP migration bundled into its immutable image is
-    present with the exact recorded hash, the durable LangGraph checkpoint
-    tables exist, and forced tenant RLS plus the expected policies remain active
-    on every tenant-bearing checkpoint table. An older image against a newer
-    database also fails closed, preventing accidental rollback across an
+    present with the exact recorded hash, the runtime database principal has
+    only the reviewed table privileges, and durable LangGraph checkpoint tables
+    retain forced tenant RLS plus the expected policies. An older image against
+    a newer database also fails closed, preventing accidental rollback across an
     incompatible schema boundary.
     """
 
@@ -48,6 +109,9 @@ def assert_runtime_schema_ready(
         actual = [tuple(row) for row in cursor.fetchall()]
     if actual != expected:
         raise RuntimeError("runtime database migration ledger does not match the running image")
+
+    _assert_runtime_cbcap_grants(connection)
+    _assert_runtime_public_grants(connection)
 
     with connection.cursor() as cursor:
         for table_name in CHECKPOINT_TABLES:
