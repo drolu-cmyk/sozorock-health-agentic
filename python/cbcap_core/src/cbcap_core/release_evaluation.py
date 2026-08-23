@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from typing import Protocol
 
@@ -38,7 +39,6 @@ class CountyReleaseEvaluation:
 class FiveCountyReleaseEvaluation:
     contract: str
     release_id: str
-    release_hash: str
     counties: tuple[CountyReleaseEvaluation, ...]
 
 
@@ -52,7 +52,6 @@ def evaluate_five_county_gateway(
 
     evaluations: list[CountyReleaseEvaluation] = []
     expected_release_id: str | None = None
-    expected_release_hash: str | None = None
     expected_contract: str | None = None
 
     for county_fips, county_name in counties:
@@ -76,14 +75,14 @@ def evaluate_five_county_gateway(
             raise RuntimeError(f"gateway returned no metric semantics for {county_fips}")
         if not package.measures:
             raise RuntimeError(f"gateway returned no measures for {county_fips}")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", manifest.release_hash):
+            raise RuntimeError(f"gateway returned an invalid package hash for {county_fips}")
 
         if expected_release_id is None:
             expected_release_id = manifest.release_id
-            expected_release_hash = manifest.release_hash
             expected_contract = manifest.contract_version
         elif (
             manifest.release_id != expected_release_id
-            or manifest.release_hash != expected_release_hash
             or manifest.contract_version != expected_contract
         ):
             raise RuntimeError("five-county gateway responses are not pinned to one published release")
@@ -102,13 +101,12 @@ def evaluate_five_county_gateway(
             )
         )
 
-    if expected_release_id is None or expected_release_hash is None or expected_contract is None:
+    if expected_release_id is None or expected_contract is None:
         raise RuntimeError("five-county release evaluation produced no release identity")
 
     return FiveCountyReleaseEvaluation(
         contract=expected_contract,
         release_id=expected_release_id,
-        release_hash=expected_release_hash,
         counties=tuple(evaluations),
     )
 
