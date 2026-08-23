@@ -11,6 +11,9 @@ from cbcap_core.migration_runner import (
     _transaction_body,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MIGRATION_ROOT = REPO_ROOT / "sql"
+
 
 class Result:
     def __init__(self, row=None):
@@ -51,6 +54,13 @@ class FakeConnection:
 
 def migration(path: Path, body: str = "CREATE TABLE sample (id integer);") -> None:
     path.write_text(f"BEGIN;\n\n{body}\n\nCOMMIT;\n", encoding="utf-8")
+
+
+def test_repository_migrations_all_use_the_runner_owned_transaction_contract():
+    files = _migration_files(MIGRATION_ROOT)
+    assert len(files) >= 8
+    for path in files:
+        assert _transaction_body(path)
 
 
 def test_migration_body_requires_explicit_outer_transaction_wrapper(tmp_path):
