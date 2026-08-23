@@ -67,14 +67,7 @@ def _sha256(path: Path) -> str:
 
 
 def _transaction_body(path: Path) -> str:
-    """Return a migration body whose transaction is owned by the runner.
-
-    Numbered migration files remain readable, standalone SQL artifacts with an
-    explicit outer BEGIN/COMMIT. The production runner removes only that outer
-    wrapper so the schema changes and migration-ledger insert can commit as one
-    transaction. This closes the crash window where a migration could commit
-    successfully but remain unrecorded.
-    """
+    """Return a migration body whose transaction is owned by the runner."""
 
     script = path.read_text(encoding="utf-8")
     if not script.strip():
@@ -174,9 +167,15 @@ def _ensure_runtime_role(
     )
 
 
-def _setup_checkpoint_schema(master_url: str, connection: psycopg.Connection) -> None:
+def _create_checkpoint_schema(master_url: str) -> None:
+    """Create/upgrade LangGraph's durable checkpoint tables before CB-CAP RLS."""
+
     with PostgresSaver.from_conn_string(master_url) as checkpointer:
         checkpointer.setup()
+
+
+def _grant_checkpoint_schema(connection: psycopg.Connection) -> None:
+    """Grant the runtime role access only after checkpoint RLS is installed."""
 
     role = sql.Identifier(RUNTIME_ROLE)
     connection.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
@@ -184,18 +183,26 @@ def _setup_checkpoint_schema(master_url: str, connection: psycopg.Connection) ->
         sql.SQL(f"GRANT SELECT ON TABLE public.{MIGRATION_TABLE} TO {{}}").format(role)
     )
     for table_name in ("checkpoints", "checkpoint_blobs", "checkpoint_writes"):
-        if connection.execute("SELECT to_regclass(%s)", (f"public.{table_name}",)).fetchone()[0]:
-            connection.execute(
-                sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {}.{} TO {}").format(
-                    sql.Identifier("public"), sql.Identifier(table_name), role
-                )
-            )
-    if connection.execute(
-        "SELECT to_regclass('public.checkpoint_migrations')"
-    ).fetchone()[0]:
+        relation = connection.execute(
+            "SELECT to_regclass(%s)",
+            (f"public.{table_name}",),
+        ).fetchone()[0]
+        if relation is None:
+            raise RuntimeError(f"required checkpoint table public.{table_name} is missing")
         connection.execute(
-            sql.SQL("GRANT SELECT ON TABLE public.checkpoint_migrations TO {}").format(role)
+            sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {}.{} TO {}").format(
+                sql.Identifier("public"), sql.Identifier(table_name), role
+            )
         )
+
+    checkpoint_migrations = connection.execute(
+        "SELECT to_regclass('public.checkpoint_migrations')"
+    ).fetchone()[0]
+    if checkpoint_migrations is None:
+        raise RuntimeError("required checkpoint table public.checkpoint_migrations is missing")
+    connection.execute(
+        sql.SQL("GRANT SELECT ON TABLE public.checkpoint_migrations TO {}").format(role)
+    )
 
 
 def run_migrations() -> None:
@@ -207,6 +214,10 @@ def run_migrations() -> None:
         password_env="CB_CAP_MIGRATION_DATABASE_PASSWORD",
     )
 
+    # LangGraph owns the physical checkpoint table definitions. They must exist
+    # before CB-CAP migration 009 can install forced tenant RLS on those tables.
+    _create_checkpoint_schema(master_url)
+
     with psycopg.connect(master_url, autocommit=True) as connection:
         _apply_migrations(connection, root)
         with connection.transaction():
@@ -215,7 +226,7 @@ def run_migrations() -> None:
                 runtime_password=runtime_password,
                 database_name=database_name,
             )
-        _setup_checkpoint_schema(master_url, connection)
+            _grant_checkpoint_schema(connection)
 
 
 if __name__ == "__main__":
