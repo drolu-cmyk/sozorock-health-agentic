@@ -1,44 +1,61 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal, cast
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from .decision_memory import (
     DecisionMemoryProposal,
     DecisionMemoryRecord,
     DecisionMemoryWriteRequest,
     MemoryActorRole,
+    MemoryDecisionType,
     ProposalOutcome,
     build_decision_memory,
 )
 from .models import CountyRunState, StrictModel
 from .persistence import ConnectionLike, persist_decision_memory
 from .planning_views import PlanningQuestion
+from .runtime_service import RuntimeActor
 from .workspace import (
     DecisionWorkspaceContract,
     DecisionWorkspaceRequest,
-    WorkspaceRole,
     build_decision_workspace,
 )
 
+WorkspaceDecisionAction = Literal[
+    "inspect_evidence",
+    "compare_barriers",
+    "compare_plans",
+    "review_conflicts",
+    "create_scenario",
+    "inspect_funding",
+]
 WorkspaceMemoryDecisionType = Literal[
     "planning_interpretation",
+    "funding_fit",
+    "partner_requirement",
     "scenario_decision",
     "evidence_correction",
-    "publication_decision",
 ]
+
+_ACTION_DECISION_TYPES: dict[WorkspaceDecisionAction, frozenset[MemoryDecisionType]] = {
+    "inspect_evidence": frozenset({"planning_interpretation", "evidence_correction"}),
+    "compare_barriers": frozenset({"planning_interpretation"}),
+    "compare_plans": frozenset({"planning_interpretation"}),
+    "review_conflicts": frozenset({"planning_interpretation", "evidence_correction"}),
+    "create_scenario": frozenset({"scenario_decision"}),
+    "inspect_funding": frozenset({"funding_fit", "partner_requirement"}),
+}
 
 
 class WorkspaceDecisionRequest(StrictModel):
-    """Server-side command to convert a governed workspace decision into memory."""
+    """Decision intent only. Identity, review authority and time are not caller fields."""
 
     county_run: CountyRunState
     question: PlanningQuestion
-    actor_tenant_id: str = Field(min_length=1)
-    actor_id: str = Field(min_length=1)
-    actor_role: WorkspaceRole
+    action: WorkspaceDecisionAction
     decision_type: WorkspaceMemoryDecisionType
     subject_type: str = Field(min_length=1)
     subject_id: str = Field(min_length=1)
@@ -49,17 +66,6 @@ class WorkspaceDecisionRequest(StrictModel):
     related_entity_ids: list[str] = Field(default_factory=list)
     missing_requirements: list[str] = Field(default_factory=list)
     applicability: Literal["context_specific", "reusable"] = "context_specific"
-    expires_at: datetime | None = None
-    decided_at: datetime
-    approve_as_reviewed: bool = False
-
-    @model_validator(mode="after")
-    def validate_command_shape(self) -> "WorkspaceDecisionRequest":
-        if self.actor_role == "read_only":
-            raise ValueError("read-only workspace role cannot record institutional decisions")
-        if self.decision_type == "publication_decision" and not self.approve_as_reviewed:
-            raise ValueError("publication decisions must be recorded as reviewed decisions")
-        return self
 
 
 class WorkspaceDecisionResult(StrictModel):
@@ -94,40 +100,22 @@ def _run_entity_ids(run: CountyRunState) -> set[str]:
     return ids
 
 
-def _scenario_entity_ids(run: CountyRunState) -> set[str]:
-    return {
-        *[item.id for item in run.scenario_assumptions],
-        *[item.id for item in run.forecasts],
-    }
-
-
-def _blocker_entity_ids(workspace: DecisionWorkspaceContract) -> set[str]:
-    return {
-        entity_id
-        for blocker in workspace.blockers
-        for entity_id in blocker.entity_ids
-    }
-
-
-def _reviewable_evidence_ids(
-    request: WorkspaceDecisionRequest,
-    workspace: DecisionWorkspaceContract,
-) -> set[str]:
-    authoritative = set(workspace.authoritative_entity_ids)
-    if request.decision_type == "publication_decision" and request.outcome != "accepted":
-        return authoritative | _blocker_entity_ids(workspace)
-    return authoritative
-
-
 def _validate_workspace_decision(
     request: WorkspaceDecisionRequest,
+    actor: RuntimeActor,
     workspace: DecisionWorkspaceContract,
 ) -> None:
     run = request.county_run
     if run.tenant_id is None:
         raise ValueError("institutional workspace decisions require a tenant-scoped county run")
-    if run.tenant_id != request.actor_tenant_id:
+    if run.tenant_id != actor.tenant_id:
         raise ValueError("workspace decision tenant does not match authenticated actor tenant")
+    if actor.role == "read_only":
+        raise PermissionError("read-only actors cannot record institutional decisions")
+    if request.action not in workspace.allowed_actions:
+        raise PermissionError("workspace action is not authorized by the current governed workspace")
+    if request.decision_type not in _ACTION_DECISION_TYPES[request.action]:
+        raise ValueError("workspace action and institutional decision type are incompatible")
 
     entity_ids = _run_entity_ids(run)
     if request.subject_id not in entity_ids:
@@ -140,29 +128,20 @@ def _validate_workspace_decision(
         )
 
     if request.decision_type == "scenario_decision":
-        if request.subject_id not in _scenario_entity_ids(run):
+        scenario_ids = {
+            *[item.id for item in run.scenario_assumptions],
+            *[item.id for item in run.forecasts],
+        }
+        if request.subject_id not in scenario_ids:
             raise ValueError("scenario decision subject must be a scenario assumption or forecast")
-        if "create_scenario" not in workspace.allowed_actions:
-            raise ValueError("scenario decision is not permitted in the current governed workspace")
-
-    if request.decision_type == "publication_decision":
-        if request.actor_role not in {"reviewer", "admin"}:
-            raise ValueError("only reviewer or admin may record publication decisions")
-        if request.subject_id != run.run_id:
-            raise ValueError("publication decision subject must be the county run")
-        if request.outcome == "accepted":
-            if "approve_publication" not in workspace.allowed_actions:
-                raise ValueError("publication approval is not permitted in the current governed workspace")
-            if workspace.publication_state != "safe_not_approved":
-                raise ValueError("publication approval requires safe_not_approved workspace state")
 
     referenced_evidence = set(request.evidence_entity_ids)
-    if request.approve_as_reviewed:
-        permitted = _reviewable_evidence_ids(request, workspace)
+    if actor.role in {"reviewer", "admin"}:
+        permitted = set(workspace.authoritative_entity_ids)
         unsupported = sorted(referenced_evidence - permitted)
         if unsupported:
             raise ValueError(
-                "reviewed workspace decision references evidence outside governed lineage: "
+                "reviewed workspace decision references evidence outside governed authoritative lineage: "
                 + ", ".join(unsupported)
             )
     else:
@@ -173,31 +152,35 @@ def _validate_workspace_decision(
                 + ", ".join(unknown)
             )
 
-    if request.approve_as_reviewed and request.actor_role not in {"reviewer", "admin"}:
-        raise ValueError("only reviewer or admin may create reviewed workspace memory")
-
 
 def prepare_workspace_decision(
     request: WorkspaceDecisionRequest,
+    *,
+    actor: RuntimeActor,
 ) -> WorkspaceDecisionResult:
-    """Rebuild governed state, validate the command, then create memory.
+    """Rebuild governed state and convert decision intent into institutional memory.
 
-    The caller does not supply a trusted DecisionWorkspaceContract. It is always
-    rebuilt from canonical county state inside this service boundary.
+    Review status, actor identity, tenant identity and decision time are derived
+    inside the trusted service boundary. Publication approval is intentionally
+    excluded because it must be atomic with canonical workflow-state mutation.
     """
 
     workspace = build_decision_workspace(
         DecisionWorkspaceRequest(
             county_run=request.county_run,
             question=request.question,
-            role=request.actor_role,
-            actor_tenant_id=request.actor_tenant_id,
+            role=actor.role,
+            actor_tenant_id=actor.tenant_id,
         )
     )
-    _validate_workspace_decision(request, workspace)
+    _validate_workspace_decision(request, actor, workspace)
+
+    tenant_id = request.county_run.tenant_id
+    if tenant_id is None:  # narrowed above; explicit for static typing
+        raise ValueError("institutional workspace decisions require tenant identity")
 
     proposal = DecisionMemoryProposal(
-        tenant_id=request.actor_tenant_id,
+        tenant_id=tenant_id,
         geography_id=request.county_run.county.id,
         decision_type=request.decision_type,
         subject_type=request.subject_type,
@@ -209,16 +192,15 @@ def prepare_workspace_decision(
         related_entity_ids=request.related_entity_ids,
         missing_requirements=request.missing_requirements,
         applicability=request.applicability,
-        expires_at=request.expires_at,
     )
     memory = build_decision_memory(
         DecisionMemoryWriteRequest(
             proposal=proposal,
-            actor_tenant_id=request.actor_tenant_id,
-            actor_id=request.actor_id,
-            actor_role=cast(MemoryActorRole, request.actor_role),
-            decided_at=request.decided_at,
-            approve_as_reviewed=request.approve_as_reviewed,
+            actor_tenant_id=tenant_id,
+            actor_id=actor.actor_id,
+            actor_role=cast(MemoryActorRole, actor.role),
+            decided_at=datetime.now(timezone.utc),
+            approve_as_reviewed=actor.role in {"reviewer", "admin"},
         )
     )
     return WorkspaceDecisionResult(workspace=workspace, memory=memory)
@@ -227,11 +209,16 @@ def prepare_workspace_decision(
 def record_workspace_decision(
     connection: ConnectionLike,
     request: WorkspaceDecisionRequest,
+    *,
+    actor: RuntimeActor,
 ) -> WorkspaceDecisionResult:
-    result = prepare_workspace_decision(request)
+    result = prepare_workspace_decision(request, actor=actor)
+    tenant_id = request.county_run.tenant_id
+    if tenant_id is None:
+        raise ValueError("institutional workspace decisions require tenant identity")
     persist_decision_memory(
         connection,
         result.memory,
-        actor_tenant_id=request.actor_tenant_id,
+        actor_tenant_id=tenant_id,
     )
     return result
