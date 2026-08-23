@@ -13,9 +13,10 @@ def lock_county_run_identity(
 
     The caller must authenticate the principal before reaching this function.
     The row lock is transaction-scoped, so it is released automatically on
-    commit or rollback. A waiting request re-reads canonical state only after
-    the prior mutation has finished, which prevents duplicate graph execution
-    and review/execute races without a mutable application lock table.
+    commit or rollback. Lock wait is deliberately bounded so a duplicate or
+    conflicting request cannot hold an HTTP worker indefinitely. A request
+    that acquires the lock re-reads canonical state only after the prior
+    mutation has finished.
     """
 
     tenant_id = tenant_id.strip()
@@ -24,6 +25,7 @@ def lock_county_run_identity(
         raise ValueError("tenant_id and run_id are required for a county run lock")
 
     with connection.cursor() as cursor:
+        cursor.execute("SET LOCAL lock_timeout = '5s'")
         cursor.execute(
             """
             SELECT run_id
