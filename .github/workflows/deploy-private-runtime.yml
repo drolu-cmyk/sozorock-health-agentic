@@ -1,0 +1,277 @@
+name: Deploy private CB-CAP runtime
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: cbcap-private-runtime-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  release:
+    name: Verify, migrate, release, and prove private runtime
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: production
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_PAGER: ""
+      EXPECTED_AWS_ACCOUNT_ID: "791860731989"
+      ECR_REPOSITORY: sozorock/cbcap-runtime
+      REGISTRY_STACK: cbcap-private-runtime-registry
+      RUNTIME_STACK: cbcap-private-runtime
+      API_DOMAIN: api.cbcap.sozorockfoundation.org
+      DEPLOY_ROLE_ARN: ${{ vars.CBCAP_PRIVATE_AWS_DEPLOY_ROLE_ARN }}
+      CLOUDFORMATION_ROLE_ARN: ${{ vars.CBCAP_PRIVATE_CLOUDFORMATION_ROLE_ARN }}
+
+    steps:
+      - name: Check out the approved private source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+
+      - name: Use Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Execute repository release gates
+        run: |
+          set -euo pipefail
+          npm install --package-lock=false --ignore-scripts
+          npm test
+          python -m pip install --upgrade pip
+          python -m pip install -e "python/cbcap_core[test,production]"
+          python -m pip check
+          pytest python/cbcap_core/tests
+
+          approved_commit=$(git rev-parse HEAD)
+          origin_main=$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')
+          test -n "$origin_main"
+          test "$origin_main" = "$approved_commit"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          echo "APPROVED_COMMIT=$approved_commit" >> "$GITHUB_ENV"
+
+      - name: Require governed AWS deployment configuration
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_ROLE_ARN"
+          test -n "$CLOUDFORMATION_ROLE_ARN"
+
+      - name: Assume the private production deployment role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          role-session-name: cbcap-private-production-release
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify the AWS account boundary
+        run: |
+          set -euo pipefail
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          test "$account_id" = "$EXPECTED_AWS_ACCOUNT_ID"
+
+      - name: Provision the immutable runtime registry
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$REGISTRY_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-runtime-registry.yml \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides RepositoryName="$ECR_REPOSITORY" \
+            --no-fail-on-empty-changeset
+
+          repository_uri=$(aws cloudformation describe-stacks \
+            --stack-name "$REGISTRY_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='RepositoryUri'].OutputValue" \
+            --output text)
+          test -n "$repository_uri"
+          echo "REPOSITORY_URI=$repository_uri" >> "$GITHUB_ENV"
+          echo "RUNTIME_IMAGE_URI=$repository_uri:$APPROVED_COMMIT" >> "$GITHUB_ENV"
+
+      - name: Build and publish the immutable runtime image
+        run: |
+          set -euo pipefail
+          registry_host="${REPOSITORY_URI%%/*}"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$registry_host"
+
+          docker build \
+            --file Dockerfile.runtime \
+            --tag "$RUNTIME_IMAGE_URI" \
+            .
+          docker push "$RUNTIME_IMAGE_URI"
+
+      - name: Require a clean ECR vulnerability scan
+        run: |
+          set -euo pipefail
+          aws ecr wait image-scan-complete \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-id imageTag="$APPROVED_COMMIT"
+
+          findings=$(aws ecr describe-image-scan-findings \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-id imageTag="$APPROVED_COMMIT" \
+            --output json)
+          status=$(jq -r '.imageScanStatus.status // "UNKNOWN"' <<<"$findings")
+          critical=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<<"$findings")
+          high=$(jq -r '.imageScanFindings.findingSeverityCounts.HIGH // 0' <<<"$findings")
+          test "$status" = "COMPLETE"
+          test "$critical" = "0"
+          test "$high" = "0"
+
+      - name: Provision private infrastructure with runtime disabled
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$RUNTIME_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-private-runtime.yml \
+            --capabilities CAPABILITY_IAM \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              RuntimeImageUri="$RUNTIME_IMAGE_URI" \
+              DesiredCount=0 \
+            --no-fail-on-empty-changeset
+
+          cluster=$(aws cloudformation describe-stacks \
+            --stack-name "$RUNTIME_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='ClusterName'].OutputValue" \
+            --output text)
+          migration_task=$(aws cloudformation describe-stacks \
+            --stack-name "$RUNTIME_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='MigrationTaskDefinitionArn'].OutputValue" \
+            --output text)
+          security_group=$(aws cloudformation describe-stacks \
+            --stack-name "$RUNTIME_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='RuntimeSecurityGroupId'].OutputValue" \
+            --output text)
+          subnets=$(aws cloudformation describe-stacks \
+            --stack-name "$RUNTIME_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='PublicSubnetIds'].OutputValue" \
+            --output text)
+          test -n "$cluster"
+          test -n "$migration_task"
+          test -n "$security_group"
+          test -n "$subnets"
+          echo "ECS_CLUSTER=$cluster" >> "$GITHUB_ENV"
+          echo "MIGRATION_TASK=$migration_task" >> "$GITHUB_ENV"
+          echo "RUNTIME_SECURITY_GROUP=$security_group" >> "$GITHUB_ENV"
+          echo "RUNTIME_SUBNETS=$subnets" >> "$GITHUB_ENV"
+
+      - name: Apply append-only database migrations before serving traffic
+        run: |
+          set -euo pipefail
+          network_config=$(jq -cn \
+            --arg subnets "$RUNTIME_SUBNETS" \
+            --arg security_group "$RUNTIME_SECURITY_GROUP" \
+            '{awsvpcConfiguration:{subnets:($subnets|split(",")),securityGroups:[$security_group],assignPublicIp:"ENABLED"}}')
+
+          task_arn=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$MIGRATION_TASK" \
+            --launch-type FARGATE \
+            --network-configuration "$network_config" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+          test -n "$task_arn"
+          test "$task_arn" != "None"
+
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task_arn"
+          task_json=$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$task_arn" \
+            --output json)
+          exit_code=$(jq -r '.tasks[0].containers[] | select(.name == "migration") | .exitCode // -1' <<<"$task_json")
+          if [[ "$exit_code" != "0" ]]; then
+            jq '{failures,task:{stoppedReason:.tasks[0].stoppedReason,stopCode:.tasks[0].stopCode,containers:.tasks[0].containers|map({name,reason,exitCode})}}' <<<"$task_json"
+            exit 1
+          fi
+
+      - name: Enable one governed runtime task after migrations succeed
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$RUNTIME_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-private-runtime.yml \
+            --capabilities CAPABILITY_IAM \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              RuntimeImageUri="$RUNTIME_IMAGE_URI" \
+              DesiredCount=1 \
+            --no-fail-on-empty-changeset
+
+          service=$(aws cloudformation describe-stacks \
+            --stack-name "$RUNTIME_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='RuntimeServiceName'].OutputValue" \
+            --output text)
+          test -n "$service"
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
+
+      - name: Prove live health, readiness, and authentication boundary
+        run: |
+          set -euo pipefail
+          health_url="https://$API_DOMAIN/healthz"
+          ready_url="https://$API_DOMAIN/readyz"
+
+          for attempt in $(seq 1 30); do
+            if curl \
+              --proto '=https' \
+              --tlsv1.2 \
+              --fail \
+              --silent \
+              --show-error \
+              --dump-header /tmp/cbcap-runtime-headers.txt \
+              --output /tmp/cbcap-runtime-health.json \
+              "$health_url"; then
+              break
+            fi
+            if [[ "$attempt" -eq 30 ]]; then
+              echo "CB-CAP private runtime health endpoint did not become available."
+              exit 1
+            fi
+            sleep 10
+          done
+
+          jq -e '.status == "ok"' /tmp/cbcap-runtime-health.json >/dev/null
+          grep -qi '^cache-control: *no-store' /tmp/cbcap-runtime-headers.txt
+          grep -qi '^x-content-type-options: *nosniff' /tmp/cbcap-runtime-headers.txt
+          grep -qi '^referrer-policy: *no-referrer' /tmp/cbcap-runtime-headers.txt
+          grep -qi '^x-request-id:' /tmp/cbcap-runtime-headers.txt
+
+          curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            --fail \
+            --silent \
+            --show-error \
+            "$ready_url" \
+            | jq -e '.status == "ready"' >/dev/null
+
+          protected_status=$(curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            --silent \
+            --show-error \
+            --output /tmp/cbcap-runtime-protected.json \
+            --write-out '%{http_code}' \
+            "https://$API_DOMAIN/v1/tenants/probe/runs/probe")
+          test "$protected_status" = "401"
+          jq -e '.detail == "authentication_required"' /tmp/cbcap-runtime-protected.json >/dev/null
+
+      - name: Reconfirm immutable release source
+        run: |
+          set -euo pipefail
+          origin_main_after=$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')
+          test "$origin_main_after" = "$APPROVED_COMMIT"
