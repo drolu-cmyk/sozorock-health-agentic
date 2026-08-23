@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from .gateway import PublicEvidenceMeasure
+from .gateway import PublicEvidenceMeasure, SourceCoverageAssertion
 from .models import (
     BarrierFamily,
     BarrierObservation,
@@ -17,6 +17,12 @@ from .models import (
 WorkforceDiscipline = Literal["primary_care", "dental", "mental_health", "unknown"]
 DesignationScope = Literal["county", "population_group", "facility", "source_designation"]
 WorkforceAdmissionStatus = Literal["admitted", "rejected"]
+
+REQUIRED_HPSA_COVERAGE_KEYS = (
+    "hpsa:primary_care",
+    "hpsa:dental",
+    "hpsa:mental_health",
+)
 
 
 class WorkforceDesignation(StrictModel):
@@ -55,6 +61,14 @@ class WorkforceClassificationResult(StrictModel):
     county_barrier_observations: list[BarrierObservation] = Field(default_factory=list)
 
 
+class WorkforceCoverageAssessment(StrictModel):
+    complete: bool
+    no_designations_reported: bool = False
+    assertion_ids: list[str] = Field(default_factory=list)
+    missing_keys: list[str] = Field(default_factory=list)
+    problem_codes: list[str] = Field(default_factory=list)
+
+
 def _metadata_text(measure: PublicEvidenceMeasure, key: str) -> str:
     value = measure.source_metadata.get(key)
     return str(value).strip() if value is not None else ""
@@ -79,6 +93,80 @@ def _discipline(value: str) -> WorkforceDiscipline:
     if "mental" in normalized:
         return "mental_health"
     return "unknown"
+
+
+def _coverage_key_for_discipline(discipline: WorkforceDiscipline) -> str | None:
+    if discipline == "primary_care":
+        return "hpsa:primary_care"
+    if discipline == "dental":
+        return "hpsa:dental"
+    if discipline == "mental_health":
+        return "hpsa:mental_health"
+    return None
+
+
+def assess_hpsa_source_coverage(
+    assertions: list[SourceCoverageAssertion],
+    designations: list[WorkforceDesignation],
+) -> WorkforceCoverageAssessment:
+    """Validate that all required HPSA products were evaluated for the county.
+
+    Negative evidence is allowed only when Primary Care, Dental and Mental Health
+    coverage assertions are verified and internally consistent with the admitted
+    designation records.
+    """
+
+    relevant = [item for item in assertions if item.source_id == "hrsa-workforce"]
+    by_key: dict[str, SourceCoverageAssertion] = {}
+    problems: list[str] = []
+    assertion_ids: list[str] = []
+
+    for assertion in relevant:
+        if assertion.coverage_key not in REQUIRED_HPSA_COVERAGE_KEYS:
+            continue
+        if assertion.coverage_key in by_key:
+            problems.append(f"duplicate_coverage_key:{assertion.coverage_key}")
+            continue
+        by_key[assertion.coverage_key] = assertion
+        assertion_ids.append(assertion.id)
+
+    missing_keys = [key for key in REQUIRED_HPSA_COVERAGE_KEYS if key not in by_key]
+    for key in missing_keys:
+        problems.append(f"coverage_key_missing:{key}")
+
+    valid_complete_statuses = {"complete_with_records", "complete_no_records"}
+    for key, assertion in by_key.items():
+        if assertion.review_status != ReviewStatus.VERIFIED:
+            problems.append(f"coverage_not_verified:{key}")
+        if assertion.status not in valid_complete_statuses:
+            problems.append(f"coverage_not_complete:{key}:{assertion.status}")
+
+    designation_keys = {
+        key
+        for designation in designations
+        if (key := _coverage_key_for_discipline(designation.discipline)) is not None
+    }
+    for key, assertion in by_key.items():
+        if assertion.status == "complete_with_records" and key not in designation_keys:
+            problems.append(f"coverage_records_without_admitted_designation:{key}")
+        if assertion.status == "complete_no_records" and key in designation_keys:
+            problems.append(f"coverage_zero_records_with_designation:{key}")
+
+    no_designations = (
+        not missing_keys
+        and all(
+            by_key[key].status == "complete_no_records"
+            for key in REQUIRED_HPSA_COVERAGE_KEYS
+            if key in by_key
+        )
+    )
+    return WorkforceCoverageAssessment(
+        complete=not problems,
+        no_designations_reported=no_designations,
+        assertion_ids=assertion_ids,
+        missing_keys=missing_keys,
+        problem_codes=sorted(set(problems)),
+    )
 
 
 def _county_workforce_barrier(
