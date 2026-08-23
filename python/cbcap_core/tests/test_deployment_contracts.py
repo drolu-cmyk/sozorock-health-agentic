@@ -83,6 +83,20 @@ def test_private_runtime_has_required_security_and_state_components():
     assert "EnableCloudwatchLogsExports:" in stack
 
 
+def test_security_group_rules_do_not_create_mutual_cloudformation_dependencies():
+    stack = _text(RUNTIME_STACK)
+    load_balancer = stack.split("  LoadBalancerSecurityGroup:", 1)[1].split("\n  RuntimeSecurityGroup:", 1)[0]
+    runtime = stack.split("  RuntimeSecurityGroup:", 1)[1].split("\n  DatabaseSecurityGroup:", 1)[0]
+    database = stack.split("  DatabaseSecurityGroup:", 1)[1].split("\n  RuntimeDatabasePassword:", 1)[0]
+
+    assert "DestinationSecurityGroupId" not in load_balancer
+    assert "DestinationSecurityGroupId" not in runtime
+    assert "CidrIp: 10.42.0.0/16" in load_balancer
+    assert "CidrIp: 10.42.0.0/16" in runtime
+    assert "SourceSecurityGroupId: !GetAtt LoadBalancerSecurityGroup.GroupId" in runtime
+    assert "SourceSecurityGroupId: !GetAtt RuntimeSecurityGroup.GroupId" in database
+
+
 def test_private_evidence_bucket_denies_wrong_encryption_on_write():
     stack = _text(RUNTIME_STACK)
     policy = stack.split("  PrivateEvidenceBucketPolicy:", 1)[1].split("\n  UserPool:", 1)[0]
