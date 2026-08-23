@@ -17,20 +17,6 @@ from .models import (
 
 SHARED_EVIDENCE_CONTRACT_VERSION = "sozorock.evidence-gateway.v1"
 
-ObservationGeographyLevel = Literal[
-    "state",
-    "county",
-    "census_place",
-    "zcta",
-    "postal_zip",
-    "planning_region",
-    "census_tract",
-    "county_subdivision",
-    "population_group",
-    "facility",
-    "source_designation",
-]
-
 
 class GeographyRelationshipRef(StrictModel):
     id: str = Field(min_length=1)
@@ -54,15 +40,12 @@ class GeographyRelationshipRef(StrictModel):
 
 
 class PublicEvidenceMeasure(Measure):
-    """Public measure plus source scope required for safe downstream reasoning.
+    """Public measure using the canonical observation-scope contract.
 
-    The fields are optional for backward-compatible v1 fixtures. New gateway
-    output supplies them. A specialist requiring scope must fail closed when the
-    scope is absent rather than infer it from the county container geography.
+    Scope and source metadata live on `Measure` so all private CB-CAP consumers
+    preserve the same public Evidence Gateway semantics. A specialist must still
+    fail closed when those optional v1 fields are absent.
     """
-
-    geography_level: ObservationGeographyLevel | None = None
-    source_metadata: dict[str, str | float | bool | None] = Field(default_factory=dict)
 
 
 class EvidenceGatewayManifest(StrictModel):
