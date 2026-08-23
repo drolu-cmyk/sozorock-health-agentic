@@ -14,6 +14,13 @@ from .barriers import (
 )
 from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
 from .evidence_adapter import hydrate_public_evidence, select_county_public_evidence
+from .forecasting import (
+    ForecastAuthorizationDecision,
+    ForecastModelAdapter,
+    ScenarioProjectionDecision,
+    authorize_forecast,
+    build_scenario_projection,
+)
 from .funding import (
     FundingApplicantProfile,
     FundingCriterion,
@@ -158,6 +165,8 @@ __all__ = [
     "EvidenceGatewayQuery",
     "EvidenceGatewayResponse",
     "ExtractionMethod",
+    "ForecastAuthorizationDecision",
+    "ForecastModelAdapter",
     "ForecastResult",
     "FundingApplicantProfile",
     "FundingCriterion",
@@ -199,6 +208,7 @@ __all__ = [
     "RunBudget",
     "RunStatus",
     "ScenarioAssumption",
+    "ScenarioProjectionDecision",
     "SourceDocument",
     "SourceVersionRef",
     "TenantVisibility",
@@ -214,9 +224,11 @@ __all__ = [
     "SHARED_EVIDENCE_CONTRACT_VERSION",
     "admit_planning_evidence",
     "assert_public_package",
+    "authorize_forecast",
     "build_county_planning_graph",
     "build_decision_workspace",
     "build_planning_research_graph",
+    "build_scenario_projection",
     "checkpoint_thread_config",
     "classify_barrier_measure",
     "classify_barrier_measures",
