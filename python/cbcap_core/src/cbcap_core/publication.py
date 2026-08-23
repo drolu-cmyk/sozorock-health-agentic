@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from pydantic import Field
 
+from .authorization import AuthorizedActor, require_actor_capability
 from .decision_memory import (
     DecisionMemoryProposal,
     DecisionMemoryRecord,
@@ -19,7 +20,6 @@ from .models import (
     WorkflowFlags,
 )
 from .persistence import ConnectionLike, persist_decision_memory
-from .runtime_service import RuntimeActor
 from .workspace import (
     DecisionWorkspaceContract,
     DecisionWorkspaceRequest,
@@ -32,6 +32,8 @@ class PublicationAlreadyAuthorizedError(RuntimeError):
 
 
 class PublicationApprovalRequest(StrictModel):
+    """Publication intent only. Authenticated identity and time are service data."""
+
     county_run: CountyRunState
     reason_codes: list[str] = Field(min_length=1)
     rationale: str = Field(min_length=1)
@@ -51,6 +53,10 @@ class PublicationAuthorizationRecord(StrictModel):
     reason_codes: list[str] = Field(min_length=1)
     rationale: str = Field(min_length=1)
     decided_by: str = Field(min_length=1)
+    actor_role: str = Field(pattern=r"^(reviewer|admin)$")
+    authorization_grant_id: str = Field(min_length=1)
+    authorization_issuer: str = Field(min_length=1)
+    authorization_capability: str = Field(default="approve_publication", pattern=r"^approve_publication$")
     decided_at: datetime
 
 
@@ -107,15 +113,22 @@ def _updated_run_after_approval(
 def prepare_publication_approval(
     request: PublicationApprovalRequest,
     *,
-    actor: RuntimeActor,
+    actor: AuthorizedActor,
 ) -> PublicationApprovalResult:
     run = request.county_run
     if run.tenant_id is None:
         raise ValueError("publication approval requires a tenant-scoped county run")
     if actor.tenant_id != run.tenant_id:
         raise ValueError("publication approval tenant does not match authenticated actor tenant")
-    if actor.role not in {"reviewer", "admin"}:
-        raise PermissionError("only reviewer or admin may authorize publication")
+
+    # Capability, county and run scope are checked before the governed workspace
+    # is built or any publication ledger row is queried.
+    require_actor_capability(
+        actor,
+        "approve_publication",
+        geography_id=run.county.id,
+        run_id=run.run_id,
+    )
     if run.flags.publication_approved:
         raise ValueError("county run is already marked publication approved")
 
@@ -150,6 +163,7 @@ def prepare_publication_approval(
                 "tenant_id": run.tenant_id,
                 "source_state_hash": source_state_hash,
                 "actor_id": actor.actor_id,
+                "authorization_grant_id": actor.authorization.grant_id,
                 "decided_at": decided_at.isoformat(),
             }
         ).replace("publication-authorization:", "review-decision:"),
@@ -197,6 +211,7 @@ def prepare_publication_approval(
                 "approved_state_hash": approved_state_hash,
                 "decision_memory_id": memory.id,
                 "review_decision_id": review_decision.id,
+                "authorization_grant_id": actor.authorization.grant_id,
                 "decided_by": actor.actor_id,
                 "decided_at": decided_at.isoformat(),
             }
@@ -212,6 +227,10 @@ def prepare_publication_approval(
         reason_codes=sorted(set(request.reason_codes)),
         rationale=request.rationale,
         decided_by=actor.actor_id,
+        actor_role=actor.role,
+        authorization_grant_id=actor.authorization.grant_id,
+        authorization_issuer=actor.authorization.issuer,
+        authorization_capability="approve_publication",
         decided_at=decided_at,
     )
     return PublicationApprovalResult(
@@ -263,10 +282,12 @@ def record_publication_approval(
     connection: ConnectionLike,
     request: PublicationApprovalRequest,
     *,
-    actor: RuntimeActor,
+    actor: AuthorizedActor,
 ) -> PublicationApprovalResult:
-    """Persist decision memory and durable authorization in one transaction."""
+    """Persist reviewed memory and publication authority in one transaction."""
 
+    # prepare_publication_approval performs capability + county + run checks
+    # before the first publication-ledger query.
     result = prepare_publication_approval(request, actor=actor)
     authorization = result.authorization
     tenant_id = authorization.tenant_id
@@ -278,15 +299,15 @@ def record_publication_approval(
                 """
                 SELECT id
                   FROM cbcap.publication_authorization
-                 WHERE tenant_id=%s AND run_id=%s AND source_state_hash=%s
+                 WHERE tenant_id=%s AND run_id=%s
                  LIMIT 1
                 """,
-                (tenant_id, authorization.run_id, authorization.source_state_hash),
+                (tenant_id, authorization.run_id),
             )
             existing = cursor.fetchone()
             if existing is not None:
                 raise PublicationAlreadyAuthorizedError(
-                    "the reviewed county state already has a publication authorization"
+                    "the county run already has a publication authorization"
                 )
 
         persist_decision_memory(
@@ -303,9 +324,12 @@ def record_publication_approval(
                   source_state_hash, approved_state_hash,
                   decision_memory_id, review_decision_id,
                   evidence_entity_ids, reason_codes, rationale,
-                  decided_by, decided_at
+                  decided_by, actor_role,
+                  authorization_grant_id, authorization_issuer,
+                  authorization_capability, decided_at
                 ) VALUES (
-                  %s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s
+                  %s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,
+                  %s,%s,%s,%s,%s,%s
                 )
                 """,
                 (
@@ -321,6 +345,10 @@ def record_publication_approval(
                     json.dumps(authorization.reason_codes),
                     authorization.rationale,
                     authorization.decided_by,
+                    authorization.actor_role,
+                    authorization.authorization_grant_id,
+                    authorization.authorization_issuer,
+                    authorization.authorization_capability,
                     authorization.decided_at,
                 ),
             )
