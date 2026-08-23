@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from cbcap_core.forecast_governance import (
+    BacktestPolicyEvaluation,
     ForecastBacktestCase,
     ForecastBacktestPolicy,
     ForecastModelApproval,
@@ -84,13 +85,27 @@ def policy() -> ForecastBacktestPolicy:
     )
 
 
-def approval(summary_id: str, *, decision: str = "approved") -> ForecastModelApproval:
+def evaluate(summary, selected_policy=None) -> BacktestPolicyEvaluation:
+    return evaluate_backtest_policy(
+        summary,
+        selected_policy or policy(),
+        evaluated_at=NOW,
+    )
+
+
+def approval(
+    summary_id: str,
+    policy_evaluation_id: str,
+    *,
+    decision: str = "approved",
+) -> ForecastModelApproval:
     return ForecastModelApproval(
         id=f"forecast-approval:{MODEL}:{decision}",
         model_version=MODEL,
         metric_semantics_id=METRIC,
         policy_id=policy().id,
         backtest_summary_id=summary_id,
+        policy_evaluation_id=policy_evaluation_id,
         decision=decision,
         reason_codes=[f"decision:{decision}"],
         decided_by="forecast-governance:reviewer",
@@ -146,23 +161,25 @@ def test_summary_cannot_mix_model_versions_or_metric_semantics():
 
 def test_metric_specific_backtest_policy_passes_only_when_explicit_thresholds_pass():
     summary = summarize_backtests(backtest_cases(), computed_at=NOW)
-    evaluation = evaluate_backtest_policy(summary, policy())
+    evaluation = evaluate(summary)
     assert evaluation.status == "passes"
     assert evaluation.reason_codes == []
+    assert evaluation.id.startswith("backtest-evaluation:")
+    assert evaluation.evaluated_at == NOW
 
     strict = policy().model_copy(update={"maximum_mean_absolute_error": 0.3})
-    blocked = evaluate_backtest_policy(summary, strict)
+    blocked = evaluate(summary, strict)
     assert blocked.status == "blocked"
     assert "mean_absolute_error_exceeds_policy" in blocked.reason_codes
 
 
 def test_passing_backtest_does_not_authorize_model_without_separate_human_approval():
     summary = summarize_backtests(backtest_cases(), computed_at=NOW)
-    evaluation = evaluate_backtest_policy(summary, policy())
+    evaluation = evaluate(summary)
     rejected = authorize_forecast_model_execution(
         registration(),
         evaluation,
-        approval(summary.id, decision="rejected"),
+        approval(summary.id, evaluation.id, decision="rejected"),
         metric_semantics_id=METRIC,
         source_id=SOURCE,
         as_of=date(2026, 8, 22),
@@ -172,13 +189,14 @@ def test_passing_backtest_does_not_authorize_model_without_separate_human_approv
     assert "model_not_human_approved" in rejected.reason_codes
 
 
-def test_model_execution_requires_registration_backtest_policy_and_current_approval_to_align():
+def test_model_execution_requires_registration_backtest_policy_evaluation_and_current_approval_to_align():
     summary = summarize_backtests(backtest_cases(), computed_at=NOW)
-    evaluation = evaluate_backtest_policy(summary, policy())
+    evaluation = evaluate(summary)
+    approved = approval(summary.id, evaluation.id)
     decision = authorize_forecast_model_execution(
         registration(),
         evaluation,
-        approval(summary.id),
+        approved,
         metric_semantics_id=METRIC,
         source_id=SOURCE,
         as_of=date(2026, 8, 22),
@@ -187,11 +205,25 @@ def test_model_execution_requires_registration_backtest_policy_and_current_appro
     assert decision.status == "ready"
     assert decision.reason_codes == []
     assert decision.backtest_summary_id == summary.id
+    assert decision.policy_evaluation_id == evaluation.id
+
+    mismatched_evaluation = approved.model_copy(update={"policy_evaluation_id": "evaluation:other"})
+    mismatch = authorize_forecast_model_execution(
+        registration(),
+        evaluation,
+        mismatched_evaluation,
+        metric_semantics_id=METRIC,
+        source_id=SOURCE,
+        as_of=date(2026, 8, 22),
+        horizon_days=365,
+    )
+    assert mismatch.status == "blocked"
+    assert "approval_policy_evaluation_mismatch" in mismatch.reason_codes
 
     wrong_source = authorize_forecast_model_execution(
         registration(),
         evaluation,
-        approval(summary.id),
+        approved,
         metric_semantics_id=METRIC,
         source_id="ahrf-workforce",
         as_of=date(2026, 8, 22),
@@ -203,7 +235,7 @@ def test_model_execution_requires_registration_backtest_policy_and_current_appro
     expired = authorize_forecast_model_execution(
         registration(),
         evaluation,
-        approval(summary.id),
+        approved,
         metric_semantics_id=METRIC,
         source_id=SOURCE,
         as_of=date(2028, 1, 1),
