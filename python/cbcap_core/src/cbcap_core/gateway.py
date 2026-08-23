@@ -17,6 +17,20 @@ from .models import (
 
 SHARED_EVIDENCE_CONTRACT_VERSION = "sozorock.evidence-gateway.v1"
 
+ObservationGeographyLevel = Literal[
+    "state",
+    "county",
+    "census_place",
+    "zcta",
+    "postal_zip",
+    "planning_region",
+    "census_tract",
+    "county_subdivision",
+    "population_group",
+    "facility",
+    "source_designation",
+]
+
 
 class GeographyRelationshipRef(StrictModel):
     id: str = Field(min_length=1)
@@ -37,6 +51,18 @@ class GeographyRelationshipRef(StrictModel):
     method: str = Field(min_length=1)
     caveat: str | None = None
     review_status: ReviewStatus
+
+
+class PublicEvidenceMeasure(Measure):
+    """Public measure plus source scope required for safe downstream reasoning.
+
+    The fields are optional for backward-compatible v1 fixtures. New gateway
+    output supplies them. A specialist requiring scope must fail closed when the
+    scope is absent rather than infer it from the county container geography.
+    """
+
+    geography_level: ObservationGeographyLevel | None = None
+    source_metadata: dict[str, str | float | bool | None] = Field(default_factory=dict)
 
 
 class EvidenceGatewayManifest(StrictModel):
@@ -68,7 +94,7 @@ class PublicEvidencePackage(StrictModel):
     geographies: list[GeographyRef] = Field(default_factory=list)
     geography_relationships: list[GeographyRelationshipRef] = Field(default_factory=list)
     metric_semantics: list[MetricSemantics] = Field(default_factory=list)
-    measures: list[Measure] = Field(default_factory=list)
+    measures: list[PublicEvidenceMeasure] = Field(default_factory=list)
     source_versions: list[SourceVersionRef] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -105,7 +131,7 @@ PUBLIC_EVIDENCE_CORE_COMPATIBILITY = {
     "GeographyRelationship": "GeographyRelationshipRef",
     "SourceVersion": "SourceVersionRef",
     "MeasureDefinition": "MetricSemantics",
-    "MetricObservation": "Measure",
+    "MetricObservation": "PublicEvidenceMeasure",
 }
 
 
