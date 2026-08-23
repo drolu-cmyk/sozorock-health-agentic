@@ -194,9 +194,7 @@ def test_cross_tenant_workspace_access_fails_closed():
 def test_safe_flag_does_not_override_graph_integrity_failure():
     broken = run(safe=True)
     payload = broken.model_dump(mode="python")
-    payload["barrier_observations"][0] = payload["barrier_observations"][0].model_copy(
-        update={"measure_id": "measure:missing"}
-    )
+    payload["barrier_observations"][0]["measure_id"] = "measure:missing"
     broken = CountyRunState.model_validate(payload)
 
     workspace = build_decision_workspace(request(broken, role="reviewer"))
