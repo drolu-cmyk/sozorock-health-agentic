@@ -86,6 +86,33 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION cbcap.validate_workspace_membership_event()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  geography_count bigint;
+  distinct_geography_count bigint;
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(NEW.geography_ids) AS item
+     WHERE jsonb_typeof(item) <> 'string'
+        OR length(btrim(item #>> '{}')) = 0
+  ) THEN
+    RAISE EXCEPTION 'workspace membership geography IDs must be nonblank strings';
+  END IF;
+
+  SELECT count(*), count(DISTINCT geography_id)
+    INTO geography_count, distinct_geography_count
+    FROM jsonb_array_elements_text(NEW.geography_ids) AS geography_id;
+
+  IF geography_count <> distinct_geography_count THEN
+    RAISE EXCEPTION 'workspace membership geography IDs must be unique';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION cbcap.validate_county_run_state_version()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -104,6 +131,30 @@ BEGIN
     RAISE EXCEPTION 'county run state tenant does not match run identity tenant';
   END IF;
 
+  IF NEW.state_json->>'schema_version' IS DISTINCT FROM 'cbcap.county-run.v1' THEN
+    RAISE EXCEPTION 'county run state schema version is invalid';
+  END IF;
+
+  IF NEW.state_json->>'tenant_id' IS DISTINCT FROM NEW.tenant_id THEN
+    RAISE EXCEPTION 'county run state JSON tenant does not match row tenant';
+  END IF;
+
+  IF NEW.state_json->>'run_id' IS DISTINCT FROM NEW.run_id THEN
+    RAISE EXCEPTION 'county run state JSON run does not match row run';
+  END IF;
+
+  IF NEW.state_json #>> '{county,id}' IS DISTINCT FROM identity_record.geography_id THEN
+    RAISE EXCEPTION 'county run state JSON geography does not match immutable run identity';
+  END IF;
+
+  IF NEW.state_json #>> '{county,county_fips}' IS DISTINCT FROM identity_record.county_fips THEN
+    RAISE EXCEPTION 'county run state JSON county FIPS does not match immutable run identity';
+  END IF;
+
+  IF NEW.state_json->>'status' IS DISTINCT FROM NEW.status THEN
+    RAISE EXCEPTION 'county run state JSON status does not match row status';
+  END IF;
+
   SELECT max(version_no) INTO prior_version
     FROM cbcap.county_run_state_version
    WHERE tenant_id = NEW.tenant_id
@@ -120,6 +171,11 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+DROP TRIGGER IF EXISTS workspace_membership_guard ON cbcap.workspace_membership_event;
+CREATE TRIGGER workspace_membership_guard
+BEFORE INSERT ON cbcap.workspace_membership_event
+FOR EACH ROW EXECUTE FUNCTION cbcap.validate_workspace_membership_event();
 
 DROP TRIGGER IF EXISTS workspace_membership_append_only ON cbcap.workspace_membership_event;
 CREATE TRIGGER workspace_membership_append_only
