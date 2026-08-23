@@ -326,21 +326,48 @@ def workforce_designations_branch(state, runtime):
     run = _load_run(state)
     context = _runtime_context(runtime)
     _ = context.untrusted_source_text
-    if context.public_evidence_package is None:
-        return _branch_output(run, _existing_payload(run, "workforce_designations"))
 
-    measures, release_id = select_county_public_evidence(run, context.public_evidence_package)
-    hrsa_measures = [
-        item for item in measures if item.source_version.source_id == "hrsa-workforce"
-    ]
-    if not hrsa_measures:
-        return _branch_output(run, _existing_payload(run, "workforce_designations"))
+    if context.public_evidence_package is None:
+        hrsa_measures = [
+            item for item in run.measures if item.source_version.source_id == "hrsa-workforce"
+        ]
+        if not hrsa_measures:
+            return _branch_output(run, _existing_payload(run, "workforce_designations"))
+        release_ids: list[str] = []
+    else:
+        measures, release_id = select_county_public_evidence(run, context.public_evidence_package)
+        hrsa_measures = [
+            item for item in measures if item.source_version.source_id == "hrsa-workforce"
+        ]
+        release_ids = [release_id]
+        if not hrsa_measures:
+            payload = BranchPayload(
+                id=f"{run.run_id}:payload:workforce_designations",
+                branch="workforce_designations",
+                source_release_ids=release_ids,
+            )
+            return _branch_output(
+                run,
+                payload,
+                complete_override=False,
+                trajectory_events=[
+                    _trajectory_event(
+                        run,
+                        stage="workforce_source_coverage",
+                        entity_id=run.county.id,
+                        outcome="unknown",
+                        reason_codes=["hrsa_observations_absent_source_coverage_not_proven"],
+                    )
+                ],
+            )
 
     classification = classify_workforce_measures(hrsa_measures)
     payload = BranchPayload(
         id=f"{run.run_id}:payload:workforce_designations",
         branch="workforce_designations",
-        source_release_ids=[release_id],
+        source_release_ids=release_ids,
+        measures=hrsa_measures,
+        barrier_observations=classification.county_barrier_observations,
         workforce_designations=classification.designations,
     )
     trajectory = [
@@ -353,6 +380,16 @@ def workforce_designations_branch(state, runtime):
         )
         for decision in classification.decisions
     ]
+    for designation in classification.designations:
+        trajectory.append(
+            _trajectory_event(
+                run,
+                stage="workforce_scope",
+                entity_id=designation.id,
+                outcome="county_shortage" if designation.is_whole_county else "scoped_context",
+                reason_codes=[f"scope_{designation.scope}", f"discipline_{designation.discipline}"],
+            )
+        )
     return _branch_output(
         run,
         payload,
