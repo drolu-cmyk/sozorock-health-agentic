@@ -158,11 +158,36 @@ jobs:
       - name: Provision private infrastructure with runtime disabled
         run: |
           set -euo pipefail
+
+          if stack_json=$(aws cloudformation describe-stacks \
+            --stack-name "$RUNTIME_STACK" \
+            --output json 2> /tmp/cbcap-runtime-stack.err); then
+            stack_status=$(jq -r '.Stacks[0].StackStatus // ""' <<<"$stack_json")
+            case "$stack_status" in
+              CREATE_FAILED)
+                rollback_flag=--disable-rollback
+                ;;
+              CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE)
+                rollback_flag=--no-disable-rollback
+                ;;
+              *)
+                echo "Refusing private runtime deployment from unexpected stack state: $stack_status"
+                exit 1
+                ;;
+            esac
+          elif grep -q 'ValidationError' /tmp/cbcap-runtime-stack.err; then
+            rollback_flag=--disable-rollback
+          else
+            cat /tmp/cbcap-runtime-stack.err
+            exit 1
+          fi
+
           aws cloudformation deploy \
             --stack-name "$RUNTIME_STACK" \
             --template-file infrastructure/cloudformation/cbcap-private-runtime.yml \
             --capabilities CAPABILITY_IAM \
             --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            "$rollback_flag" \
             --parameter-overrides \
               RuntimeImageUri="$RUNTIME_IMAGE_URI" \
               DesiredCount=0 \
@@ -230,6 +255,7 @@ jobs:
             --template-file infrastructure/cloudformation/cbcap-private-runtime.yml \
             --capabilities CAPABILITY_IAM \
             --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --no-disable-rollback \
             --parameter-overrides \
               RuntimeImageUri="$RUNTIME_IMAGE_URI" \
               DesiredCount=1 \
