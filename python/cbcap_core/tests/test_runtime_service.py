@@ -102,6 +102,7 @@ class FakeGatewayClient:
         return EvidenceGatewayFetchResult(
             response=self.response,
             etag=f'"{self.response.manifest.release_hash}"',
+            elapsed_ms=37,
         )
 
 
@@ -218,7 +219,7 @@ def test_actor_without_county_scope_cannot_reach_network_or_graph():
     assert graph.calls == []
 
 
-def test_execution_fetches_public_evidence_once_and_persists_trajectory():
+def test_execution_fetches_public_evidence_once_and_persists_trajectory_and_observation():
     gateway = FakeGatewayClient()
     graph = FakeGraph()
     connection = FakeConnection()
@@ -239,12 +240,19 @@ def test_execution_fetches_public_evidence_once_and_persists_trajectory():
     assert context.public_evidence_package["release_id"] == gateway.response.manifest.release_id
     assert result.prepared is not None
     assert result.prepared.budget.preflight_external_calls_used == 1
+    assert result.prepared.evidence_fetch_ms == 37
     assert result.interrupted is False
     assert len(result.trajectory_events) == 1
+    assert result.observation.phase == "initial"
+    assert result.observation.evidence_fetch_ms == 37
+    assert result.observation.evidence_release_hash == gateway.response.manifest.release_hash
+    assert result.observation.external_calls_used == 1
+    assert result.observation.review_intervention is False
     assert any("INSERT INTO cbcap.trajectory_event" in query for query, _ in connection.executions)
+    assert any("INSERT INTO cbcap.run_observation" in query for query, _ in connection.executions)
 
 
-def test_interrupted_execution_persists_partial_trajectory_before_review():
+def test_interrupted_execution_persists_partial_trajectory_and_review_observation():
     gateway = FakeGatewayClient()
     graph = FakeGraph(interrupted=True)
     connection = FakeConnection()
@@ -259,6 +267,9 @@ def test_interrupted_execution_persists_partial_trajectory_before_review():
     )
     assert result.interrupted is True
     assert len(result.trajectory_events) == 1
+    assert result.observation.phase == "initial"
+    assert result.observation.interrupted is True
+    assert result.observation.review_intervention is True
 
 
 def test_nonreview_roles_lack_resume_capability_before_checkpoint_access():
@@ -294,7 +305,7 @@ def test_reviewer_without_specific_run_scope_cannot_touch_checkpoint():
     assert graph.calls == []
 
 
-def test_review_resume_uses_authenticated_principal_identity_and_does_not_refetch_evidence():
+def test_review_resume_uses_authenticated_identity_no_refetch_and_separate_observation():
     graph = FakeGraph()
     connection = FakeConnection()
     reviewer = actor(role="reviewer", actor_id="principal:reviewer-42")
@@ -316,6 +327,12 @@ def test_review_resume_uses_authenticated_principal_identity_and_does_not_refetc
     assert getattr(command, "resume")["decision"] == "approved"
     assert result.prepared is None
     assert len(result.trajectory_events) == 1
+    assert result.observation.phase == "review_resume"
+    assert result.observation.evidence_fetch_ms is None
+    assert result.observation.evidence_release_hash is None
+    assert result.observation.external_calls_used == 0
+    assert result.observation.review_intervention is True
+    assert any("INSERT INTO cbcap.run_observation" in query for query, _ in connection.executions)
 
 
 def test_invalid_review_decision_fails_before_authorization_or_graph_resume():
