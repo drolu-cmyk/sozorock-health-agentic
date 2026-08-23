@@ -52,6 +52,7 @@ class DecisionWorkspaceRequest(StrictModel):
     county_run: CountyRunState
     question: PlanningQuestion
     role: WorkspaceRole
+    actor_tenant_id: str | None = None
     mobile: bool = False
 
 
@@ -295,6 +296,9 @@ def _authoritative_ids(run: CountyRunState) -> list[str]:
 
 def build_decision_workspace(request: DecisionWorkspaceRequest) -> DecisionWorkspaceContract:
     run = request.county_run
+    if run.tenant_id is not None and request.actor_tenant_id != run.tenant_id:
+        raise ValueError("workspace tenant does not match the authenticated actor tenant")
+
     view_request = _planning_view_request(
         run,
         question=request.question,
