@@ -32,11 +32,11 @@ class ScenarioProjectionDecision(StrictModel):
 
 
 class ForecastModelAdapter(Protocol):
-    """Provider-neutral contract for a future approved statistical forecast model.
+    """Provider-neutral contract for an approved statistical forecast model.
 
-    Adapters are expected to provide their own backtesting and interval methodology.
-    The core package only authorizes inputs and records outputs; it does not silently
-    choose a statistical model.
+    Adapters must provide their own backtesting and interval methodology. The
+    core package authorizes comparable inputs and records outputs; it never
+    silently selects a statistical model.
     """
 
     model_version: str
@@ -50,12 +50,7 @@ class ForecastModelAdapter(Protocol):
 
 
 def _period_key(measure: Measure) -> tuple[date, date]:
-    """Return one stable analysis period for sorting and duplicate detection.
-
-    Public datasets do not all supply both period boundaries. Missing boundaries
-    fall back to the available boundary and then to release date, but a later file
-    release cannot turn the same observation period into a new historical point.
-    """
+    """Return one stable analysis period for sorting and duplicate detection."""
 
     start = (
         measure.data_period_start
@@ -74,6 +69,10 @@ def _period_key(measure: Measure) -> tuple[date, date]:
     return start, end
 
 
+def _observation_end(measure: Measure) -> date:
+    return _period_key(measure)[1]
+
+
 def authorize_forecast(
     measures: list[Measure],
     *,
@@ -82,13 +81,12 @@ def authorize_forecast(
     """Authorize a comparable historical series for a future forecast adapter.
 
     Authorization is deliberately stricter than visualization. A metric can be
-    trendable without being forecastable. All observations must be verified,
-    numeric, share one geography and one semantic definition, and have unique
-    temporal positions.
+    trendable without being forecastable. Autonomous authorization requires one
+    geography, one semantic definition, one source family, one schema version,
+    verified numeric observations, and unique temporal positions.
     """
 
     reasons: list[str] = []
-    limitations: list[str] = []
 
     if len(measures) < minimum_points:
         reasons.append("insufficient_time_points")
@@ -107,22 +105,14 @@ def authorize_forecast(
     if not first.semantics.forecastable:
         reasons.append("metric_not_forecastable")
 
-    geography_ids = {item.geography.id for item in measures}
-    if len(geography_ids) != 1:
+    if len({item.geography.id for item in measures}) != 1:
         reasons.append("mixed_geographies")
-
-    semantics_ids = {item.semantics.id for item in measures}
-    if len(semantics_ids) != 1:
+    if len({item.semantics.id for item in measures}) != 1:
         reasons.append("mixed_metric_semantics")
-
-    units = {item.semantics.unit for item in measures}
-    if len(units) != 1:
+    if len({item.semantics.unit for item in measures}) != 1:
         reasons.append("mixed_units")
-
-    adjustments = {item.semantics.adjustment for item in measures}
-    if len(adjustments) != 1:
+    if len({item.semantics.adjustment for item in measures}) != 1:
         reasons.append("mixed_adjustments")
-
     if any(item.review_status != ReviewStatus.VERIFIED for item in measures):
         reasons.append("unverified_observation")
     if any(item.source_version.review_status != ReviewStatus.VERIFIED for item in measures):
@@ -133,33 +123,25 @@ def authorize_forecast(
     period_keys = [_period_key(item) for item in measures]
     if len(period_keys) != len(set(period_keys)):
         reasons.append("duplicate_time_position")
-
-    source_measure_ids = {item.semantics.source_measure_id for item in measures}
-    if len(source_measure_ids) != 1:
+    if len({item.semantics.source_measure_id for item in measures}) != 1:
         reasons.append("source_measure_changed")
-
-    if len({item.source_version.schema_version for item in measures}) > 1:
-        limitations.append(
-            "Source schema versions differ across the candidate series and require explicit comparability review."
-        )
-    if len({item.source_version.source_id for item in measures}) > 1:
-        limitations.append(
-            "Multiple source families contribute to the candidate series and require explicit comparability review."
-        )
+    if len({item.source_version.schema_version for item in measures}) != 1:
+        reasons.append("mixed_source_schema_versions")
+    if len({item.source_version.source_id for item in measures}) != 1:
+        reasons.append("mixed_source_families")
 
     if reasons:
         return ForecastAuthorizationDecision(
             status="blocked",
             reason_codes=sorted(set(reasons)),
-            limitations=limitations,
         )
 
     return ForecastAuthorizationDecision(
         status="ready",
-        comparable_measure_ids=[
-            item.id for item in sorted(measures, key=_period_key)
+        comparable_measure_ids=[item.id for item in sorted(measures, key=_period_key)],
+        limitations=[
+            "Forecast authorization confirms input comparability only; it does not authorize a specific model or imply predictive accuracy."
         ],
-        limitations=limitations,
     )
 
 
@@ -173,14 +155,15 @@ def build_scenario_projection(
     baseline: Measure,
     assumption: ScenarioAssumption,
     *,
+    as_of: date,
     horizon_end: date,
     model_version: str = "cbcap-deterministic-scenario-v1",
 ) -> ScenarioProjectionDecision:
     """Apply a transparent planning assumption to one verified baseline measure.
 
-    This is scenario arithmetic, not a prediction. Unsupported assumptions are
-    blocked until a domain-specific adapter exists. Outputs remain provisional
-    until a governed review promotes them.
+    This is scenario arithmetic, not a prediction. The scenario must use evidence
+    available by the stated planning date and its horizon must be future to both
+    the observation period and that planning date. Outputs remain provisional.
     """
 
     reasons: list[str] = []
@@ -198,8 +181,14 @@ def build_scenario_projection(
         reasons.append("assumption_geography_mismatch")
     if assumption.measure_id not in {baseline.id, baseline.semantics.id}:
         reasons.append("assumption_measure_mismatch")
-    if horizon_end <= baseline.source_version.release_date:
-        reasons.append("forecast_horizon_not_future")
+    if baseline.source_version.retrieved_at.date() > as_of:
+        reasons.append("baseline_retrieved_after_as_of")
+    if _observation_end(baseline) > as_of:
+        reasons.append("baseline_period_after_as_of")
+    if horizon_end <= as_of:
+        reasons.append("forecast_horizon_not_future_to_as_of")
+    if horizon_end <= _observation_end(baseline):
+        reasons.append("forecast_horizon_not_after_observation_period")
 
     if assumption.assumption_type == "absolute_change":
         if assumption.unit != baseline.semantics.unit:
@@ -247,6 +236,7 @@ def build_scenario_projection(
             "This is a deterministic planning scenario, not a statistical prediction.",
             "The result changes only the stated assumption and does not model secondary effects.",
             "No probability of occurrence is implied.",
+            f"Planning as-of date: {as_of.isoformat()}.",
         ],
         backtest_reference=None,
         review_status=ReviewStatus.PROVISIONAL,
