@@ -2,10 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from cbcap_core.migration_runner import _migration_files, _sha256
+from cbcap_core.migration_runner import (
+    RUNTIME_INSERT_TABLES,
+    RUNTIME_SELECT_TABLES,
+    _migration_files,
+    _sha256,
+)
 from cbcap_core.schema_readiness import (
     CHECKPOINT_DATA_POLICIES,
     CHECKPOINT_TABLES,
+    PUBLIC_RUNTIME_GRANTS,
     assert_runtime_schema_ready,
 )
 
@@ -28,6 +34,18 @@ class Cursor:
         if normalized.startswith("SELECT migration_name, migration_hash"):
             self.rows = list(self.connection.ledger)
             self.row = None
+        elif normalized.startswith("SELECT tablename, has_table_privilege"):
+            schema_name = params[0]
+            source = (
+                self.connection.cbcap_grants
+                if schema_name == "cbcap"
+                else self.connection.public_grants
+            )
+            self.rows = [
+                (table_name, *privileges)
+                for table_name, privileges in sorted(source.items())
+            ]
+            self.row = None
         elif normalized == "SELECT to_regclass(%s)":
             table = params[0]
             self.row = (table,) if table in self.connection.tables else (None,)
@@ -48,14 +66,56 @@ class Cursor:
         return self.row
 
 
+def default_cbcap_grants():
+    table_names = {
+        *RUNTIME_SELECT_TABLES,
+        *RUNTIME_INSERT_TABLES,
+        "tenant_evidence_document",
+        "tenant_evidence_review",
+        "decision_memory",
+        "publication_authorization",
+        "forecast_model_registration",
+    }
+    return {
+        table_name: (
+            table_name in RUNTIME_SELECT_TABLES,
+            table_name in RUNTIME_INSERT_TABLES,
+            False,
+            False,
+        )
+        for table_name in table_names
+    }
+
+
+def default_public_grants():
+    return {
+        qualified_name.split(".", 1)[1]: privileges
+        for qualified_name, privileges in PUBLIC_RUNTIME_GRANTS.items()
+    }
+
+
 class Connection:
-    def __init__(self, *, ledger, tables=CHECKPOINT_TABLES, isolation=None):
+    def __init__(
+        self,
+        *,
+        ledger,
+        tables=CHECKPOINT_TABLES,
+        isolation=None,
+        cbcap_grants=None,
+        public_grants=None,
+    ):
         self.ledger = ledger
         self.tables = set(tables)
         self.isolation = isolation or {
             table_name: (True, True, True)
             for table_name in CHECKPOINT_DATA_POLICIES
         }
+        self.cbcap_grants = (
+            default_cbcap_grants() if cbcap_grants is None else cbcap_grants
+        )
+        self.public_grants = (
+            default_public_grants() if public_grants is None else public_grants
+        )
         self.executions = []
 
     def cursor(self):
@@ -70,7 +130,7 @@ def expected_ledger(root: Path):
     return [(path.name, _sha256(path)) for path in _migration_files(root)]
 
 
-def test_runtime_schema_ready_requires_exact_image_migrations_tables_and_forced_rls(tmp_path):
+def test_runtime_schema_ready_requires_exact_image_migrations_grants_tables_and_forced_rls(tmp_path):
     migration(tmp_path / "001_first.sql", "SELECT 1;")
     migration(tmp_path / "002_second.sql", "SELECT 2;")
     connection = Connection(ledger=expected_ledger(tmp_path))
@@ -78,6 +138,12 @@ def test_runtime_schema_ready_requires_exact_image_migrations_tables_and_forced_
     assert_runtime_schema_ready(connection, migration_root=tmp_path)
 
     assert connection.executions[0][0].startswith("SELECT migration_name, migration_hash")
+    grant_queries = [
+        entry
+        for entry in connection.executions
+        if entry[0].startswith("SELECT tablename, has_table_privilege")
+    ]
+    assert [entry[1][0] for entry in grant_queries] == ["cbcap", "public"]
     checkpoint_queries = [entry for entry in connection.executions if entry[0] == "SELECT to_regclass(%s)"]
     assert [entry[1][0] for entry in checkpoint_queries] == list(CHECKPOINT_TABLES)
     rls_queries = [entry for entry in connection.executions if entry[0].startswith("SELECT c.relrowsecurity")]
@@ -102,6 +168,74 @@ def test_runtime_schema_ready_fails_on_missing_or_future_migration(tmp_path):
     future = [*current, ("002_future.sql", "sha256:" + "f" * 64)]
     with pytest.raises(RuntimeError, match="migration ledger"):
         assert_runtime_schema_ready(Connection(ledger=future), migration_root=tmp_path)
+
+
+def test_runtime_schema_ready_rejects_membership_write_privilege(tmp_path):
+    migration(tmp_path / "001_first.sql", "SELECT 1;")
+    grants = default_cbcap_grants()
+    grants["workspace_membership_event"] = (True, True, False, False)
+
+    with pytest.raises(RuntimeError, match="privilege boundary"):
+        assert_runtime_schema_ready(
+            Connection(ledger=expected_ledger(tmp_path), cbcap_grants=grants),
+            migration_root=tmp_path,
+        )
+
+
+def test_runtime_schema_ready_rejects_private_evidence_read_privilege(tmp_path):
+    migration(tmp_path / "001_first.sql", "SELECT 1;")
+    grants = default_cbcap_grants()
+    grants["tenant_evidence_document"] = (True, False, False, False)
+
+    with pytest.raises(RuntimeError, match="privilege boundary"):
+        assert_runtime_schema_ready(
+            Connection(ledger=expected_ledger(tmp_path), cbcap_grants=grants),
+            migration_root=tmp_path,
+        )
+
+
+def test_runtime_schema_ready_rejects_missing_required_run_read_privilege(tmp_path):
+    migration(tmp_path / "001_first.sql", "SELECT 1;")
+    grants = default_cbcap_grants()
+    grants["county_run_state_version"] = (False, True, False, False)
+
+    with pytest.raises(RuntimeError, match="privilege boundary"):
+        assert_runtime_schema_ready(
+            Connection(ledger=expected_ledger(tmp_path), cbcap_grants=grants),
+            migration_root=tmp_path,
+        )
+
+
+def test_runtime_schema_ready_rejects_update_or_delete_on_cbcap_tables(tmp_path):
+    migration(tmp_path / "001_first.sql", "SELECT 1;")
+    grants = default_cbcap_grants()
+    grants["county_run_state_version"] = (True, True, True, False)
+
+    with pytest.raises(RuntimeError, match="privilege boundary"):
+        assert_runtime_schema_ready(
+            Connection(ledger=expected_ledger(tmp_path), cbcap_grants=grants),
+            migration_root=tmp_path,
+        )
+
+
+def test_runtime_schema_ready_rejects_checkpoint_or_ledger_grant_drift(tmp_path):
+    migration(tmp_path / "001_first.sql", "SELECT 1;")
+    grants = default_public_grants()
+    grants["checkpoints"] = (True, False, True, True)
+
+    with pytest.raises(RuntimeError, match="privilege boundary"):
+        assert_runtime_schema_ready(
+            Connection(ledger=expected_ledger(tmp_path), public_grants=grants),
+            migration_root=tmp_path,
+        )
+
+    grants = default_public_grants()
+    grants["cbcap_schema_migration"] = (True, True, False, False)
+    with pytest.raises(RuntimeError, match="privilege boundary"):
+        assert_runtime_schema_ready(
+            Connection(ledger=expected_ledger(tmp_path), public_grants=grants),
+            migration_root=tmp_path,
+        )
 
 
 def test_runtime_schema_ready_fails_when_checkpoint_schema_is_incomplete(tmp_path):
