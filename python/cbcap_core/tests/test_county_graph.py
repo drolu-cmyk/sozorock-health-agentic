@@ -2,8 +2,6 @@ from datetime import date, datetime, timezone
 from hashlib import sha256
 
 from cbcap_core import (
-    BarrierFamily,
-    BarrierObservation,
     CitationLocator,
     Confidence,
     CountyGraphContext,
@@ -24,6 +22,7 @@ from cbcap_core import (
     build_county_planning_graph,
     initial_graph_state,
 )
+from cbcap_core.gateway import PublicEvidencePackage, SourceCoverageAssertion
 from cbcap_core.planning_evidence import (
     PlanningDocumentPage,
     PlanningEvidenceAdmissionRequest,
@@ -55,12 +54,12 @@ def county(fips: str = "42029", state_fips: str = "42", name: str = "Chester Cou
     )
 
 
-def source(source_id: str) -> SourceVersionRef:
+def source(source_id: str, title: str = "Official source") -> SourceVersionRef:
     return SourceVersionRef(
         source_id=source_id,
         source_version_id=f"{source_id}:2026",
         publisher="Official publisher",
-        title="Official source",
+        title=title,
         official_url="https://example.gov/source",
         release_label="2026",
         release_date=date(2026, 1, 1),
@@ -71,12 +70,12 @@ def source(source_id: str) -> SourceVersionRef:
     )
 
 
-def semantics(metric_id: str) -> MetricSemantics:
-    return MetricSemantics(
-        id=metric_id,
-        source_measure_id=metric_id.upper(),
-        name=metric_id.replace("_", " ").title(),
-        description="Controlled county graph integration measure.",
+def transportation_measure() -> Measure:
+    semantics = MetricSemantics(
+        id="metric:transportation",
+        source_measure_id="LACKTRPT",
+        name="Lack of reliable transportation",
+        description="Controlled county graph transportation measure.",
         direction="adverse",
         higher_value_meaning="adverse",
         unit="percent",
@@ -86,39 +85,94 @@ def semantics(metric_id: str) -> MetricSemantics:
         allowed_geography_kinds=[GeographyKind.COUNTY],
         review_status=ReviewStatus.VERIFIED,
     )
-
-
-def measure(metric_id: str, source_id: str) -> Measure:
     return Measure(
-        id=f"measure:{metric_id}:42029:2026",
-        semantics=semantics(metric_id),
+        id="measure:transportation:42029:2026",
+        semantics=semantics,
         geography=county(),
-        source_version=source(source_id),
+        source_version=source("cdc-places", "PLACES"),
+        geography_level="county",
         value=10.0,
         numeric_value=10.0,
+        source_metadata={},
         review_status=ReviewStatus.VERIFIED,
     )
+
+
+def hpsa_measure() -> Measure:
+    semantics = MetricSemantics(
+        id="metric:hpsa",
+        source_measure_id="HPSA_DESIGNATION",
+        name="Current HRSA shortage-area designation",
+        description="Controlled county graph HPSA measure.",
+        direction="contextual",
+        higher_value_meaning="context_dependent",
+        unit="designation",
+        universe="HRSA HPSA designations",
+        adjustment="not_applicable",
+        comparison_policy="context_only",
+        allowed_geography_kinds=[GeographyKind.COUNTY],
+        review_status=ReviewStatus.VERIFIED,
+    )
+    return Measure(
+        id="measure:hpsa:primary:42029",
+        semantics=semantics,
+        geography=county(),
+        source_version=source("hrsa-workforce", "HPSA"),
+        geography_level="county",
+        value="Designated",
+        numeric_value=13.0,
+        data_period_start=date(2024, 1, 1),
+        source_metadata={
+            "designationName": "Controlled Chester Primary Care HPSA",
+            "designationType": "Geographic HPSA",
+            "componentType": "Single County",
+            "discipline": "Primary Care",
+            "designationStatus": "Designated",
+            "lastUpdateDate": "2026-08-20",
+            "wholeCountyGeographicDesignation": True,
+            "sourceGeographyIdentificationNumber": "42029",
+        },
+        review_status=ReviewStatus.VERIFIED,
+    )
+
+
+def coverage(key: str, status: str, records: int) -> SourceCoverageAssertion:
+    return SourceCoverageAssertion(
+        id=f"coverage:{key}:42029",
+        source_id="hrsa-workforce",
+        source_version_id=source("hrsa-workforce", "HPSA").source_version_id,
+        geography_id=county().id,
+        coverage_key=key,
+        status=status,
+        records_matched=records,
+        evaluated_at=NOW,
+        review_status=ReviewStatus.VERIFIED,
+    )
+
+
+def gateway_package() -> dict:
+    transport = transportation_measure()
+    shortage = hpsa_measure()
+    return PublicEvidencePackage(
+        release_id="county-graph-integration-release",
+        generated_at=NOW,
+        geographies=[county()],
+        metric_semantics=[transport.semantics, shortage.semantics],
+        measures=[transport, shortage],
+        source_versions=[transport.source_version, shortage.source_version],
+        source_coverage=[
+            coverage("hpsa:primary_care", "complete_with_records", 1),
+            coverage("hpsa:dental", "complete_no_records", 0),
+            coverage("hpsa:mental_health", "complete_no_records", 0),
+        ],
+    ).model_dump(mode="json")
 
 
 def base_run() -> CountyRunState:
-    public_measure = measure("transportation", "cdc-places")
-    workforce_measure = measure("primary_care_shortage", "hrsa-workforce")
-    barrier = BarrierObservation(
-        id="barrier:transportation:42029",
-        barrier_family=BarrierFamily.TRANSPORTATION_TRAVEL,
-        geography=county(),
-        measure_id=public_measure.id,
-        observed_value=10.0,
-        pressure_percentile=70.0,
-        evidence_quality="high",
-        review_status=ReviewStatus.VERIFIED,
-    )
     return CountyRunState(
         run_id="county-graph-integration",
         county=county(),
         requested_at=NOW,
-        measures=[public_measure, workforce_measure],
-        barrier_observations=[barrier],
     )
 
 
@@ -250,7 +304,8 @@ def test_verified_planning_pipeline_enters_parent_graph_and_preserves_trajectory
         initial_graph_state(run),
         config=config("planning-integrated"),
         context=CountyGraphContext(
-            planning_pipeline_request=planning_pipeline_request().model_dump(mode="json")
+            public_evidence_package=gateway_package(),
+            planning_pipeline_request=planning_pipeline_request().model_dump(mode="json"),
         ),
     )
     final = CountyRunState.model_validate(result["county_run"])
@@ -271,7 +326,8 @@ def test_provisional_planning_claim_blocks_parent_graph():
         initial_graph_state(run),
         config=config("planning-provisional"),
         context=CountyGraphContext(
-            planning_pipeline_request=planning_pipeline_request(verified_claim=False).model_dump(mode="json")
+            public_evidence_package=gateway_package(),
+            planning_pipeline_request=planning_pipeline_request(verified_claim=False).model_dump(mode="json"),
         ),
     )
     final = CountyRunState.model_validate(result["county_run"])
@@ -294,7 +350,8 @@ def test_planning_request_for_another_county_is_rejected_before_merge():
         initial_graph_state(run),
         config=config("planning-wrong-county"),
         context=CountyGraphContext(
-            planning_pipeline_request=planning_pipeline_request(request_county=wrong_county).model_dump(mode="json")
+            public_evidence_package=gateway_package(),
+            planning_pipeline_request=planning_pipeline_request(request_county=wrong_county).model_dump(mode="json"),
         ),
     )
     final = CountyRunState.model_validate(result["county_run"])
