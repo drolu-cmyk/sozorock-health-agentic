@@ -2,6 +2,16 @@ BEGIN;
 
 DO $$
 BEGIN
+  IF to_regclass('cbcap.forecast_model_registration') IS NOT NULL
+    OR to_regclass('cbcap.forecast_backtest_case') IS NOT NULL
+    OR to_regclass('cbcap.forecast_backtest_summary') IS NOT NULL
+    OR to_regclass('cbcap.forecast_backtest_policy') IS NOT NULL
+    OR to_regclass('cbcap.forecast_backtest_policy_evaluation') IS NOT NULL
+    OR to_regclass('cbcap.forecast_model_approval') IS NOT NULL THEN
+    RAISE EXCEPTION
+      'Refusing to roll back decision memory while forecast governance migration 003 is still present. Roll back 003 first.';
+  END IF;
+
   IF to_regclass('cbcap.trajectory_event') IS NOT NULL
     OR to_regclass('cbcap.trajectory_evaluation_label') IS NOT NULL
     OR to_regclass('cbcap.trajectory_correction') IS NOT NULL THEN
