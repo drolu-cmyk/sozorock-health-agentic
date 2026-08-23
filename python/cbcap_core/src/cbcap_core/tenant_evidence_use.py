@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import Field
@@ -30,7 +30,14 @@ def latest_tenant_evidence_review(
     ]
     if not matching:
         return None
-    return max(matching, key=lambda item: (item.reviewed_at, item.id))
+
+    latest_reviewed_at = max(item.reviewed_at for item in matching)
+    latest = [item for item in matching if item.reviewed_at == latest_reviewed_at]
+    if len(latest) != 1:
+        raise ValueError(
+            "tenant evidence review history has an ambiguous latest timestamp"
+        )
+    return latest[0]
 
 
 def authorize_tenant_evidence_use(
@@ -45,7 +52,7 @@ def authorize_tenant_evidence_use(
     This does not make the document public and does not copy it into the public
     Evidence Gateway. The latest review controls use, so a later rejection or
     needs-revision decision supersedes an earlier acceptance without rewriting
-    immutable history.
+    immutable history. Ambiguous review ordering fails closed.
     """
 
     now = as_of or datetime.now(timezone.utc)
