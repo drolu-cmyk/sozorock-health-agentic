@@ -50,13 +50,14 @@ class RunBudget(StrictModel):
     max_external_calls: int = Field(default=100, ge=0)
     model_tokens_used: int = Field(default=0, ge=0)
     model_cost_usd: float = Field(default=0.0, ge=0)
+    preflight_external_calls_used: int = Field(default=0, ge=0)
     external_calls_used: int = Field(default=0, ge=0)
 
     def exceeded(self) -> bool:
         return (
             self.model_tokens_used > self.max_model_tokens
             or self.model_cost_usd > self.max_model_cost_usd
-            or self.external_calls_used > self.max_external_calls
+            or max(self.external_calls_used, self.preflight_external_calls_used) > self.max_external_calls
         )
 
 
@@ -136,9 +137,15 @@ class CountyGraphContext:
 
 
 def initial_graph_state(county_run: CountyRunState, *, budget: RunBudget | None = None) -> CountyGraphState:
+    resolved_budget = budget or RunBudget()
+    if resolved_budget.external_calls_used and not resolved_budget.preflight_external_calls_used:
+        resolved_budget = RunBudget.model_validate({
+            **resolved_budget.model_dump(mode="python"),
+            "preflight_external_calls_used": resolved_budget.external_calls_used,
+        })
     return {
         "county_run": county_run.model_dump(mode="json"),
-        "budget": (budget or RunBudget()).model_dump(mode="json"),
+        "budget": resolved_budget.model_dump(mode="json"),
         "branch_results": [],
         "branch_payloads": [],
         "audit_events": [],
@@ -509,7 +516,9 @@ def validate_join(state):
         **budget.model_dump(mode="python"),
         "model_tokens_used": sum(item.model_tokens_used for item in results),
         "model_cost_usd": sum(item.model_cost_usd for item in results),
-        "external_calls_used": sum(item.external_calls_used for item in results),
+        "external_calls_used": budget.preflight_external_calls_used + sum(
+            item.external_calls_used for item in results
+        ),
     })
     run = _validated_run_copy(run, conflicts=conflicts)
     run = _with_flags(
