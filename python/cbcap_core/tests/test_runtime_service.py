@@ -1,0 +1,227 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+from cbcap_core.gateway import EvidenceGatewayResponse
+from cbcap_core.gateway_transport import EvidenceGatewayFetchResult, package_release_hash
+from cbcap_core.graph import RunBudget
+from cbcap_core.models import CountyRunState, GeographyKind, GeographyRef, ReviewStatus
+from cbcap_core.runtime_service import execute_county_run, resume_county_run_review
+
+FIXTURE = Path(__file__).parent / "fixtures" / "evidence-gateway-v1.json"
+NOW = datetime(2026, 8, 22, 23, 50, tzinfo=timezone.utc)
+TENANT = "tenant:albany-planning"
+
+
+def run() -> CountyRunState:
+    return CountyRunState(
+        run_id="run:runtime:36001",
+        tenant_id=TENANT,
+        county=GeographyRef(
+            id="county:36001",
+            kind=GeographyKind.COUNTY,
+            authority="census",
+            authority_id="36001",
+            name="Albany County",
+            display_name="Albany County, New York",
+            state_fips="36",
+            county_fips="36001",
+            vintage="2025",
+            review_status=ReviewStatus.VERIFIED,
+        ),
+        requested_at=NOW,
+    )
+
+
+def gateway_response() -> EvidenceGatewayResponse:
+    package = json.loads(FIXTURE.read_text())
+    release_hash = package_release_hash(package)
+    return EvidenceGatewayResponse.model_validate(
+        {
+            "manifest": {
+                "contract_version": "sozorock.evidence-gateway.v1",
+                "release_id": package["release_id"],
+                "generated_at": package["generated_at"],
+                "evidence_core_schema_version": "evidence-core.fixture.v1",
+                "release_hash": release_hash,
+                "source_versions": package["source_versions"],
+            },
+            "package": package,
+        }
+    )
+
+
+class FakeGatewayClient:
+    def __init__(self):
+        self.response = gateway_response()
+        self.calls = []
+
+    def fetch_county(self, county_fips: str, *, etag: str | None = None):
+        self.calls.append((county_fips, etag))
+        return EvidenceGatewayFetchResult(
+            response=self.response,
+            etag=f'"{self.response.manifest.release_hash}"',
+        )
+
+
+class FakeCursor:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, query, params=None):
+        self.connection.executions.append((" ".join(query.split()), params))
+
+
+class FakeConnection:
+    def __init__(self):
+        self.executions = []
+
+    def cursor(self):
+        return FakeCursor(self)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+class FakeGraph:
+    def __init__(self, *, interrupted: bool = False):
+        self.interrupted = interrupted
+        self.calls = []
+
+    def invoke(self, input, config=None, *, context=None):
+        self.calls.append((input, config, context))
+        if isinstance(input, dict):
+            county_run = input["county_run"]
+            run_id = county_run["run_id"]
+        else:
+            county_run = run().model_dump(mode="json")
+            run_id = county_run["run_id"]
+        state = {
+            "county_run": county_run,
+            "budget": input.get("budget", {}) if isinstance(input, dict) else {},
+            "trajectory_events": [
+                {
+                    "id": f"trajectory:{run_id}:public-evidence",
+                    "run_id": run_id,
+                    "stage": "public_evidence",
+                    "entity_id": "release:fixture",
+                    "outcome": "completed",
+                    "reason_codes": [],
+                    "occurred_at": NOW.isoformat(),
+                }
+            ],
+        }
+        if self.interrupted:
+            state["__interrupt__"] = [{"type": "cbcap_human_review"}]
+        return state
+
+
+def test_cross_tenant_actor_is_rejected_before_gateway_or_graph_execution():
+    gateway = FakeGatewayClient()
+    graph = FakeGraph()
+
+    with pytest.raises(ValueError, match="tenant"):
+        execute_county_run(
+            run(),
+            RunBudget(max_external_calls=1),
+            gateway,  # type: ignore[arg-type]
+            graph,  # type: ignore[arg-type]
+            FakeConnection(),
+            actor_tenant_id="tenant:other",
+        )
+
+    assert gateway.calls == []
+    assert graph.calls == []
+
+
+def test_execution_fetches_public_evidence_once_and_persists_trajectory():
+    gateway = FakeGatewayClient()
+    graph = FakeGraph()
+    connection = FakeConnection()
+
+    result = execute_county_run(
+        run(),
+        RunBudget(max_external_calls=1),
+        gateway,  # type: ignore[arg-type]
+        graph,  # type: ignore[arg-type]
+        connection,
+        actor_tenant_id=TENANT,
+    )
+
+    assert gateway.calls == [("36001", None)]
+    assert len(graph.calls) == 1
+    _, config, context = graph.calls[0]
+    assert config["configurable"]["thread_id"] == f"cbcap:{TENANT}:county-run:{run().run_id}"
+    assert context.public_evidence_package["release_id"] == gateway.response.manifest.release_id
+    assert result.prepared is not None
+    assert result.prepared.budget.preflight_external_calls_used == 1
+    assert result.interrupted is False
+    assert len(result.trajectory_events) == 1
+    assert any("INSERT INTO cbcap.trajectory_event" in query for query, _ in connection.executions)
+
+
+def test_interrupted_execution_persists_partial_trajectory_before_review():
+    gateway = FakeGatewayClient()
+    graph = FakeGraph(interrupted=True)
+    connection = FakeConnection()
+
+    result = execute_county_run(
+        run(),
+        RunBudget(max_external_calls=1),
+        gateway,  # type: ignore[arg-type]
+        graph,  # type: ignore[arg-type]
+        connection,
+        actor_tenant_id=TENANT,
+    )
+    assert result.interrupted is True
+    assert len(result.trajectory_events) == 1
+
+
+def test_review_resume_does_not_have_a_gateway_dependency_or_public_package_context():
+    graph = FakeGraph()
+    connection = FakeConnection()
+
+    result = resume_county_run_review(
+        run().run_id,
+        graph,  # type: ignore[arg-type]
+        connection,
+        actor_tenant_id=TENANT,
+        decision="approved",
+        reviewer="reviewer:1",
+        reason="Verified against authoritative source evidence.",
+    )
+
+    assert len(graph.calls) == 1
+    _, config, context = graph.calls[0]
+    assert config["configurable"]["thread_id"] == f"cbcap:{TENANT}:county-run:{run().run_id}"
+    assert context.public_evidence_package is None
+    assert result.prepared is None
+    assert len(result.trajectory_events) == 1
+
+
+def test_invalid_review_decision_fails_before_graph_resume():
+    graph = FakeGraph()
+    with pytest.raises(ValueError, match="invalid review decision"):
+        resume_county_run_review(
+            run().run_id,
+            graph,  # type: ignore[arg-type]
+            FakeConnection(),
+            actor_tenant_id=TENANT,
+            decision="publish_now",
+            reviewer="reviewer:1",
+            reason="Not an allowed review action.",
+        )
+    assert graph.calls == []
