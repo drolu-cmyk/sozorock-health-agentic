@@ -1,3 +1,10 @@
+from .authorization import (
+    ROLE_CAPABILITIES,
+    AuthorizationGrant,
+    AuthorizedActor,
+    RuntimeCapability,
+    require_actor_capability,
+)
 from .barriers import (
     BARRIER_DEFINITIONS,
     INITIAL_BARRIER_RULES,
@@ -67,7 +74,11 @@ from .funding_decision import (
     FundingPursuitDecisionResult,
     build_funding_pursuit_decision,
 )
-from .funding_review import FundingFitReviewResult, apply_funding_fit_review
+from .funding_review import (
+    FundingFitReviewRequest,
+    FundingFitReviewResult,
+    apply_funding_fit_review,
+)
 from .gateway import (
     PUBLIC_EVIDENCE_CORE_COMPATIBILITY,
     SHARED_EVIDENCE_CONTRACT_VERSION,
@@ -227,10 +238,13 @@ __all__ = [
     "ApprovedPlanningSource",
     "AHRF_CAPACITY_RULES",
     "AhrfCapacityRule",
+    "AuthorizationGrant",
+    "AuthorizedActor",
     "BARRIER_DEFINITIONS",
     "INITIAL_BARRIER_RULES",
     "PUBLIC_EVIDENCE_CORE_COMPATIBILITY",
     "REQUIRED_HPSA_COVERAGE_KEYS",
+    "ROLE_CAPABILITIES",
     "SHARED_EVIDENCE_CONTRACT_VERSION",
     "BacktestPolicyEvaluation",
     "BarrierAdmissionDecision",
@@ -288,6 +302,7 @@ __all__ = [
     "FundingEvaluationRequest",
     "FundingEvaluationResult",
     "FundingFit",
+    "FundingFitReviewRequest",
     "FundingFitReviewResult",
     "FundingOpportunity",
     "FundingPursuitDecisionRequest",
@@ -327,6 +342,7 @@ __all__ = [
     "RunBudget",
     "RunStatus",
     "RuntimeActor",
+    "RuntimeCapability",
     "RuntimeRole",
     "ScenarioAssumption",
     "ScenarioProjectionDecision",
@@ -398,6 +414,7 @@ __all__ = [
     "prepare_workspace_decision",
     "query_decision_memory",
     "record_workspace_decision",
+    "require_actor_capability",
     "research_candidates",
     "resume_county_run_review",
     "run_planning_pipeline",
