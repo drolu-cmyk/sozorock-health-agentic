@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import Field, model_validator
 
@@ -9,8 +9,6 @@ from .decision_memory import (
     DecisionMemoryProposal,
     DecisionMemoryRecord,
     DecisionMemoryWriteRequest,
-    MemoryApplicability,
-    MemoryDecisionType,
     MemoryActorRole,
     ProposalOutcome,
     build_decision_memory,
@@ -85,10 +83,11 @@ def _run_entity_ids(run: CountyRunState) -> set[str]:
         "scenario_assumptions",
         "forecasts",
         "conflicts",
-        "review_decisions",
-        "publication_artifacts",
+        "reviews",
+        "agent_runs",
+        "artifacts",
     ):
-        for item in getattr(run, attribute, []):
+        for item in getattr(run, attribute):
             entity_id = getattr(item, "id", None)
             if entity_id:
                 ids.add(entity_id)
@@ -217,7 +216,7 @@ def prepare_workspace_decision(
             proposal=proposal,
             actor_tenant_id=request.actor_tenant_id,
             actor_id=request.actor_id,
-            actor_role=request.actor_role,  # type: ignore[arg-type]
+            actor_role=cast(MemoryActorRole, request.actor_role),
             decided_at=request.decided_at,
             approve_as_reviewed=request.approve_as_reviewed,
         )
