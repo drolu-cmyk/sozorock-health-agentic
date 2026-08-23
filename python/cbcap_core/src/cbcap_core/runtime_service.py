@@ -143,6 +143,11 @@ def execute_county_run(
     final_run = CountyRunState.model_validate(graph_state["county_run"])
     final_budget = RunBudget.model_validate(graph_state.get("budget", prepared.budget.model_dump(mode="json")))
     interrupted = "__interrupt__" in graph_state
+    total_duration_ms = max(
+        _elapsed_ms(total_started_ns),
+        graph_duration_ms,
+        prepared.evidence_fetch_ms,
+    )
     observation = build_initial_run_observation(
         run,
         final_run,
@@ -151,7 +156,7 @@ def execute_county_run(
         completed_at=completed_at,
         evidence_fetch_ms=prepared.evidence_fetch_ms,
         graph_duration_ms=graph_duration_ms,
-        total_duration_ms=_elapsed_ms(total_started_ns),
+        total_duration_ms=total_duration_ms,
         evidence_release_id=prepared.evidence_release_id,
         evidence_release_hash=prepared.evidence_release_hash,
         interrupted=interrupted,
@@ -221,13 +226,14 @@ def resume_county_run_review(
     completed_at = datetime.now(timezone.utc)
     final_budget = RunBudget.model_validate(graph_state.get("budget", {}))
     interrupted = "__interrupt__" in graph_state
+    total_duration_ms = max(_elapsed_ms(total_started_ns), graph_duration_ms)
     observation = build_review_resume_observation(
         canonical_run,
         final_budget,
         started_at=started_at,
         completed_at=completed_at,
         graph_duration_ms=graph_duration_ms,
-        total_duration_ms=_elapsed_ms(total_started_ns),
+        total_duration_ms=total_duration_ms,
         interrupted=interrupted,
     )
     persist_run_observation(connection, observation)
