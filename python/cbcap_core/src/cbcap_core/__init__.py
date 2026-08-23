@@ -91,6 +91,16 @@ from .planning_research import (
     build_planning_research_graph,
     research_candidates,
 )
+from .planning_views import (
+    PlanningViewDecision,
+    PlanningViewRequest,
+    select_planning_view,
+)
+from .visualization import (
+    VisualizationDecision,
+    VisualizationRequest,
+    select_visualization,
+)
 
 __all__ = [
     "AgentRun",
@@ -146,6 +156,8 @@ __all__ = [
     "PlanningResearchResult",
     "PlanningReviewTask",
     "PlanningTrajectoryEvent",
+    "PlanningViewDecision",
+    "PlanningViewRequest",
     "PublicationArtifact",
     "PublicEvidencePackage",
     "RejectedPlanningCandidate",
@@ -157,6 +169,8 @@ __all__ = [
     "SourceDocument",
     "SourceVersionRef",
     "TenantVisibility",
+    "VisualizationDecision",
+    "VisualizationRequest",
     "WorkflowFlags",
     "PUBLIC_EVIDENCE_CORE_COMPATIBILITY",
     "SHARED_EVIDENCE_CONTRACT_VERSION",
@@ -174,5 +188,7 @@ __all__ = [
     "research_candidates",
     "run_planning_pipeline",
     "select_county_public_evidence",
+    "select_planning_view",
+    "select_visualization",
     "summarize_barriers",
 ]
