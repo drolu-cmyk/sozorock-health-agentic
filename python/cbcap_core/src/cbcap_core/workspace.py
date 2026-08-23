@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import Field
 
+from .evidence_graph import EvidenceGraphSnapshot
+from .evidence_graph_policy import build_governed_evidence_graph
 from .models import CountyRunState, ReviewStatus, StrictModel
 from .planning_views import (
     PlanningQuestion,
@@ -65,6 +67,8 @@ class DecisionWorkspaceContract(StrictModel):
     role: WorkspaceRole
     question: PlanningQuestion
     evidence_status: WorkspaceEvidenceStatus
+    evidence_graph_status: Literal["ready", "blocked"]
+    authoritative_relationship_count: int = Field(ge=0)
     view: PlanningViewDecision
     blockers: list[WorkspaceBlocker] = Field(default_factory=list)
     allowed_actions: list[WorkspaceAction] = Field(default_factory=list)
@@ -81,21 +85,6 @@ def _count_status(items) -> tuple[int, int]:
     verified = sum(item.review_status == ReviewStatus.VERIFIED for item in items)
     provisional = sum(item.review_status != ReviewStatus.VERIFIED for item in items)
     return verified, provisional
-
-
-def _verified_lineage(run: CountyRunState) -> bool:
-    verified_source_document_ids = {
-        item.id for item in run.source_documents if item.review_status == ReviewStatus.VERIFIED
-    }
-    if not verified_source_document_ids:
-        return False
-    for claim in run.evidence_claims:
-        if claim.review_status == ReviewStatus.VERIFIED and claim.source_document_id not in verified_source_document_ids:
-            return False
-    for plan in run.plan_documents:
-        if plan.review_status == ReviewStatus.VERIFIED and plan.source_document_id not in verified_source_document_ids:
-            return False
-    return True
 
 
 def _has_time_semantics(run: CountyRunState) -> bool:
@@ -119,6 +108,7 @@ def _has_time_semantics(run: CountyRunState) -> bool:
 
 def _planning_view_request(
     run: CountyRunState,
+    graph: EvidenceGraphSnapshot,
     *,
     question: PlanningQuestion,
     mobile: bool,
@@ -142,17 +132,13 @@ def _planning_view_request(
         if item.review_status == ReviewStatus.VERIFIED
         and item.claim_type in {"objective", "intervention", "action", "evaluation_measure"}
     ]
-    relationship_nodes = {
-        *[item.id for item in run.organizations],
-        *[item.id for item in run.plan_documents],
-        *[item.id for item in run.plan_priorities],
-        *[item.id for item in run.funding_opportunities],
+
+    authoritative_edges = graph.authoritative_edges if graph.status == "ready" else []
+    relationship_node_ids = {
+        node_id
+        for edge in authoritative_edges
+        for node_id in (edge.from_node_id, edge.to_node_id)
     }
-    relationship_edges = (
-        sum(bool(item.organization_ids) for item in run.plan_priorities)
-        + sum(bool(item.plan_priority_ids) for item in run.funding_fits)
-        + sum(bool(item.barrier_observation_ids) for item in run.plan_priorities)
-    )
     evidence_events = (
         len([item for item in run.measures if item.review_status == ReviewStatus.VERIFIED])
         + len(verified_plans)
@@ -166,9 +152,9 @@ def _planning_view_request(
         scenario_count=len(scenario_projections),
         funding_opportunity_count=len(verified_funding) + len(verified_fits),
         implementation_item_count=len(implementation_claims),
-        relationship_node_count=len(relationship_nodes),
-        relationship_edge_count=relationship_edges,
-        has_verified_lineage=_verified_lineage(run),
+        relationship_node_count=len(relationship_node_ids),
+        relationship_edge_count=len(authoritative_edges),
+        has_verified_lineage=graph.status == "ready" and bool(authoritative_edges),
         has_time_semantics=_has_time_semantics(run),
         mobile=mobile,
     )
@@ -195,8 +181,23 @@ def _evidence_status(run: CountyRunState) -> WorkspaceEvidenceStatus:
     )
 
 
-def _blockers(run: CountyRunState, view: PlanningViewDecision) -> list[WorkspaceBlocker]:
+def _blockers(
+    run: CountyRunState,
+    view: PlanningViewDecision,
+    graph: EvidenceGraphSnapshot,
+) -> list[WorkspaceBlocker]:
     blockers: list[WorkspaceBlocker] = []
+
+    for issue in graph.integrity_issues:
+        blockers.append(
+            WorkspaceBlocker(
+                code=f"evidence_graph_{issue.code}",
+                severity=issue.severity,
+                message=issue.message,
+                entity_ids=issue.entity_ids,
+            )
+        )
+
     blocking_conflicts = [item for item in run.conflicts if item.blocking]
     if blocking_conflicts:
         blockers.append(
@@ -207,10 +208,17 @@ def _blockers(run: CountyRunState, view: PlanningViewDecision) -> list[Workspace
                 entity_ids=[item.id for item in blocking_conflicts],
             )
         )
+
     provisional_ids = [
+        *[item.id for item in run.source_documents if item.review_status != ReviewStatus.VERIFIED],
         *[item.id for item in run.evidence_claims if item.review_status != ReviewStatus.VERIFIED],
-        *[item.id for item in run.plan_documents if item.review_status != ReviewStatus.VERIFIED],
+        *[item.id for item in run.measures if item.review_status != ReviewStatus.VERIFIED],
         *[item.id for item in run.barrier_observations if item.review_status != ReviewStatus.VERIFIED],
+        *[item.id for item in run.plan_documents if item.review_status != ReviewStatus.VERIFIED],
+        *[item.id for item in run.plan_priorities if item.review_status != ReviewStatus.VERIFIED],
+        *[item.id for item in run.funding_opportunities if item.review_status != ReviewStatus.VERIFIED],
+        *[item.id for item in run.funding_fits if item.review_status != ReviewStatus.VERIFIED],
+        *[item.id for item in run.forecasts if item.review_status != ReviewStatus.VERIFIED],
     ]
     if provisional_ids:
         blockers.append(
@@ -218,9 +226,10 @@ def _blockers(run: CountyRunState, view: PlanningViewDecision) -> list[Workspace
                 code="provisional_evidence",
                 severity="review_required",
                 message="Provisional planning evidence is visible for review but is not authoritative.",
-                entity_ids=provisional_ids,
+                entity_ids=list(dict.fromkeys(provisional_ids)),
             )
         )
+
     if view.status == "blocked":
         blockers.append(
             WorkspaceBlocker(
@@ -262,36 +271,43 @@ def _allowed_actions(
         actions.append("request_review")
     if any(item.severity == "blocking" for item in blockers) and role in {"reviewer", "admin"}:
         actions.append("review_conflicts")
+
+    blocking_or_review = any(
+        item.severity in {"blocking", "review_required"} for item in blockers
+    )
     if (
         role in {"reviewer", "admin"}
         and run.flags.safe_to_publish
         and not run.flags.publication_approved
+        and not blocking_or_review
     ):
         actions.append("approve_publication")
     return list(dict.fromkeys(actions))
 
 
 def _publication_state(run: CountyRunState, blockers: list[WorkspaceBlocker]) -> str:
+    if any(item.severity in {"blocking", "review_required"} for item in blockers):
+        return "review_required"
     if run.flags.publication_approved:
         return "approved"
     if run.flags.safe_to_publish:
         return "safe_not_approved"
-    if any(item.severity in {"blocking", "review_required"} for item in blockers):
-        return "review_required"
     return "not_ready"
 
 
-def _authoritative_ids(run: CountyRunState) -> list[str]:
-    return [
-        *[item.id for item in run.measures if item.review_status == ReviewStatus.VERIFIED],
-        *[item.id for item in run.barrier_observations if item.review_status == ReviewStatus.VERIFIED],
-        *[item.id for item in run.plan_documents if item.review_status == ReviewStatus.VERIFIED],
-        *[item.id for item in run.plan_priorities if item.review_status == ReviewStatus.VERIFIED],
-        *[item.id for item in run.evidence_claims if item.review_status == ReviewStatus.VERIFIED],
-        *[item.id for item in run.funding_opportunities if item.review_status == ReviewStatus.VERIFIED],
-        *[item.id for item in run.funding_fits if item.review_status == ReviewStatus.VERIFIED],
-        *[item.id for item in run.forecasts if item.review_status == ReviewStatus.VERIFIED],
-    ]
+def _authoritative_ids(graph: EvidenceGraphSnapshot) -> list[str]:
+    node_ids = {
+        node_id
+        for edge in graph.authoritative_edges
+        for node_id in (edge.from_node_id, edge.to_node_id)
+    }
+    return list(
+        dict.fromkeys(
+            node.entity_id
+            for node in graph.nodes
+            if node.id in node_ids and node.node_type not in {"geography", "source_version"}
+        )
+    )
 
 
 def build_decision_workspace(request: DecisionWorkspaceRequest) -> DecisionWorkspaceContract:
@@ -299,13 +315,15 @@ def build_decision_workspace(request: DecisionWorkspaceRequest) -> DecisionWorks
     if run.tenant_id is not None and request.actor_tenant_id != run.tenant_id:
         raise ValueError("workspace tenant does not match the authenticated actor tenant")
 
+    graph = build_governed_evidence_graph(run)
     view_request = _planning_view_request(
         run,
+        graph,
         question=request.question,
         mobile=request.mobile,
     )
     view = select_planning_view(view_request)
-    blockers = _blockers(run, view)
+    blockers = _blockers(run, view, graph)
     actions = _allowed_actions(
         run,
         role=request.role,
@@ -320,9 +338,11 @@ def build_decision_workspace(request: DecisionWorkspaceRequest) -> DecisionWorks
         role=request.role,
         question=request.question,
         evidence_status=_evidence_status(run),
+        evidence_graph_status=graph.status,
+        authoritative_relationship_count=len(graph.authoritative_edges),
         view=view,
         blockers=blockers,
         allowed_actions=actions,
         publication_state=_publication_state(run, blockers),
-        authoritative_entity_ids=_authoritative_ids(run),
+        authoritative_entity_ids=_authoritative_ids(graph),
     )
