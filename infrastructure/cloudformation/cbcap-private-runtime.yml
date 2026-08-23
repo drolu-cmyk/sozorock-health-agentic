@@ -375,7 +375,7 @@ Resources:
         - Name: containerInsights
           Value: enabled
 
-  TaskExecutionRole:
+  RuntimeTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -397,6 +397,28 @@ Resources:
                 Resource:
                   - !Ref RuntimeDatabasePassword
                   - !Ref CheckpointEncryptionKey
+
+  MigrationTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadMigrationSecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref RuntimeDatabasePassword
                   - !GetAtt Database.MasterUserSecret.SecretArn
 
   RuntimeTaskRole:
@@ -441,7 +463,7 @@ Resources:
       NetworkMode: awsvpc
       Cpu: !Ref RuntimeCpu
       Memory: !Ref RuntimeMemory
-      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ExecutionRoleArn: !GetAtt RuntimeTaskExecutionRole.Arn
       TaskRoleArn: !GetAtt RuntimeTaskRole.Arn
       RuntimePlatform:
         CpuArchitecture: X86_64
@@ -501,8 +523,7 @@ Resources:
       NetworkMode: awsvpc
       Cpu: '512'
       Memory: '1024'
-      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt RuntimeTaskRole.Arn
+      ExecutionRoleArn: !GetAtt MigrationTaskExecutionRole.Arn
       RuntimePlatform:
         CpuArchitecture: X86_64
         OperatingSystemFamily: LINUX
