@@ -43,7 +43,7 @@ def test_deterministic_event_can_record_zero_token_decision_path():
     assert event.estimated_cost_usd == 0
 
 
-def test_deterministic_event_cannot_hide_model_usage():
+def test_deterministic_event_cannot_hide_model_usage_or_identity():
     with pytest.raises(ValueError, match="deterministic"):
         deterministic_event(
             model_provider="openai",
@@ -51,10 +51,38 @@ def test_deterministic_event_cannot_hide_model_usage():
             input_tokens=100,
         )
 
+    with pytest.raises(ValueError, match="deterministic"):
+        deterministic_event(
+            model_provider="openai",
+            model_name="controlled-model",
+        )
 
-def test_model_cost_requires_model_identity():
+
+def test_model_cost_requires_complete_model_identity():
     with pytest.raises(ValueError, match="model identity"):
-        deterministic_event(actor_type="agent", estimated_cost_usd=0.25)
+        deterministic_event(
+            actor_type="agent",
+            model_provider="openai",
+            estimated_cost_usd=0.25,
+        )
+
+    with pytest.raises(ValueError, match="model identity"):
+        deterministic_event(
+            actor_type="agent",
+            model_name="controlled-model",
+            estimated_cost_usd=0.25,
+        )
+
+    event = deterministic_event(
+        actor_type="agent",
+        model_provider="openai",
+        model_name="controlled-model",
+        input_tokens=100,
+        output_tokens=25,
+        estimated_cost_usd=0.25,
+    )
+    assert event.model_provider == "openai"
+    assert event.model_name == "controlled-model"
 
 
 def test_evaluation_label_does_not_mutate_original_trajectory():
