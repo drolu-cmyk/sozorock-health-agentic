@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from cbcap_core.gateway import PublicEvidenceMeasure
+from cbcap_core.gateway import PublicEvidenceMeasure, SourceCoverageAssertion
 from cbcap_core.models import (
     BarrierFamily,
     GeographyKind,
@@ -9,7 +9,11 @@ from cbcap_core.models import (
     ReviewStatus,
     SourceVersionRef,
 )
-from cbcap_core.workforce import classify_workforce_measure, classify_workforce_measures
+from cbcap_core.workforce import (
+    assess_hpsa_source_coverage,
+    classify_workforce_measure,
+    classify_workforce_measures,
+)
 
 NOW = datetime(2026, 8, 22, 22, 0, tzinfo=timezone.utc)
 
@@ -93,6 +97,28 @@ def measure(
     )
 
 
+def coverage(key: str, status: str, records: int) -> SourceCoverageAssertion:
+    return SourceCoverageAssertion(
+        id=f"coverage:{key}",
+        source_id="hrsa-workforce",
+        source_version_id=source().source_version_id,
+        geography_id=county().id,
+        coverage_key=key,
+        status=status,
+        records_matched=records,
+        evaluated_at=NOW,
+        review_status=ReviewStatus.VERIFIED,
+    )
+
+
+def zero_record_coverage() -> list[SourceCoverageAssertion]:
+    return [
+        coverage("hpsa:primary_care", "complete_no_records", 0),
+        coverage("hpsa:dental", "complete_no_records", 0),
+        coverage("hpsa:mental_health", "complete_no_records", 0),
+    ]
+
+
 def test_whole_county_hpsa_requires_both_scope_and_source_confirmation():
     decision = classify_workforce_measure(measure())
     assert decision.status == "admitted"
@@ -164,3 +190,46 @@ def test_batch_keeps_scoped_designations_but_only_whole_county_creates_barrier()
     assert {item.scope for item in result.designations} == {"county", "facility"}
     assert len(result.county_barrier_observations) == 1
     assert result.county_barrier_observations[0].measure_id == county_designation.id
+
+
+def test_verified_zero_record_coverage_can_prove_no_hpsa_designations():
+    assessment = assess_hpsa_source_coverage(zero_record_coverage(), [])
+    assert assessment.complete is True
+    assert assessment.no_designations_reported is True
+    assert assessment.problem_codes == []
+
+
+def test_missing_hpsa_product_coverage_blocks_negative_conclusion():
+    assertions = zero_record_coverage()[:-1]
+    assessment = assess_hpsa_source_coverage(assertions, [])
+    assert assessment.complete is False
+    assert "hpsa:mental_health" in assessment.missing_keys
+
+
+def test_records_present_requires_an_admitted_designation_for_that_product():
+    assertions = zero_record_coverage()
+    assertions[0] = coverage("hpsa:primary_care", "complete_with_records", 1)
+    assessment = assess_hpsa_source_coverage(assertions, [])
+    assert assessment.complete is False
+    assert "coverage_records_without_admitted_designation:hpsa:primary_care" in assessment.problem_codes
+
+
+def test_zero_record_assertion_conflicts_with_admitted_designation():
+    decision = classify_workforce_measure(measure())
+    assert decision.designation is not None
+    assessment = assess_hpsa_source_coverage(
+        zero_record_coverage(),
+        [decision.designation],
+    )
+    assert assessment.complete is False
+    assert "coverage_zero_records_with_designation:hpsa:primary_care" in assessment.problem_codes
+
+
+def test_complete_coverage_with_primary_care_designation_is_consistent():
+    decision = classify_workforce_measure(measure())
+    assert decision.designation is not None
+    assertions = zero_record_coverage()
+    assertions[0] = coverage("hpsa:primary_care", "complete_with_records", 1)
+    assessment = assess_hpsa_source_coverage(assertions, [decision.designation])
+    assert assessment.complete is True
+    assert assessment.no_designations_reported is False
