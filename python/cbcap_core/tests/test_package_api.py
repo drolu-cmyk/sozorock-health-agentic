@@ -2,7 +2,7 @@ import cbcap_core
 from cbcap_core import decision_memory, institutional_memory
 
 
-def test_package_exports_governed_memory_trajectory_and_persistence_surface():
+def test_package_exports_governed_memory_trajectory_forecast_and_runtime_surface():
     required = {
         "DecisionMemoryRecord",
         "DecisionMemoryProposal",
@@ -24,6 +24,22 @@ def test_package_exports_governed_memory_trajectory_and_persistence_surface():
         "FundingPursuitDecisionRequest",
         "FundingPursuitDecisionResult",
         "build_funding_pursuit_decision",
+        "ForecastModelRegistration",
+        "ForecastBacktestCase",
+        "ForecastBacktestSummary",
+        "ForecastBacktestPolicy",
+        "BacktestPolicyEvaluation",
+        "ForecastModelApproval",
+        "ForecastModelExecutionDecision",
+        "summarize_backtests",
+        "evaluate_backtest_policy",
+        "authorize_forecast_model_execution",
+        "persist_forecast_model_registration",
+        "persist_forecast_backtest_cases",
+        "persist_forecast_backtest_summary",
+        "persist_forecast_backtest_policy",
+        "persist_backtest_policy_evaluation",
+        "persist_forecast_model_approval",
         "EvidenceGatewayHttpClient",
         "EvidenceGatewayTransportError",
         "EvidenceGatewayFetchResult",
