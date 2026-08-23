@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from time import perf_counter_ns
 from typing import Mapping
@@ -38,6 +39,15 @@ def _headers_lower(headers: Mapping[str, str]) -> dict[str, str]:
 
 def _elapsed_ms(started_ns: int) -> int:
     return max(0, (perf_counter_ns() - started_ns) // 1_000_000)
+
+
+def _validated_request_etag(etag: str) -> str:
+    candidate = etag.strip()
+    if candidate.startswith('"') and candidate.endswith('"') and len(candidate) > 2:
+        candidate = candidate[1:-1]
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", candidate):
+        raise ValueError("Evidence Gateway ETag must be a validated SHA-256 release hash")
+    return f'"{candidate}"'
 
 
 def package_release_hash(package_payload: Mapping[str, object]) -> str:
@@ -127,7 +137,7 @@ class EvidenceGatewayHttpClient:
             raise ValueError("Evidence Gateway endpoint authority is invalid")
         if parsed.query or parsed.fragment:
             raise ValueError("Evidence Gateway endpoint must not include query or fragment")
-        if not parsed.path.rstrip("/").endswith("/api/evidence/v1/gateway"):
+        if parsed.path.rstrip("/") != "/api/evidence/v1/gateway":
             raise ValueError("Evidence Gateway endpoint path is invalid")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
@@ -156,7 +166,7 @@ class EvidenceGatewayHttpClient:
             "User-Agent": self._user_agent,
         }
         if etag:
-            request_headers["If-None-Match"] = etag
+            request_headers["If-None-Match"] = _validated_request_etag(etag)
         request = Request(
             f"{self._endpoint}?{urlencode({'geoid': county_fips})}",
             method="GET",
@@ -173,8 +183,15 @@ class EvidenceGatewayHttpClient:
                     f"Evidence Gateway returned unexpected status {status}"
                 )
             content_length = headers.get("Content-Length") or headers.get("content-length")
-            if content_length and int(content_length) > self._max_response_bytes:
-                raise EvidenceGatewayTransportError("Evidence Gateway response is too large")
+            if content_length:
+                try:
+                    declared_length = int(content_length)
+                except (TypeError, ValueError) as exc:
+                    raise EvidenceGatewayTransportError(
+                        "Evidence Gateway Content-Length is invalid"
+                    ) from exc
+                if declared_length < 0 or declared_length > self._max_response_bytes:
+                    raise EvidenceGatewayTransportError("Evidence Gateway response is too large")
             body = response.read(self._max_response_bytes + 1)
             if len(body) > self._max_response_bytes:
                 raise EvidenceGatewayTransportError("Evidence Gateway response is too large")
