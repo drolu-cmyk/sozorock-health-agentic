@@ -57,11 +57,12 @@ class RunBudget(StrictModel):
 class BranchResult(StrictModel):
     id: str = Field(min_length=1)
     branch: BranchName
-    complete: bool = True
+    complete: bool
     conflict: bool = False
     evidence_ids: list[str] = Field(default_factory=list)
     model_tokens_used: int = Field(default=0, ge=0)
     model_cost_usd: float = Field(default=0.0, ge=0)
+    external_calls_used: int = Field(default=0, ge=0)
 
 
 class GraphAuditEvent(StrictModel):
@@ -76,7 +77,7 @@ def _merge_unique_records(
     existing: list[dict[str, Any]] | None,
     incoming: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """Reducer for replay-safe branch and audit records keyed by stable id."""
+    """Replay-safe reducer keyed by stable record id."""
 
     merged: dict[str, dict[str, Any]] = {}
     for record in [*(existing or []), *(incoming or [])]:
@@ -88,7 +89,7 @@ def _merge_unique_records(
 
 
 class CountyGraphState(TypedDict, total=False):
-    """Operational graph envelope around the canonical CountyRunState domain payload."""
+    """Operational graph envelope around canonical CountyRunState."""
 
     county_run: dict[str, Any]
     budget: dict[str, Any]
@@ -99,7 +100,7 @@ class CountyGraphState(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class CountyGraphContext:
-    """Immutable run context; never copied into authoritative public evidence."""
+    """Immutable runtime context. External prose is never graph control state."""
 
     simulate_source_conflict: bool = False
     untrusted_source_text: str | None = None
@@ -188,6 +189,29 @@ def route_after_establish(
     return list(REQUIRED_BRANCHES)
 
 
+def _evidence_ids_for_branch(run: CountyRunState, branch: BranchName) -> list[str]:
+    """Return authoritative typed evidence available to a research branch.
+
+    Phase 3 is intentionally code-first. Later adapters and specialist subgraphs
+    will hydrate these collections. Branches cannot declare success from prose,
+    prompts, or an empty result.
+    """
+
+    if branch == "public_evidence":
+        return [item.id for item in run.measures]
+    if branch == "planning_documents":
+        return [item.id for item in run.plan_documents]
+    if branch == "workforce_designations":
+        return [
+            item.id
+            for item in run.measures
+            if item.source_version.source_id.startswith(("hrsa", "ahrf"))
+        ]
+    if branch == "barrier_evidence":
+        return [item.id for item in run.barrier_observations]
+    raise ValueError(f"unknown branch: {branch}")
+
+
 def _branch_result(
     state: CountyGraphState,
     branch: BranchName,
@@ -195,18 +219,21 @@ def _branch_result(
     conflict: bool = False,
 ) -> CountyGraphState:
     run = _load_run(state)
+    evidence_ids = _evidence_ids_for_branch(run, branch)
     result = BranchResult(
         id=f"{run.run_id}:branch:{branch}",
         branch=branch,
-        complete=True,
+        complete=bool(evidence_ids),
         conflict=conflict,
-        evidence_ids=[],
+        evidence_ids=evidence_ids,
         model_tokens_used=0,
         model_cost_usd=0,
+        external_calls_used=0,
     )
+    action = "completed" if result.complete else "missing_evidence"
     return {
         "branch_results": [result.model_dump(mode="json")],
-        "audit_events": [_audit(run, branch, "completed")],
+        "audit_events": [_audit(run, branch, action)],
     }
 
 
@@ -214,8 +241,6 @@ def public_evidence_branch(
     state: CountyGraphState,
     runtime: Runtime[CountyGraphContext],
 ) -> CountyGraphState:
-    # External source text is deliberately ignored as control input. This node
-    # will eventually call a typed Evidence Gateway adapter.
     _ = _runtime_context(runtime).untrusted_source_text
     return _branch_result(state, "public_evidence")
 
@@ -265,11 +290,21 @@ def validate_join(state: CountyGraphState) -> CountyGraphState:
                 entity_type="evidence",
                 entity_ids=["branch:public_evidence", "branch:planning_documents"],
                 conflict_type="source_disagreement",
-                summary="Deterministic test conflict between parallel evidence branches.",
+                summary="Parallel evidence branches produced a source disagreement requiring review.",
                 blocking=True,
                 review_status=ReviewStatus.PROVISIONAL,
             )
         )
+
+    budget = _load_budget(state)
+    budget = RunBudget.model_validate(
+        {
+            **budget.model_dump(mode="python"),
+            "model_tokens_used": sum(item.model_tokens_used for item in results),
+            "model_cost_usd": sum(item.model_cost_usd for item in results),
+            "external_calls_used": sum(item.external_calls_used for item in results),
+        }
+    )
 
     run = _validated_run_copy(run, conflicts=conflicts)
     run = _with_flags(
@@ -278,10 +313,11 @@ def validate_join(state: CountyGraphState) -> CountyGraphState:
         evidence_validated=all_complete,
         source_conflict=has_conflict,
         blocking_conflict=has_conflict,
-        needs_human_review=has_conflict or not all_complete,
+        needs_human_review=has_conflict,
     )
     return {
         "county_run": _dump_run(run),
+        "budget": budget.model_dump(mode="json"),
         "audit_events": [_audit(run, "validate_join", "validated" if all_complete else "incomplete")],
     }
 
@@ -292,6 +328,7 @@ def policy_gate(state: CountyGraphState) -> CountyGraphState:
     budget_exceeded = budget.exceeded()
     policy_passed = (
         run.flags.geography_verified
+        and run.flags.required_sources_complete
         and run.flags.evidence_validated
         and not budget_exceeded
         and not run.flags.cancel_requested
@@ -437,8 +474,8 @@ def cancelled(state: CountyGraphState) -> CountyGraphState:
 def build_county_planning_graph(*, checkpointer: Any | None = None):
     """Compile the first CB-CAP County Planning Graph.
 
-    The default in-memory saver is for tests and local development only.
-    Production must provide a durable checkpointer such as PostgresSaver.
+    The default in-memory saver is only for tests and local development.
+    Production must inject a durable checkpointer, initially Postgres-backed.
     """
 
     retry_policy = RetryPolicy(max_attempts=3)
