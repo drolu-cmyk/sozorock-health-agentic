@@ -141,6 +141,13 @@ from .models import (
     TenantVisibility,
     WorkflowFlags,
 )
+from .observability import (
+    RunObservation,
+    RunObservationPhase,
+    build_initial_run_observation,
+    build_review_resume_observation,
+    persist_run_observation,
+)
 from .persistence import (
     PersistenceSettings,
     canonicalize_trajectory_event,
@@ -354,6 +361,8 @@ __all__ = [
     "ReviewDecision",
     "ReviewStatus",
     "RunBudget",
+    "RunObservation",
+    "RunObservationPhase",
     "RunStatus",
     "RuntimeActor",
     "RuntimeCapability",
@@ -392,7 +401,9 @@ __all__ = [
     "build_decision_workspace",
     "build_funding_pursuit_decision",
     "build_governed_evidence_graph",
+    "build_initial_run_observation",
     "build_planning_research_graph",
+    "build_review_resume_observation",
     "build_scenario_projection",
     "canonicalize_trajectory_event",
     "canonicalize_trajectory_events",
@@ -421,6 +432,7 @@ __all__ = [
     "persist_forecast_backtest_summary",
     "persist_forecast_model_approval",
     "persist_forecast_model_registration",
+    "persist_run_observation",
     "persist_trajectory_corrections",
     "persist_trajectory_evaluation_labels",
     "persist_trajectory_events",
