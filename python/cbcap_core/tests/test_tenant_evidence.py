@@ -167,13 +167,14 @@ def test_aggregate_rights_confirmed_document_is_eligible_for_human_review():
     assert document.reason_codes == []
 
 
-def test_private_evidence_rejects_phi_person_level_health_records_and_secrets():
+def test_private_evidence_rejects_phi_person_level_health_records_secrets_and_expired_retention():
     scenarios = [
         ({"contains_phi": True}, "phi_prohibited"),
         ({"contains_individual_health_records": True}, "individual_health_records_prohibited"),
         ({"contains_credentials_or_secrets": True}, "credentials_or_secrets_prohibited"),
         ({"aggregation_level": "person_level"}, "person_level_data_prohibited"),
         ({"usage_rights_confirmed": False}, "usage_rights_not_confirmed"),
+        ({"retention_until": date(2020, 1, 1)}, "retention_expired"),
     ]
     for updates, reason in scenarios:
         document = assess_tenant_evidence_submission(submission(**updates), actor=actor())
@@ -223,7 +224,11 @@ def test_rejected_or_quarantined_document_cannot_be_accepted():
         submission(stored_object=stored_object(media_type="application/octet-stream")),
         actor=actor(),
     )
-    for document in (rejected, quarantined):
+    expired = assess_tenant_evidence_submission(
+        submission(retention_until=date(2020, 1, 1)),
+        actor=actor(),
+    )
+    for document in (rejected, quarantined, expired):
         with pytest.raises(ValueError, match="only eligible"):
             review_tenant_evidence(
                 TenantEvidenceReviewRequest(
@@ -234,6 +239,23 @@ def test_rejected_or_quarantined_document_cannot_be_accepted():
                 ),
                 actor=actor(role="reviewer"),
             )
+
+
+def test_review_rechecks_retention_for_documents_that_expire_after_admission():
+    document = assess_tenant_evidence_submission(submission(), actor=actor())
+    expired_payload = document.model_dump(mode="python")
+    expired_payload["retention_until"] = date(2020, 1, 1)
+    expired_document = type(document).model_validate(expired_payload)
+    with pytest.raises(ValueError, match="expired tenant evidence"):
+        review_tenant_evidence(
+            TenantEvidenceReviewRequest(
+                document=expired_document,
+                decision="accepted",
+                reason_codes=["attempted_after_expiry"],
+                rationale="This should fail before an accepted review is created.",
+            ),
+            actor=actor(role="reviewer"),
+        )
 
 
 def test_tenant_evidence_persistence_sets_rls_scope_and_is_insert_only():
