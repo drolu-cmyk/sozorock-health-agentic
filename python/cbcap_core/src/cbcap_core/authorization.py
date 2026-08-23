@@ -14,6 +14,8 @@ RuntimeCapability = Literal[
     "resume_human_review",
     "record_workspace_proposal",
     "record_workspace_review",
+    "review_funding_fit",
+    "decide_funding_pursuit",
     "approve_publication",
     "manage_forecast_governance",
 ]
@@ -29,6 +31,7 @@ ROLE_CAPABILITIES: dict[RuntimeRole, frozenset[RuntimeCapability]] = {
         "read_workspace",
         "execute_county_run",
         "record_workspace_proposal",
+        "decide_funding_pursuit",
     }),
     "reviewer": frozenset({
         "read_workspace",
@@ -36,6 +39,8 @@ ROLE_CAPABILITIES: dict[RuntimeRole, frozenset[RuntimeCapability]] = {
         "resume_human_review",
         "record_workspace_proposal",
         "record_workspace_review",
+        "review_funding_fit",
+        "decide_funding_pursuit",
         "approve_publication",
     }),
     "admin": frozenset({
@@ -44,6 +49,8 @@ ROLE_CAPABILITIES: dict[RuntimeRole, frozenset[RuntimeCapability]] = {
         "resume_human_review",
         "record_workspace_proposal",
         "record_workspace_review",
+        "review_funding_fit",
+        "decide_funding_pursuit",
         "approve_publication",
         "manage_forecast_governance",
     }),
