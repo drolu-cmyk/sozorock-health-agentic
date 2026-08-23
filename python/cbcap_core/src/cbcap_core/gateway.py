@@ -16,6 +16,13 @@ from .models import (
 
 
 SHARED_EVIDENCE_CONTRACT_VERSION = "sozorock.evidence-gateway.v1"
+SourceCoverageStatus = Literal[
+    "complete_with_records",
+    "complete_no_records",
+    "partial",
+    "unavailable",
+    "stale",
+]
 
 
 class GeographyRelationshipRef(StrictModel):
@@ -37,6 +44,34 @@ class GeographyRelationshipRef(StrictModel):
     method: str = Field(min_length=1)
     caveat: str | None = None
     review_status: ReviewStatus
+
+
+class SourceCoverageAssertion(StrictModel):
+    """Verified evidence about whether a source query completed for one geography.
+
+    This is retrieval coverage, not a health or planning finding. A complete
+    zero-record assertion may support a negative source result only when the
+    specialist knows which coverage keys are required.
+    """
+
+    id: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+    source_version_id: str = Field(min_length=1)
+    geography_id: str = Field(min_length=1)
+    coverage_key: str = Field(min_length=1)
+    status: SourceCoverageStatus
+    records_matched: int = Field(ge=0)
+    evaluated_at: datetime
+    review_status: ReviewStatus
+    caveat: str | None = None
+
+    @model_validator(mode="after")
+    def validate_record_status(self) -> "SourceCoverageAssertion":
+        if self.status == "complete_with_records" and self.records_matched == 0:
+            raise ValueError("complete_with_records requires records_matched > 0")
+        if self.status == "complete_no_records" and self.records_matched != 0:
+            raise ValueError("complete_no_records requires records_matched == 0")
+        return self
 
 
 class PublicEvidenceMeasure(Measure):
@@ -79,20 +114,41 @@ class PublicEvidencePackage(StrictModel):
     metric_semantics: list[MetricSemantics] = Field(default_factory=list)
     measures: list[PublicEvidenceMeasure] = Field(default_factory=list)
     source_versions: list[SourceVersionRef] = Field(default_factory=list)
+    source_coverage: list[SourceCoverageAssertion] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def require_referenced_geographies(self) -> "PublicEvidencePackage":
+    def validate_references(self) -> "PublicEvidencePackage":
         geography_ids = {geography.id for geography in self.geographies}
-        missing = {
+        missing_geographies = {
             measure.geography.id
             for measure in self.measures
             if measure.geography.id not in geography_ids
         }
-        if missing:
+        if missing_geographies:
             raise ValueError(
                 "measures reference geographies not included in package: "
-                + ", ".join(sorted(missing))
+                + ", ".join(sorted(missing_geographies))
             )
+
+        source_versions = {item.source_version_id: item for item in self.source_versions}
+        coverage_ids: set[str] = set()
+        for assertion in self.source_coverage:
+            if assertion.id in coverage_ids:
+                raise ValueError(f"duplicate source coverage id: {assertion.id}")
+            coverage_ids.add(assertion.id)
+            if assertion.geography_id not in geography_ids:
+                raise ValueError(
+                    f"source coverage {assertion.id} references missing geography {assertion.geography_id}"
+                )
+            source_version = source_versions.get(assertion.source_version_id)
+            if source_version is None:
+                raise ValueError(
+                    f"source coverage {assertion.id} references missing source version {assertion.source_version_id}"
+                )
+            if source_version.source_id != assertion.source_id:
+                raise ValueError(
+                    f"source coverage {assertion.id} source_id does not match its source version"
+                )
         return self
 
 
@@ -115,6 +171,7 @@ PUBLIC_EVIDENCE_CORE_COMPATIBILITY = {
     "SourceVersion": "SourceVersionRef",
     "MeasureDefinition": "MetricSemantics",
     "MetricObservation": "PublicEvidenceMeasure",
+    "SourceCoverageAssertion": "SourceCoverageAssertion",
 }
 
 
