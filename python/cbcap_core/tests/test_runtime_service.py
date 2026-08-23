@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from cbcap_core.authorization import AuthorizationGrant, ROLE_CAPABILITIES
 from cbcap_core.gateway import EvidenceGatewayResponse
 from cbcap_core.gateway_transport import EvidenceGatewayFetchResult, package_release_hash
 from cbcap_core.graph import RunBudget
@@ -18,19 +19,47 @@ from cbcap_core.runtime_service import (
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evidence-gateway-v1.json"
 NOW = datetime(2026, 8, 22, 23, 50, tzinfo=timezone.utc)
+AUTH_ISSUED = datetime(2026, 1, 1, tzinfo=timezone.utc)
+AUTH_EXPIRES = datetime(2027, 1, 1, tzinfo=timezone.utc)
 TENANT = "tenant:albany-planning"
+COUNTY_ID = "county:36001"
+RUN_ID = "run:runtime:36001"
 
 
-def actor(*, role="planner", tenant_id=TENANT, actor_id="principal:planner") -> RuntimeActor:
-    return RuntimeActor(actor_id=actor_id, tenant_id=tenant_id, role=role)
+def actor(
+    *,
+    role="planner",
+    tenant_id=TENANT,
+    actor_id="principal:planner",
+    geography_ids=None,
+    run_ids=None,
+    capabilities=None,
+) -> RuntimeActor:
+    grant = AuthorizationGrant(
+        grant_id=f"grant:{actor_id}",
+        actor_id=actor_id,
+        tenant_id=tenant_id,
+        capabilities=capabilities or sorted(ROLE_CAPABILITIES[role]),
+        geography_ids=geography_ids if geography_ids is not None else [COUNTY_ID],
+        run_ids=run_ids if run_ids is not None else [RUN_ID],
+        issuer="test-identity-verifier",
+        issued_at=AUTH_ISSUED,
+        expires_at=AUTH_EXPIRES,
+    )
+    return RuntimeActor(
+        actor_id=actor_id,
+        tenant_id=tenant_id,
+        role=role,
+        authorization=grant,
+    )
 
 
 def run() -> CountyRunState:
     return CountyRunState(
-        run_id="run:runtime:36001",
+        run_id=RUN_ID,
         tenant_id=TENANT,
         county=GeographyRef(
-            id="county:36001",
+            id=COUNTY_ID,
             kind=GeographyKind.COUNTY,
             authority="census",
             authority_id="36001",
@@ -155,11 +184,11 @@ def test_cross_tenant_actor_is_rejected_before_gateway_or_graph_execution():
     assert graph.calls == []
 
 
-def test_read_only_actor_cannot_execute_before_network_access():
+def test_actor_without_execution_capability_cannot_reach_network():
     gateway = FakeGatewayClient()
     graph = FakeGraph()
 
-    with pytest.raises(PermissionError, match="cannot execute"):
+    with pytest.raises(PermissionError, match="execute_county_run"):
         execute_county_run(
             run(),
             RunBudget(max_external_calls=1),
@@ -169,6 +198,22 @@ def test_read_only_actor_cannot_execute_before_network_access():
             actor=actor(role="read_only", actor_id="principal:reader"),
         )
 
+    assert gateway.calls == []
+    assert graph.calls == []
+
+
+def test_actor_without_county_scope_cannot_reach_network_or_graph():
+    gateway = FakeGatewayClient()
+    graph = FakeGraph()
+    with pytest.raises(PermissionError, match="geography"):
+        execute_county_run(
+            run(),
+            RunBudget(max_external_calls=1),
+            gateway,  # type: ignore[arg-type]
+            graph,  # type: ignore[arg-type]
+            FakeConnection(),
+            actor=actor(geography_ids=["county:42029"]),
+        )
     assert gateway.calls == []
     assert graph.calls == []
 
@@ -216,10 +261,10 @@ def test_interrupted_execution_persists_partial_trajectory_before_review():
     assert len(result.trajectory_events) == 1
 
 
-def test_only_reviewer_or_admin_can_resume_human_review():
+def test_nonreview_roles_lack_resume_capability_before_checkpoint_access():
     graph = FakeGraph()
     for role in ("read_only", "analyst", "planner"):
-        with pytest.raises(PermissionError, match="cannot resume human review"):
+        with pytest.raises(PermissionError, match="resume_human_review"):
             resume_county_run_review(
                 run().run_id,
                 graph,  # type: ignore[arg-type]
@@ -228,6 +273,24 @@ def test_only_reviewer_or_admin_can_resume_human_review():
                 decision="approved",
                 reason="Attempted review without reviewer authority.",
             )
+    assert graph.calls == []
+
+
+def test_reviewer_without_specific_run_scope_cannot_touch_checkpoint():
+    graph = FakeGraph()
+    with pytest.raises(PermissionError, match="county run"):
+        resume_county_run_review(
+            run().run_id,
+            graph,  # type: ignore[arg-type]
+            FakeConnection(),
+            actor=actor(
+                role="reviewer",
+                actor_id="principal:reviewer-no-run",
+                run_ids=["run:other"],
+            ),
+            decision="approved",
+            reason="Attempted review outside run grant.",
+        )
     assert graph.calls == []
 
 
@@ -255,7 +318,7 @@ def test_review_resume_uses_authenticated_principal_identity_and_does_not_refetc
     assert len(result.trajectory_events) == 1
 
 
-def test_invalid_review_decision_fails_before_graph_resume():
+def test_invalid_review_decision_fails_before_authorization_or_graph_resume():
     graph = FakeGraph()
     with pytest.raises(ValueError, match="invalid review decision"):
         resume_county_run_review(
