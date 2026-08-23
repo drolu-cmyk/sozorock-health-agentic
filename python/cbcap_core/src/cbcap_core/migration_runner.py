@@ -25,6 +25,9 @@ RUNTIME_INSERT_TABLES = (
     "trajectory_event",
     "run_observation",
 )
+RUNTIME_UPDATE_COLUMNS = {
+    "county_run_identity": ("run_id",),
+}
 RuntimeTablePrivilege = Literal["SELECT", "INSERT"]
 
 
@@ -160,6 +163,36 @@ def _grant_table_privilege(
     connection.execute(statement.format(sql.Identifier(table_name), role))
 
 
+def _grant_runtime_lock_columns(
+    connection: psycopg.Connection,
+    *,
+    role: sql.Identifier,
+) -> None:
+    """Grant only the column-level UPDATE needed by PostgreSQL row locking.
+
+    PostgreSQL requires UPDATE on at least one selected column for SELECT FOR
+    UPDATE. The immutable run-identity table has a database trigger rejecting
+    every actual UPDATE or DELETE, so granting UPDATE(run_id) allows row locking
+    without granting table-level mutation authority.
+    """
+
+    for table_name, column_names in RUNTIME_UPDATE_COLUMNS.items():
+        relation = connection.execute(
+            "SELECT to_regclass(%s)",
+            (f"cbcap.{table_name}",),
+        ).fetchone()[0]
+        if relation is None:
+            raise RuntimeError(f"required runtime lock table cbcap.{table_name} is missing")
+        for column_name in column_names:
+            connection.execute(
+                sql.SQL("GRANT UPDATE ({}) ON TABLE cbcap.{} TO {}").format(
+                    sql.Identifier(column_name),
+                    sql.Identifier(table_name),
+                    role,
+                )
+            )
+
+
 def _ensure_runtime_role(
     connection: psycopg.Connection,
     *,
@@ -196,9 +229,8 @@ def _ensure_runtime_role(
 
     # The shared HTTP runtime receives no blanket table privileges. It can read
     # only the server-owned membership/run state needed to authorize requests,
-    # and can append only the four records produced by live run operations.
-    # Tenant evidence metadata, decision memory, publication authorization,
-    # funding and forecast governance remain inaccessible to this DB principal.
+    # append only records produced by live run operations, and hold a row lock
+    # on immutable run identity through one column-level UPDATE grant.
     connection.execute(
         sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA cbcap FROM {}").format(role)
     )
@@ -216,6 +248,7 @@ def _ensure_runtime_role(
             table_name=table_name,
             privilege="INSERT",
         )
+    _grant_runtime_lock_columns(connection, role=role)
 
     # New migration tables default to no access. A release must explicitly add
     # a table above after its runtime need and security boundary are reviewed.
