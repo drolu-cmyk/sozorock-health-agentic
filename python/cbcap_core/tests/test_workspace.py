@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -9,7 +9,10 @@ from cbcap_core.models import (
     CountyRunState,
     GeographyKind,
     GeographyRef,
+    Measure,
+    MetricSemantics,
     ReviewStatus,
+    SourceVersionRef,
     WorkflowFlags,
 )
 from cbcap_core.workspace import DecisionWorkspaceRequest, build_decision_workspace
@@ -28,6 +31,49 @@ def county() -> GeographyRef:
         state_fips="36",
         county_fips="36001",
         vintage="2025",
+        review_status=ReviewStatus.VERIFIED,
+    )
+
+
+def source() -> SourceVersionRef:
+    return SourceVersionRef(
+        source_id="cdc-places",
+        source_version_id="cdc-places:2026",
+        publisher="Centers for Disease Control and Prevention",
+        title="PLACES",
+        official_url="https://www.cdc.gov/places/",
+        release_label="2026",
+        release_date=date(2026, 8, 1),
+        retrieved_at=NOW,
+        content_hash="sha256:" + "a" * 64,
+        schema_version="places.v1",
+        review_status=ReviewStatus.VERIFIED,
+    )
+
+
+def measure(measure_id: str) -> Measure:
+    semantics = MetricSemantics(
+        id=f"metric:{measure_id}",
+        source_measure_id=measure_id.upper(),
+        name=measure_id.title(),
+        description="Controlled decision workspace metric.",
+        direction="adverse",
+        higher_value_meaning="adverse",
+        unit="percent",
+        universe="adults",
+        adjustment="modeled",
+        comparison_policy="higher_is_concern",
+        allowed_geography_kinds=[GeographyKind.COUNTY],
+        review_status=ReviewStatus.VERIFIED,
+    )
+    return Measure(
+        id=f"measure:{measure_id}",
+        semantics=semantics,
+        geography=county(),
+        source_version=source(),
+        geography_level="county",
+        value=12.0,
+        numeric_value=12.0,
         review_status=ReviewStatus.VERIFIED,
     )
 
@@ -73,16 +119,19 @@ def run(*, tenant_id="tenant-a", safe=False, provisional=False, conflict=False) 
         barrier("transportation", BarrierFamily.TRANSPORTATION_TRAVEL, ReviewStatus.VERIFIED),
         barrier("housing", BarrierFamily.HOUSING, ReviewStatus.VERIFIED),
     ]
+    measures = [measure("transportation"), measure("housing")]
     if provisional:
         barriers.append(
             barrier("food", BarrierFamily.FOOD_SECURITY, ReviewStatus.PROVISIONAL)
         )
+        measures.append(measure("food"))
     return CountyRunState(
         run_id="workspace-run",
         tenant_id=tenant_id,
         county=county(),
         requested_at=NOW,
         flags=flags,
+        measures=measures,
         barrier_observations=barriers,
         conflicts=conflicts,
     )
@@ -97,11 +146,13 @@ def request(county_run: CountyRunState, *, role="analyst", actor_tenant_id="tena
     )
 
 
-def test_workspace_uses_verified_barriers_for_authoritative_matrix():
+def test_workspace_uses_evidence_graph_for_authoritative_matrix():
     workspace = build_decision_workspace(request(run()))
     assert workspace.view.status == "ready"
     assert workspace.view.kind == "barrier_matrix"
-    assert set(workspace.authoritative_entity_ids) == {"transportation", "housing"}
+    assert workspace.evidence_graph_status == "ready"
+    assert workspace.authoritative_relationship_count >= 4
+    assert {"transportation", "housing"}.issubset(set(workspace.authoritative_entity_ids))
     assert workspace.evidence_status.verified_barriers == 2
 
 
@@ -126,8 +177,9 @@ def test_reviewer_can_resolve_blocking_conflict_but_cannot_auto_publish_it():
     assert workspace.publication_state == "review_required"
 
 
-def test_reviewer_can_approve_only_after_run_is_safe_to_publish():
+def test_reviewer_can_approve_only_after_run_and_graph_are_safe():
     workspace = build_decision_workspace(request(run(safe=True), role="reviewer"))
+    assert workspace.evidence_graph_status == "ready"
     assert workspace.publication_state == "safe_not_approved"
     assert "approve_publication" in workspace.allowed_actions
 
@@ -137,3 +189,21 @@ def test_cross_tenant_workspace_access_fails_closed():
         build_decision_workspace(
             request(run(tenant_id="tenant-a"), actor_tenant_id="tenant-b")
         )
+
+
+def test_safe_flag_does_not_override_graph_integrity_failure():
+    broken = run(safe=True)
+    payload = broken.model_dump(mode="python")
+    payload["barrier_observations"][0] = payload["barrier_observations"][0].model_copy(
+        update={"measure_id": "measure:missing"}
+    )
+    broken = CountyRunState.model_validate(payload)
+
+    workspace = build_decision_workspace(request(broken, role="reviewer"))
+    assert workspace.evidence_graph_status == "blocked"
+    assert workspace.publication_state == "review_required"
+    assert "approve_publication" not in workspace.allowed_actions
+    assert any(
+        item.code == "evidence_graph_relationship_reference_missing"
+        for item in workspace.blockers
+    )
