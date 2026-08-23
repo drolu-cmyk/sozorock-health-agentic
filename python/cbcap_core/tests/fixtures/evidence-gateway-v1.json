@@ -1,0 +1,135 @@
+{
+  "contract_version": "sozorock.evidence-gateway.v1",
+  "release_id": "cross-repo-fixture-v1",
+  "generated_at": "2026-08-22T22:00:00Z",
+  "geographies": [
+    {
+      "id": "county:36001",
+      "kind": "county",
+      "authority": "census",
+      "authority_id": "36001",
+      "name": "Albany County, New York",
+      "display_name": "Albany County, New York",
+      "state_fips": "36",
+      "county_fips": "36001",
+      "vintage": "2025",
+      "valid_from": null,
+      "valid_to": null,
+      "review_status": "verified",
+      "caveat": "Evaluation fixture: geography identity is real; metric values are controlled policy-test inputs and must not be published."
+    }
+  ],
+  "geography_relationships": [],
+  "metric_semantics": [
+    {
+      "id": "measure:adverse-eval",
+      "source_measure_id": "ADVERSE_EVAL",
+      "name": "Controlled adverse-direction measure",
+      "description": "Policy fixture used to test response-fit safeguards; not a publishable health statistic.",
+      "direction": "adverse",
+      "higher_value_meaning": "adverse",
+      "unit": "percent",
+      "universe": "Evaluation fixture",
+      "adjustment": "modeled",
+      "comparison_policy": "higher_is_concern",
+      "trendable": true,
+      "forecastable": false,
+      "aggregatable": false,
+      "allowed_geography_kinds": [
+        "county"
+      ],
+      "allowed_visualizations": [
+        "choropleth",
+        "ranked_dot",
+        "distribution"
+      ],
+      "review_status": "verified"
+    }
+  ],
+  "measures": [
+    {
+      "id": "observation:albany-adverse",
+      "semantics": {
+        "id": "measure:adverse-eval",
+        "source_measure_id": "ADVERSE_EVAL",
+        "name": "Controlled adverse-direction measure",
+        "description": "Policy fixture used to test response-fit safeguards; not a publishable health statistic.",
+        "direction": "adverse",
+        "higher_value_meaning": "adverse",
+        "unit": "percent",
+        "universe": "Evaluation fixture",
+        "adjustment": "modeled",
+        "comparison_policy": "higher_is_concern",
+        "trendable": true,
+        "forecastable": false,
+        "aggregatable": false,
+        "allowed_geography_kinds": [
+          "county"
+        ],
+        "allowed_visualizations": [
+          "choropleth",
+          "ranked_dot",
+          "distribution"
+        ],
+        "review_status": "verified"
+      },
+      "geography": {
+        "id": "county:36001",
+        "kind": "county",
+        "authority": "census",
+        "authority_id": "36001",
+        "name": "Albany County, New York",
+        "display_name": "Albany County, New York",
+        "state_fips": "36",
+        "county_fips": "36001",
+        "vintage": "2025",
+        "valid_from": null,
+        "valid_to": null,
+        "review_status": "verified",
+        "caveat": "Evaluation fixture: geography identity is real; metric values are controlled policy-test inputs and must not be published."
+      },
+      "source_version": {
+        "source_id": "cdc-places",
+        "source_version_id": "source-version:cdc-places-current-eval",
+        "publisher": "Centers for Disease Control and Prevention",
+        "title": "PLACES: Local Data for Better Health",
+        "official_url": "https://www.cdc.gov/places/",
+        "release_label": "Controlled current-evidence evaluation fixture",
+        "release_date": "2025-12-04",
+        "data_period_start": "2023-01-01",
+        "data_period_end": "2023-12-31",
+        "retrieved_at": "2026-07-22T16:00:00Z",
+        "stale_after": "2027-01-01T00:00:00Z",
+        "content_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "schema_version": "evaluation-observations.v1",
+        "review_status": "verified"
+      },
+      "value": 14,
+      "numeric_value": 14,
+      "confidence_low": null,
+      "confidence_high": null,
+      "margin_of_error": null,
+      "data_period_start": "2023-01-01",
+      "data_period_end": "2023-12-31",
+      "review_status": "verified"
+    }
+  ],
+  "source_versions": [
+    {
+      "source_id": "cdc-places",
+      "source_version_id": "source-version:cdc-places-current-eval",
+      "publisher": "Centers for Disease Control and Prevention",
+      "title": "PLACES: Local Data for Better Health",
+      "official_url": "https://www.cdc.gov/places/",
+      "release_label": "Controlled current-evidence evaluation fixture",
+      "release_date": "2025-12-04",
+      "data_period_start": "2023-01-01",
+      "data_period_end": "2023-12-31",
+      "retrieved_at": "2026-07-22T16:00:00Z",
+      "stale_after": "2027-01-01T00:00:00Z",
+      "content_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "schema_version": "evaluation-observations.v1",
+      "review_status": "verified"
+    }
+  ]
+}
