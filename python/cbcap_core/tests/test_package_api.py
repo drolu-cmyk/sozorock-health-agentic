@@ -49,6 +49,8 @@ def test_package_exports_governed_memory_trajectory_forecast_and_runtime_surface
         "CountyRunPreparationError",
         "prepare_county_graph_run",
         "CountyRunExecution",
+        "RuntimeActor",
+        "RuntimeRole",
         "execute_county_run",
         "execute_county_run_from_env",
         "resume_county_run_review",
