@@ -13,7 +13,11 @@ from .barriers import (
     summarize_barriers,
 )
 from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
-from .evidence_adapter import hydrate_public_evidence, select_county_public_evidence
+from .evidence_adapter import (
+    hydrate_public_evidence,
+    select_county_public_evidence,
+    select_county_source_coverage,
+)
 from .evidence_graph import (
     EvidenceGraphEdge,
     EvidenceGraphIntegrityIssue,
@@ -46,6 +50,7 @@ from .gateway import (
     GeographyRelationshipRef,
     PublicEvidenceMeasure,
     PublicEvidencePackage,
+    SourceCoverageAssertion,
     assert_public_package,
 )
 from .graph import (
@@ -126,11 +131,24 @@ from .visualization import (
     select_visualization,
 )
 from .workforce import (
+    REQUIRED_HPSA_COVERAGE_KEYS,
     WorkforceAdmissionDecision,
     WorkforceClassificationResult,
+    WorkforceCoverageAssessment,
     WorkforceDesignation,
+    assess_hpsa_source_coverage,
     classify_workforce_measure,
     classify_workforce_measures,
+)
+from .workforce_capacity import (
+    AHRF_CAPACITY_RULES,
+    AhrfCapacityRule,
+    CapacityAdmissionDecision,
+    WorkforceCapacityObservation,
+    WorkforceCapacityResult,
+    classify_ahrf_capacity_measure,
+    classify_ahrf_capacity_measures,
+    find_ahrf_rule,
 )
 from .workspace import (
     DecisionWorkspaceContract,
@@ -144,8 +162,11 @@ __all__ = [
     "AgentRun",
     "AgentRunStatus",
     "ApprovedPlanningSource",
+    "AHRF_CAPACITY_RULES",
+    "AhrfCapacityRule",
     "BARRIER_DEFINITIONS",
     "INITIAL_BARRIER_RULES",
+    "REQUIRED_HPSA_COVERAGE_KEYS",
     "BarrierAdmissionDecision",
     "BarrierClassificationResult",
     "BarrierCooccurrence",
@@ -157,6 +178,7 @@ __all__ = [
     "BarrierPattern",
     "BranchPayload",
     "BranchResult",
+    "CapacityAdmissionDecision",
     "CheckpointSettings",
     "CitationLocator",
     "Confidence",
@@ -220,13 +242,17 @@ __all__ = [
     "RunStatus",
     "ScenarioAssumption",
     "ScenarioProjectionDecision",
+    "SourceCoverageAssertion",
     "SourceDocument",
     "SourceVersionRef",
     "TenantVisibility",
     "VisualizationDecision",
     "VisualizationRequest",
     "WorkforceAdmissionDecision",
+    "WorkforceCapacityObservation",
+    "WorkforceCapacityResult",
     "WorkforceClassificationResult",
+    "WorkforceCoverageAssessment",
     "WorkforceDesignation",
     "WorkflowFlags",
     "WorkspaceBlocker",
@@ -235,6 +261,7 @@ __all__ = [
     "SHARED_EVIDENCE_CONTRACT_VERSION",
     "admit_planning_evidence",
     "assert_public_package",
+    "assess_hpsa_source_coverage",
     "authorize_forecast",
     "build_county_planning_graph",
     "build_decision_workspace",
@@ -242,11 +269,14 @@ __all__ = [
     "build_planning_research_graph",
     "build_scenario_projection",
     "checkpoint_thread_config",
+    "classify_ahrf_capacity_measure",
+    "classify_ahrf_capacity_measures",
     "classify_barrier_measure",
     "classify_barrier_measures",
     "classify_workforce_measure",
     "classify_workforce_measures",
     "evaluate_funding_fit",
+    "find_ahrf_rule",
     "find_barrier_rule",
     "hydrate_public_evidence",
     "initial_graph_state",
@@ -254,6 +284,7 @@ __all__ = [
     "research_candidates",
     "run_planning_pipeline",
     "select_county_public_evidence",
+    "select_county_source_coverage",
     "select_planning_view",
     "select_visualization",
     "summarize_barriers",
