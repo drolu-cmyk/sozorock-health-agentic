@@ -207,3 +207,21 @@ def test_initial_evaluation_counties_fit_canonical_state(
 
     assert state.county.county_fips == county_fips
     assert state.schema_version == "cbcap.county-run.v1"
+
+
+def test_canonical_public_fixture_validates_unchanged():
+    from pathlib import Path
+
+    fixture_path = Path(__file__).parent / "fixtures" / "evidence-gateway-v1.json"
+    package = PublicEvidencePackage.model_validate_json(
+        fixture_path.read_text(encoding="utf-8")
+    )
+
+    assert package.release_id == "cross-repo-fixture-v1"
+    assert package.measures[0].numeric_value == 14
+    assert package.measures[0].source_version.source_id == "cdc-places"
+    assert package.metric_semantics[0].allowed_visualizations == [
+        "choropleth",
+        "ranked_dot",
+        "distribution",
+    ]
