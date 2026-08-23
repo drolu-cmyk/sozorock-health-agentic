@@ -13,6 +13,15 @@ from .barriers import (
     summarize_barriers,
 )
 from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
+from .decision_memory import (
+    DecisionMemoryProposal,
+    DecisionMemoryQuery,
+    DecisionMemoryRecord,
+    DecisionMemoryWriteRequest,
+    build_decision_memory,
+    query_decision_memory,
+    supersede_decision_memory,
+)
 from .evidence_adapter import (
     hydrate_public_evidence,
     select_county_public_evidence,
@@ -41,6 +50,12 @@ from .funding import (
     FundingTrajectoryEvent,
     evaluate_funding_fit,
 )
+from .funding_decision import (
+    FundingPursuitDecisionRequest,
+    FundingPursuitDecisionResult,
+    build_funding_pursuit_decision,
+)
+from .funding_review import FundingFitReviewResult, apply_funding_fit_review
 from .gateway import (
     PUBLIC_EVIDENCE_CORE_COMPATIBILITY,
     SHARED_EVIDENCE_CONTRACT_VERSION,
@@ -96,6 +111,17 @@ from .models import (
     TenantVisibility,
     WorkflowFlags,
 )
+from .persistence import (
+    PersistenceSettings,
+    canonicalize_trajectory_event,
+    canonicalize_trajectory_events,
+    persist_county_graph_trajectory,
+    persist_decision_memory,
+    persist_trajectory_corrections,
+    persist_trajectory_evaluation_labels,
+    persist_trajectory_events,
+    postgres_connection,
+)
 from .planning_evidence import (
     PlanningDocumentPage,
     PlanningEvidenceAdmissionRequest,
@@ -120,16 +146,9 @@ from .planning_research import (
     build_planning_research_graph,
     research_candidates,
 )
-from .planning_views import (
-    PlanningViewDecision,
-    PlanningViewRequest,
-    select_planning_view,
-)
-from .visualization import (
-    VisualizationDecision,
-    VisualizationRequest,
-    select_visualization,
-)
+from .planning_views import PlanningViewDecision, PlanningViewRequest, select_planning_view
+from .trajectory import TrajectoryCorrection, TrajectoryEvaluationLabel, TrajectoryEvent
+from .visualization import VisualizationDecision, VisualizationRequest, select_visualization
 from .workforce import (
     REQUIRED_HPSA_COVERAGE_KEYS,
     WorkforceAdmissionDecision,
@@ -166,7 +185,9 @@ __all__ = [
     "AhrfCapacityRule",
     "BARRIER_DEFINITIONS",
     "INITIAL_BARRIER_RULES",
+    "PUBLIC_EVIDENCE_CORE_COMPATIBILITY",
     "REQUIRED_HPSA_COVERAGE_KEYS",
+    "SHARED_EVIDENCE_CONTRACT_VERSION",
     "BarrierAdmissionDecision",
     "BarrierClassificationResult",
     "BarrierCooccurrence",
@@ -186,6 +207,10 @@ __all__ = [
     "CountyGraphContext",
     "CountyGraphState",
     "CountyRunState",
+    "DecisionMemoryProposal",
+    "DecisionMemoryQuery",
+    "DecisionMemoryRecord",
+    "DecisionMemoryWriteRequest",
     "DecisionWorkspaceContract",
     "DecisionWorkspaceRequest",
     "DocumentTrust",
@@ -207,7 +232,10 @@ __all__ = [
     "FundingEvaluationRequest",
     "FundingEvaluationResult",
     "FundingFit",
+    "FundingFitReviewResult",
     "FundingOpportunity",
+    "FundingPursuitDecisionRequest",
+    "FundingPursuitDecisionResult",
     "FundingTrajectoryEvent",
     "GeographyKind",
     "GeographyRef",
@@ -216,6 +244,7 @@ __all__ = [
     "Measure",
     "MetricSemantics",
     "Organization",
+    "PersistenceSettings",
     "PlanDocument",
     "PlanPriority",
     "PlanningDocumentCandidate",
@@ -246,6 +275,9 @@ __all__ = [
     "SourceDocument",
     "SourceVersionRef",
     "TenantVisibility",
+    "TrajectoryCorrection",
+    "TrajectoryEvaluationLabel",
+    "TrajectoryEvent",
     "VisualizationDecision",
     "VisualizationRequest",
     "WorkforceAdmissionDecision",
@@ -257,17 +289,20 @@ __all__ = [
     "WorkflowFlags",
     "WorkspaceBlocker",
     "WorkspaceEvidenceStatus",
-    "PUBLIC_EVIDENCE_CORE_COMPATIBILITY",
-    "SHARED_EVIDENCE_CONTRACT_VERSION",
     "admit_planning_evidence",
+    "apply_funding_fit_review",
     "assert_public_package",
     "assess_hpsa_source_coverage",
     "authorize_forecast",
     "build_county_planning_graph",
+    "build_decision_memory",
     "build_decision_workspace",
+    "build_funding_pursuit_decision",
     "build_governed_evidence_graph",
     "build_planning_research_graph",
     "build_scenario_projection",
+    "canonicalize_trajectory_event",
+    "canonicalize_trajectory_events",
     "checkpoint_thread_config",
     "classify_ahrf_capacity_measure",
     "classify_ahrf_capacity_measures",
@@ -280,7 +315,14 @@ __all__ = [
     "find_barrier_rule",
     "hydrate_public_evidence",
     "initial_graph_state",
+    "persist_county_graph_trajectory",
+    "persist_decision_memory",
+    "persist_trajectory_corrections",
+    "persist_trajectory_evaluation_labels",
+    "persist_trajectory_events",
     "postgres_checkpointer",
+    "postgres_connection",
+    "query_decision_memory",
     "research_candidates",
     "run_planning_pipeline",
     "select_county_public_evidence",
@@ -288,4 +330,5 @@ __all__ = [
     "select_planning_view",
     "select_visualization",
     "summarize_barriers",
+    "supersede_decision_memory",
 ]
