@@ -208,6 +208,7 @@ def assess_tenant_evidence_submission(
     if not request.stored_object.key.startswith(expected_prefix):
         raise ValueError("tenant evidence object key does not match authenticated tenant partition")
 
+    submitted_at = datetime.now(timezone.utc)
     reasons: list[str] = []
     state: TenantEvidenceAdmissionState = "eligible_for_review"
 
@@ -229,8 +230,10 @@ def assess_tenant_evidence_submission(
     if request.contains_credentials_or_secrets:
         state = "rejected"
         reasons.append("credentials_or_secrets_prohibited")
+    if request.retention_until is not None and request.retention_until < submitted_at.date():
+        state = "rejected"
+        reasons.append("retention_expired")
 
-    submitted_at = datetime.now(timezone.utc)
     return TenantEvidenceDocument(
         id=_submission_id(actor.tenant_id, request),
         tenant_id=actor.tenant_id,
@@ -269,12 +272,18 @@ def review_tenant_evidence(
         run_id=document.submitted_in_run_id,
     )
 
+    reviewed_at = datetime.now(timezone.utc)
     if request.decision == "accepted" and document.admission_state != "eligible_for_review":
         raise ValueError("only eligible tenant evidence can be accepted")
+    if (
+        request.decision == "accepted"
+        and document.retention_until is not None
+        and document.retention_until < reviewed_at.date()
+    ):
+        raise ValueError("expired tenant evidence cannot be accepted")
     if request.decision == "needs_revision" and document.admission_state == "rejected":
         raise ValueError("rejected tenant evidence cannot be converted to needs_revision")
 
-    reviewed_at = datetime.now(timezone.utc)
     return TenantEvidenceReview(
         id=_review_id(document, actor, request, reviewed_at),
         document_id=document.id,
