@@ -23,6 +23,7 @@ DROP TRIGGER IF EXISTS county_run_state_append_only ON cbcap.county_run_state_ve
 DROP TRIGGER IF EXISTS county_run_state_guard ON cbcap.county_run_state_version;
 DROP TRIGGER IF EXISTS county_run_identity_append_only ON cbcap.county_run_identity;
 DROP TRIGGER IF EXISTS workspace_membership_append_only ON cbcap.workspace_membership_event;
+DROP TRIGGER IF EXISTS workspace_membership_guard ON cbcap.workspace_membership_event;
 
 DROP POLICY IF EXISTS county_run_state_tenant_isolation ON cbcap.county_run_state_version;
 DROP POLICY IF EXISTS county_run_identity_tenant_isolation ON cbcap.county_run_identity;
@@ -33,6 +34,7 @@ DROP TABLE IF EXISTS cbcap.county_run_identity;
 DROP TABLE IF EXISTS cbcap.workspace_membership_event;
 
 DROP FUNCTION IF EXISTS cbcap.validate_county_run_state_version();
+DROP FUNCTION IF EXISTS cbcap.validate_workspace_membership_event();
 DROP FUNCTION IF EXISTS cbcap.prevent_runtime_registry_mutation();
 
 COMMIT;
