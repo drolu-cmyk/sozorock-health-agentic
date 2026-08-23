@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  slim-runner-smoke:
-    runs-on: ubuntu-slim
+  hosted-runner-smoke:
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Prove hosted runner assignment
