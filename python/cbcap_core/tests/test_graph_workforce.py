@@ -48,7 +48,7 @@ def source(source_id: str) -> SourceVersionRef:
     )
 
 
-def semantics(source_measure_id: str, *, contextual=False) -> MetricSemantics:
+def semantics(source_measure_id: str, *, contextual=False, unit=None) -> MetricSemantics:
     return MetricSemantics(
         id=f"metric:{source_measure_id.lower()}",
         source_measure_id=source_measure_id,
@@ -56,7 +56,7 @@ def semantics(source_measure_id: str, *, contextual=False) -> MetricSemantics:
         description="Controlled graph workforce fixture.",
         direction="contextual" if contextual else "adverse",
         higher_value_meaning="context_dependent" if contextual else "adverse",
-        unit="designation" if contextual else "percent",
+        unit=unit or ("designation" if contextual else "percent"),
         universe="controlled fixture",
         adjustment="not_applicable" if contextual else "modeled",
         comparison_policy="context_only" if contextual else "higher_is_concern",
@@ -103,10 +103,39 @@ def hpsa_measure(*, scope="county", whole_county=True) -> PublicEvidenceMeasure:
     )
 
 
-def package(*, hpsa: PublicEvidenceMeasure | None) -> PublicEvidencePackage:
+def ahrf_measure() -> PublicEvidenceMeasure:
+    ahrf_source = source("ahrf-workforce").model_copy(
+        update={
+            "source_version_id": "ahrf-workforce:2024-2025",
+            "release_label": "2024-2025",
+            "release_date": date(2025, 12, 18),
+        }
+    )
+    return PublicEvidenceMeasure(
+        id="measure:ahrf:primary-care-physicians:36001",
+        semantics=semantics(
+            "phys_nf_prim_care_pc_exc_rsdt_23",
+            contextual=True,
+            unit="count",
+        ),
+        geography=county(),
+        source_version=ahrf_source,
+        geography_level="county",
+        value=125.0,
+        numeric_value=125.0,
+        data_period_start=date(2023, 1, 1),
+        data_period_end=date(2023, 12, 31),
+        source_metadata={"variableYear": 2023},
+        review_status=ReviewStatus.VERIFIED,
+    )
+
+
+def package(*, hpsa: PublicEvidenceMeasure | None, include_ahrf=False) -> PublicEvidencePackage:
     measures = [transportation_measure()]
     if hpsa is not None:
         measures.append(hpsa)
+    if include_ahrf:
+        measures.append(ahrf_measure())
     versions = {item.source_version.source_version_id: item.source_version for item in measures}
     return PublicEvidencePackage(
         release_id="controlled-workforce-release",
@@ -139,6 +168,14 @@ def run() -> CountyRunState:
 
 def config(thread_id: str) -> dict:
     return {"configurable": {"thread_id": thread_id}}
+
+
+def workforce_payload(result: dict) -> BranchPayload:
+    return next(
+        BranchPayload.model_validate(item)
+        for item in result["branch_payloads"]
+        if item["branch"] == "workforce_designations"
+    )
 
 
 def test_whole_county_hpsa_enters_parent_graph_as_workforce_barrier():
@@ -174,32 +211,55 @@ def test_facility_hpsa_remains_scoped_context_and_never_becomes_county_barrier()
     assert BarrierFamily.WORKFORCE not in {
         item.barrier_family for item in final.barrier_observations
     }
-    workforce_payload = next(
-        BranchPayload.model_validate(item)
-        for item in result["branch_payloads"]
-        if item["branch"] == "workforce_designations"
-    )
-    assert len(workforce_payload.workforce_designations) == 1
-    assert workforce_payload.workforce_designations[0].scope == "facility"
+    payload = workforce_payload(result)
+    assert len(payload.workforce_designations) == 1
+    assert payload.workforce_designations[0].scope == "facility"
     assert any(
         item["stage"] == "workforce_scope" and item["outcome"] == "scoped_context"
         for item in result["trajectory_events"]
     )
 
 
-def test_missing_hrsa_observations_blocks_graph_instead_of_claiming_no_shortage():
+def test_ahrf_capacity_is_retained_separately_from_hpsa_shortage():
     graph = build_county_planning_graph()
     result = graph.invoke(
         initial_graph_state(run()),
-        config=config("missing-hrsa"),
+        config=config("hpsa-plus-ahrf"),
         context=CountyGraphContext(
-            public_evidence_package=package(hpsa=None).model_dump(mode="json")
+            public_evidence_package=package(
+                hpsa=hpsa_measure(),
+                include_ahrf=True,
+            ).model_dump(mode="json")
+        ),
+    )
+    final = CountyRunState.model_validate(result["county_run"])
+    assert final.status == RunStatus.COMPLETED
+    payload = workforce_payload(result)
+    assert len(payload.workforce_capacity_observations) == 1
+    capacity = payload.workforce_capacity_observations[0]
+    assert capacity.kind == "primary_care_physicians"
+    assert capacity.reference_year == 2023
+    assert capacity.source_version_id == "ahrf-workforce:2024-2025"
+
+
+def test_ahrf_capacity_cannot_substitute_for_missing_hpsa_coverage():
+    graph = build_county_planning_graph()
+    result = graph.invoke(
+        initial_graph_state(run()),
+        config=config("ahrf-without-hrsa"),
+        context=CountyGraphContext(
+            public_evidence_package=package(
+                hpsa=None,
+                include_ahrf=True,
+            ).model_dump(mode="json")
         ),
     )
     final = CountyRunState.model_validate(result["county_run"])
     assert final.status == RunStatus.BLOCKED
     assert final.flags.required_sources_complete is False
     assert final.flags.safe_to_publish is False
+    payload = workforce_payload(result)
+    assert len(payload.workforce_capacity_observations) == 1
     assert any(
         "hrsa_observations_absent_source_coverage_not_proven" in item["reason_codes"]
         for item in result["trajectory_events"]
