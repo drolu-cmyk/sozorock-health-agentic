@@ -12,6 +12,7 @@ import psycopg
 
 _ALLOWED_ROLES = frozenset({"read_only", "analyst", "planner", "reviewer", "admin"})
 _ALLOWED_DECISIONS = frozenset({"granted", "revoked"})
+_PRINCIPAL_KEY_PATTERN = re.compile(r"^principal:sha256:[0-9a-f]{64}$")
 
 
 def _required_env(name: str) -> str:
@@ -53,6 +54,18 @@ def _principal_key(*, issuer: str, subject: str) -> str:
         raise ValueError("verified Cognito issuer and subject are required")
     digest = hashlib.sha256(f"{issuer}\x00{subject}".encode("utf-8")).hexdigest()
     return f"principal:sha256:{digest}"
+
+
+def _principal_key_from_env() -> str:
+    opaque = os.getenv("CB_CAP_MEMBERSHIP_PRINCIPAL_KEY", "").strip()
+    if opaque:
+        if not _PRINCIPAL_KEY_PATTERN.fullmatch(opaque):
+            raise ValueError("CB_CAP_MEMBERSHIP_PRINCIPAL_KEY is invalid")
+        return opaque
+    return _principal_key(
+        issuer=_required_env("CB_CAP_MEMBERSHIP_PRINCIPAL_ISSUER"),
+        subject=_required_env("CB_CAP_MEMBERSHIP_PRINCIPAL_SUBJECT"),
+    )
 
 
 def _geography_ids(raw: str, *, decision: str) -> list[str]:
@@ -104,17 +117,13 @@ class MembershipAdminRequest:
         recorded_by = _required_env("CB_CAP_MEMBERSHIP_RECORDED_BY")
         if len(recorded_by) > 200:
             raise ValueError("CB_CAP_MEMBERSHIP_RECORDED_BY is too long")
-        principal_key = _principal_key(
-            issuer=_required_env("CB_CAP_MEMBERSHIP_PRINCIPAL_ISSUER"),
-            subject=_required_env("CB_CAP_MEMBERSHIP_PRINCIPAL_SUBJECT"),
-        )
         geographies = _geography_ids(
             os.getenv("CB_CAP_MEMBERSHIP_GEOGRAPHY_IDS", ""),
             decision=decision,
         )
         return cls(
             tenant_id=tenant_id,
-            principal_key=principal_key,
+            principal_key=_principal_key_from_env(),
             decision=decision,
             role=role,
             geography_ids=tuple(geographies),
