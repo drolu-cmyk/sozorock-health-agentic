@@ -61,17 +61,24 @@ def checkpoint_thread_config(run_id: str, *, tenant_id: str | None = None) -> di
 def postgres_checkpointer(
     settings: CheckpointSettings | None = None,
     *,
+    tenant_id: str,
     setup: bool = False,
 ):
-    """Yield an encrypted, strict-deserialization PostgresSaver for production.
+    """Yield an encrypted, tenant-scoped PostgresSaver for production.
 
-    The production extra must be installed. No in-memory fallback is performed.
-    Database schema creation is explicit through `setup=True` so application
-    processes do not silently mutate infrastructure on every startup.
+    LangGraph's synchronous `from_conn_string` helper does not accept a custom
+    serializer. The production path therefore opens the supported psycopg
+    connection directly and passes the encrypted serializer to the
+    `PostgresSaver` constructor. Tenant scope is set on the checkpoint
+    connection before any graph read or write so database RLS can independently
+    enforce the same tenant boundary as the application state tables.
     """
 
     resolved = settings or CheckpointSettings.from_env()
     resolved.validate()
+    tenant_id = tenant_id.strip()
+    if not tenant_id:
+        raise ValueError("tenant_id is required for durable checkpoints")
 
     # Restrict checkpoint deserialization to known-safe msgpack types. This is
     # defense in depth if the checkpoint database is ever compromised.
@@ -80,6 +87,8 @@ def postgres_checkpointer(
     try:
         from langgraph.checkpoint.postgres import PostgresSaver
         from langgraph.checkpoint.serde.encrypted import EncryptedSerializer
+        from psycopg import Connection
+        from psycopg.rows import dict_row
     except ImportError as exc:
         raise RuntimeError(
             "Install cbcap-core[production] to use durable PostgreSQL checkpoints"
@@ -89,7 +98,17 @@ def postgres_checkpointer(
     if resolved.require_encryption:
         serde = EncryptedSerializer.from_pycryptodome_aes()
 
-    with PostgresSaver.from_conn_string(resolved.database_url, serde=serde) as checkpointer:
+    with Connection.connect(
+        resolved.database_url,
+        autocommit=True,
+        prepare_threshold=0,
+        row_factory=dict_row,
+    ) as connection:
+        connection.execute(
+            "SELECT set_config('app.tenant_id', %s, false)",
+            (tenant_id,),
+        )
+        checkpointer = PostgresSaver(connection, serde=serde)
         if setup:
             checkpointer.setup()
         yield checkpointer
