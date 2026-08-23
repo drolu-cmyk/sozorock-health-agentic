@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from .gateway import PublicEvidenceMeasure, PublicEvidencePackage, assert_public_package
+from .gateway import (
+    PublicEvidenceMeasure,
+    PublicEvidencePackage,
+    SourceCoverageAssertion,
+    assert_public_package,
+)
 from .models import CountyRunState, GeographyKind
 
 
@@ -12,10 +17,10 @@ def _validated_package(
     return payload if isinstance(payload, PublicEvidencePackage) else assert_public_package(payload)
 
 
-def _county_measures(
+def _matching_county_geography_id(
     run: CountyRunState,
     package: PublicEvidencePackage,
-) -> list[PublicEvidenceMeasure]:
+) -> str:
     county_fips = run.county.county_fips
     if county_fips is None:
         raise ValueError("county run must have county_fips before public evidence hydration")
@@ -29,7 +34,15 @@ def _county_measures(
         raise ValueError(
             f"public Evidence Gateway must contain exactly one county geography for FIPS {county_fips}"
         )
+    return matching_geographies[0].id
 
+
+def _county_measures(
+    run: CountyRunState,
+    package: PublicEvidencePackage,
+) -> list[PublicEvidenceMeasure]:
+    county_fips = run.county.county_fips
+    _matching_county_geography_id(run, package)
     return [
         item
         for item in package.measures
@@ -50,6 +63,24 @@ def select_county_public_evidence(
 
     package = _validated_package(payload)
     return _county_measures(run, package), package.release_id
+
+
+def select_county_source_coverage(
+    run: CountyRunState,
+    payload: dict[str, Any] | PublicEvidencePackage,
+) -> tuple[list[SourceCoverageAssertion], str]:
+    """Select verified retrieval-coverage assertions for the run's county.
+
+    Coverage assertions describe whether a source query completed. They are not
+    substantive health findings and must be interpreted by a source-specific
+    specialist before any negative conclusion is allowed.
+    """
+
+    package = _validated_package(payload)
+    geography_id = _matching_county_geography_id(run, package)
+    return [
+        item for item in package.source_coverage if item.geography_id == geography_id
+    ], package.release_id
 
 
 def hydrate_public_evidence(
