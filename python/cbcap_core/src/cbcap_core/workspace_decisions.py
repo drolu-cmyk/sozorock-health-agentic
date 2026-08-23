@@ -5,7 +5,7 @@ from typing import Literal, cast
 
 from pydantic import Field
 
-from .authorization import AuthorizedActor, require_actor_capability
+from .authorization import AuthorizedActor, RuntimeCapability, require_actor_capability
 from .decision_memory import (
     DecisionMemoryProposal,
     DecisionMemoryRecord,
@@ -101,7 +101,7 @@ def _run_entity_ids(run: CountyRunState) -> set[str]:
     return ids
 
 
-def _required_memory_capability(actor: AuthorizedActor) -> str:
+def _required_memory_capability(actor: AuthorizedActor) -> RuntimeCapability:
     return (
         "record_workspace_review"
         if actor.role in {"reviewer", "admin"}
@@ -122,7 +122,7 @@ def _validate_workspace_decision(
 
     require_actor_capability(
         actor,
-        cast(AnyRuntimeCapability, _required_memory_capability(actor)),
+        _required_memory_capability(actor),
         geography_id=run.county.id,
         run_id=run.run_id,
     )
@@ -238,7 +238,3 @@ def record_workspace_decision(
         actor_tenant_id=tenant_id,
     )
     return result
-
-
-# Narrow alias used only for the cast above, avoiding a second capability type.
-from .authorization import RuntimeCapability as AnyRuntimeCapability
