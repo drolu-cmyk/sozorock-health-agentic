@@ -91,6 +91,27 @@ def test_migration_task_receives_the_runtime_role_password_secret():
     assert "- Name: CB_CAP_MIGRATION_DATABASE_PASSWORD" in migration
 
 
+def test_runtime_and_migration_execution_roles_are_least_privilege_separated():
+    stack = _text(RUNTIME_STACK)
+    runtime_role = stack.split("  RuntimeTaskExecutionRole:", 1)[1].split("\n  MigrationTaskExecutionRole:", 1)[0]
+    migration_role = stack.split("  MigrationTaskExecutionRole:", 1)[1].split("\n  RuntimeTaskRole:", 1)[0]
+    runtime_task = stack.split("  RuntimeTaskDefinition:", 1)[1].split("\n  MigrationTaskDefinition:", 1)[0]
+    migration_task = stack.split("  MigrationTaskDefinition:", 1)[1].split("\n  Certificate:", 1)[0]
+
+    assert "RuntimeDatabasePassword" in runtime_role
+    assert "CheckpointEncryptionKey" in runtime_role
+    assert "Database.MasterUserSecret" not in runtime_role
+
+    assert "RuntimeDatabasePassword" in migration_role
+    assert "Database.MasterUserSecret" in migration_role
+    assert "CheckpointEncryptionKey" not in migration_role
+
+    assert "ExecutionRoleArn: !GetAtt RuntimeTaskExecutionRole.Arn" in runtime_task
+    assert "TaskRoleArn: !GetAtt RuntimeTaskRole.Arn" in runtime_task
+    assert "ExecutionRoleArn: !GetAtt MigrationTaskExecutionRole.Arn" in migration_task
+    assert "TaskRoleArn:" not in migration_task
+
+
 def test_deployment_identity_roles_cannot_manage_themselves():
     stack = _text(BOOTSTRAP_STACK)
     assert "RoleName: cbcap-private-cloudformation" in stack
