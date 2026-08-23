@@ -56,6 +56,7 @@ def prepare_county_graph_run(
         )
 
     next_external_calls = budget.external_calls_used + 1
+    next_preflight_calls = budget.preflight_external_calls_used + 1
     if next_external_calls > budget.max_external_calls:
         raise CountyRunPreparationError(
             "public evidence retrieval would exceed the run external-call budget"
@@ -79,6 +80,7 @@ def prepare_county_graph_run(
     updated_budget = RunBudget.model_validate(
         {
             **budget.model_dump(mode="python"),
+            "preflight_external_calls_used": next_preflight_calls,
             "external_calls_used": next_external_calls,
         }
     )
