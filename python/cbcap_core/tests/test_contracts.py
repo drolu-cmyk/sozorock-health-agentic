@@ -169,3 +169,41 @@ def test_unknown_contract_fields_fail_closed():
                 "private_planning_note": "should never cross the public boundary",
             }
         )
+
+
+EVALUATION_COUNTIES = [
+    ("36001", "36", "Albany County, New York"),
+    ("36093", "36", "Schenectady County, New York"),
+    ("36057", "36", "Montgomery County, New York"),
+    ("42029", "42", "Chester County, Pennsylvania"),
+    ("48029", "48", "Bexar County, Texas"),
+]
+
+
+@pytest.mark.parametrize("county_fips,state_fips,display_name", EVALUATION_COUNTIES)
+def test_initial_evaluation_counties_fit_canonical_state(
+    county_fips: str,
+    state_fips: str,
+    display_name: str,
+):
+    geography = GeographyRef(
+        id=f"geo:county:{county_fips}",
+        kind=GeographyKind.COUNTY,
+        authority="census",
+        authority_id=county_fips,
+        name=display_name.split(",")[0],
+        display_name=display_name,
+        state_fips=state_fips,
+        county_fips=county_fips,
+        vintage="2025",
+        review_status=ReviewStatus.VERIFIED,
+    )
+
+    state = CountyRunState(
+        run_id=f"evaluation:{county_fips}",
+        county=geography,
+        requested_at=NOW,
+    )
+
+    assert state.county.county_fips == county_fips
+    assert state.schema_version == "cbcap.county-run.v1"
