@@ -6,7 +6,12 @@ from typing import Literal
 from pydantic import Field
 
 from .gateway import PublicEvidenceMeasure
-from .models import ReviewStatus, StrictModel
+from .models import (
+    BarrierFamily,
+    BarrierObservation,
+    ReviewStatus,
+    StrictModel,
+)
 
 
 WorkforceDiscipline = Literal["primary_care", "dental", "mental_health", "unknown"]
@@ -41,11 +46,13 @@ class WorkforceAdmissionDecision(StrictModel):
     status: WorkforceAdmissionStatus
     reason_codes: list[str] = Field(default_factory=list)
     designation: WorkforceDesignation | None = None
+    county_barrier_observation: BarrierObservation | None = None
 
 
 class WorkforceClassificationResult(StrictModel):
     decisions: list[WorkforceAdmissionDecision] = Field(default_factory=list)
     designations: list[WorkforceDesignation] = Field(default_factory=list)
+    county_barrier_observations: list[BarrierObservation] = Field(default_factory=list)
 
 
 def _metadata_text(measure: PublicEvidenceMeasure, key: str) -> str:
@@ -72,6 +79,33 @@ def _discipline(value: str) -> WorkforceDiscipline:
     if "mental" in normalized:
         return "mental_health"
     return "unknown"
+
+
+def _county_workforce_barrier(
+    measure: PublicEvidenceMeasure,
+    designation: WorkforceDesignation,
+) -> BarrierObservation | None:
+    """Translate only a source-confirmed whole-county HPSA into a county barrier.
+
+    Facility, population-group and source-designation rows remain workforce context.
+    HPSA score is retained as the observed value but is not converted into a
+    percentile or an invented cross-source severity score.
+    """
+
+    if not designation.is_whole_county:
+        return None
+    return BarrierObservation(
+        id=f"barrier:workforce:{measure.id}",
+        barrier_family=BarrierFamily.WORKFORCE,
+        geography=measure.geography,
+        measure_id=measure.id,
+        observed_value=designation.score,
+        pressure_percentile=None,
+        concentration=None,
+        trend_direction="insufficient_evidence",
+        evidence_quality="high",
+        review_status=ReviewStatus.VERIFIED,
+    )
 
 
 def classify_workforce_measure(measure: PublicEvidenceMeasure) -> WorkforceAdmissionDecision:
@@ -122,7 +156,6 @@ def classify_workforce_measure(measure: PublicEvidenceMeasure) -> WorkforceAdmis
             reason_codes=sorted(set(reasons)),
         )
 
-    score = measure.numeric_value
     designation = WorkforceDesignation(
         id=f"workforce-designation:{measure.id}",
         geography_id=measure.geography.id,
@@ -132,7 +165,7 @@ def classify_workforce_measure(measure: PublicEvidenceMeasure) -> WorkforceAdmis
         designation_type=designation_type,
         component_type=component_type,
         status=status,
-        score=score,
+        score=measure.numeric_value,
         designation_date=measure.data_period_start,
         last_update_date=_metadata_date(measure, "lastUpdateDate"),
         source_measure_id=measure.semantics.source_measure_id,
@@ -144,6 +177,7 @@ def classify_workforce_measure(measure: PublicEvidenceMeasure) -> WorkforceAdmis
         measure_id=measure.id,
         status="admitted",
         designation=designation,
+        county_barrier_observation=_county_workforce_barrier(measure, designation),
     )
 
 
@@ -160,7 +194,13 @@ def classify_workforce_measures(
         for item in decisions
         if item.status == "admitted" and item.designation is not None
     ]
+    county_barriers = [
+        item.county_barrier_observation
+        for item in decisions
+        if item.status == "admitted" and item.county_barrier_observation is not None
+    ]
     return WorkforceClassificationResult(
         decisions=decisions,
         designations=designations,
+        county_barrier_observations=county_barriers,
     )
