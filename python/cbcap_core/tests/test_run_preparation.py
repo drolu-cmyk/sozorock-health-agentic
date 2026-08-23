@@ -79,6 +79,7 @@ def test_preparation_fetches_once_and_hands_one_immutable_package_to_graph_conte
 
     assert client.calls == [("36001", None)]
     assert prepared.external_calls_used == 1
+    assert prepared.budget.preflight_external_calls_used == 1
     assert prepared.budget.external_calls_used == 1
     assert prepared.evidence_release_hash == response.manifest.release_hash
     assert prepared.context.public_evidence_package is not None
@@ -124,18 +125,27 @@ def test_not_modified_reuses_only_cache_bound_to_same_release_hash():
 
     prepared = prepare_county_graph_run(
         county_run(),
-        RunBudget(max_external_calls=2, external_calls_used=1),
+        RunBudget(
+            max_external_calls=2,
+            preflight_external_calls_used=1,
+            external_calls_used=1,
+        ),
         client,  # type: ignore[arg-type]
         etag=etag,
         cached_response=response,
     )
+    assert prepared.budget.preflight_external_calls_used == 2
     assert prepared.budget.external_calls_used == 2
     assert prepared.evidence_release_id == response.manifest.release_id
 
     with pytest.raises(CountyRunPreparationError, match="does not match"):
         prepare_county_graph_run(
             county_run(),
-            RunBudget(max_external_calls=2, external_calls_used=1),
+            RunBudget(
+                max_external_calls=2,
+                preflight_external_calls_used=1,
+                external_calls_used=1,
+            ),
             client,  # type: ignore[arg-type]
             etag='"sha256:' + "0" * 64 + '"',
             cached_response=response,
