@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import Field
 
 from .checkpoint import CheckpointSettings, postgres_checkpointer
@@ -170,7 +169,6 @@ class RunResponse(StrictModel):
     evidence_release_hash: str | None = None
 
 
-_bearer = HTTPBearer(auto_error=False)
 app = FastAPI(
     title="CB-CAP Runtime",
     version="1.0.0",
@@ -193,14 +191,15 @@ async def security_response_headers(request: Request, call_next):
 
 
 def _access_token(request: Request) -> str:
-    credentials: HTTPAuthorizationCredentials | None = _bearer(request)
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    authorization = request.headers.get("authorization", "").strip()
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
         raise HTTPException(
             status_code=401,
             detail="authentication_required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return credentials.credentials
+    return parts[1].strip()
 
 
 def _run_response(
