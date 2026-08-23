@@ -28,6 +28,7 @@ from .models import (
 )
 from .planning_pipeline import PlanningPipelineRequest, run_planning_pipeline
 from .workforce import WorkforceDesignation, classify_workforce_measures
+from .workforce_capacity import WorkforceCapacityObservation, classify_ahrf_capacity_measures
 
 BranchName = Literal["public_evidence", "planning_documents", "workforce_designations", "barrier_evidence"]
 REQUIRED_BRANCHES: tuple[BranchName, ...] = (
@@ -74,6 +75,7 @@ class BranchPayload(StrictModel):
     measures: list[Measure] = Field(default_factory=list)
     barrier_observations: list[BarrierObservation] = Field(default_factory=list)
     workforce_designations: list[WorkforceDesignation] = Field(default_factory=list)
+    workforce_capacity_observations: list[WorkforceCapacityObservation] = Field(default_factory=list)
     plan_documents: list[PlanDocument] = Field(default_factory=list)
     organizations: list[Organization] = Field(default_factory=list)
 
@@ -84,6 +86,7 @@ class BranchPayload(StrictModel):
             *[item.id for item in self.measures],
             *[item.id for item in self.barrier_observations],
             *[item.id for item in self.workforce_designations],
+            *[item.id for item in self.workforce_capacity_observations],
             *[item.id for item in self.plan_documents],
             *[item.id for item in self.organizations],
         ]
@@ -229,7 +232,7 @@ def _existing_payload(run, branch):
         return BranchPayload(
             id=f"{run.run_id}:payload:{branch}",
             branch=branch,
-            measures=[item for item in run.measures if item.source_version.source_id.startswith(("hrsa", "ahrf"))],
+            measures=[item for item in run.measures if item.source_version.source_id in {"hrsa-workforce", "ahrf-workforce"}],
         )
     if branch == "barrier_evidence":
         return BranchPayload(id=f"{run.run_id}:payload:{branch}", branch=branch, barrier_observations=list(run.barrier_observations))
@@ -328,47 +331,67 @@ def workforce_designations_branch(state, runtime):
     _ = context.untrusted_source_text
 
     if context.public_evidence_package is None:
-        hrsa_measures = [
-            item for item in run.measures if item.source_version.source_id == "hrsa-workforce"
+        measures = [
+            item
+            for item in run.measures
+            if item.source_version.source_id in {"hrsa-workforce", "ahrf-workforce"}
         ]
-        if not hrsa_measures:
-            return _branch_output(run, _existing_payload(run, "workforce_designations"))
         release_ids: list[str] = []
     else:
         measures, release_id = select_county_public_evidence(run, context.public_evidence_package)
-        hrsa_measures = [
-            item for item in measures if item.source_version.source_id == "hrsa-workforce"
-        ]
         release_ids = [release_id]
-        if not hrsa_measures:
-            payload = BranchPayload(
-                id=f"{run.run_id}:payload:workforce_designations",
-                branch="workforce_designations",
-                source_release_ids=release_ids,
-            )
-            return _branch_output(
-                run,
-                payload,
-                complete_override=False,
-                trajectory_events=[
-                    _trajectory_event(
-                        run,
-                        stage="workforce_source_coverage",
-                        entity_id=run.county.id,
-                        outcome="unknown",
-                        reason_codes=["hrsa_observations_absent_source_coverage_not_proven"],
-                    )
-                ],
-            )
+
+    hrsa_measures = [
+        item for item in measures if item.source_version.source_id == "hrsa-workforce"
+    ]
+    ahrf_measures = [
+        item for item in measures if item.source_version.source_id == "ahrf-workforce"
+    ]
+    capacity = classify_ahrf_capacity_measures(ahrf_measures)
+    capacity_trajectory = [
+        _trajectory_event(
+            run,
+            stage="workforce_capacity",
+            entity_id=decision.measure_id,
+            outcome=decision.status,
+            reason_codes=decision.reason_codes,
+        )
+        for decision in capacity.decisions
+    ]
+
+    if not hrsa_measures:
+        payload = BranchPayload(
+            id=f"{run.run_id}:payload:workforce_designations",
+            branch="workforce_designations",
+            source_release_ids=release_ids,
+            measures=ahrf_measures,
+            workforce_capacity_observations=capacity.observations,
+        )
+        return _branch_output(
+            run,
+            payload,
+            complete_override=False,
+            trajectory_events=[
+                *capacity_trajectory,
+                _trajectory_event(
+                    run,
+                    stage="workforce_source_coverage",
+                    entity_id=run.county.id,
+                    outcome="unknown",
+                    reason_codes=["hrsa_observations_absent_source_coverage_not_proven"],
+                ),
+            ],
+        )
 
     classification = classify_workforce_measures(hrsa_measures)
     payload = BranchPayload(
         id=f"{run.run_id}:payload:workforce_designations",
         branch="workforce_designations",
         source_release_ids=release_ids,
-        measures=hrsa_measures,
+        measures=[*hrsa_measures, *ahrf_measures],
         barrier_observations=classification.county_barrier_observations,
         workforce_designations=classification.designations,
+        workforce_capacity_observations=capacity.observations,
     )
     trajectory = [
         _trajectory_event(
@@ -380,6 +403,7 @@ def workforce_designations_branch(state, runtime):
         )
         for decision in classification.decisions
     ]
+    trajectory.extend(capacity_trajectory)
     for designation in classification.designations:
         trajectory.append(
             _trajectory_event(
