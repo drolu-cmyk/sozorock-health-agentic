@@ -170,3 +170,16 @@ def test_cross_tenant_use_fails_before_any_evidence_is_returned():
             actor=actor(tenant_id="tenant:other"),
             as_of=NOW,
         )
+
+
+def test_same_timestamp_latest_reviews_fail_closed_instead_of_using_review_id_order():
+    doc = document()
+    accepted = review(doc, "accepted", NOW - timedelta(days=1), "accepted")
+    rejected = review(doc, "rejected", accepted.reviewed_at, "rejected")
+    with pytest.raises(ValueError, match="ambiguous latest timestamp"):
+        authorize_tenant_evidence_use(
+            doc,
+            [accepted, rejected],
+            actor=actor(),
+            as_of=NOW,
+        )
