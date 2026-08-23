@@ -2,7 +2,7 @@ import cbcap_core
 from cbcap_core import decision_memory, institutional_memory
 
 
-def test_package_exports_governed_memory_trajectory_forecast_workspace_publication_and_runtime_surface():
+def test_package_exports_governed_memory_trajectory_forecast_workspace_publication_observability_and_runtime_surface():
     required = {
         "AuthorizationGrant",
         "AuthorizedActor",
@@ -58,6 +58,11 @@ def test_package_exports_governed_memory_trajectory_forecast_workspace_publicati
         "prepare_publication_approval",
         "record_publication_approval",
         "apply_publication_authorization",
+        "RunObservation",
+        "RunObservationPhase",
+        "build_initial_run_observation",
+        "build_review_resume_observation",
+        "persist_run_observation",
         "EvidenceGatewayHttpClient",
         "EvidenceGatewayTransportError",
         "EvidenceGatewayFetchResult",
