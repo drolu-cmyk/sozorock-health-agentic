@@ -4,10 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cbcap-core"
-version = "0.1.0"
-description = "Typed state and public evidence contracts for the CB-CAP planning graph"
+version = "0.2.0"
+description = "Typed state, shared evidence contracts, and durable graph runtime for CB-CAP"
 requires-python = ">=3.11"
 dependencies = [
+  "langgraph>=1.2,<2",
   "pydantic>=2.11,<3",
 ]
 
