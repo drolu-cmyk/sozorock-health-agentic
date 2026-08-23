@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from cbcap_core.institutional_memory import DecisionMemoryRecord
+from cbcap_core.decision_memory import DecisionMemoryRecord
 from cbcap_core.models import CountyRunState, GeographyKind, GeographyRef, ReviewStatus
 from cbcap_core.persistence import (
     PersistenceSettings,
@@ -10,8 +10,11 @@ from cbcap_core.persistence import (
     canonicalize_trajectory_events,
     persist_county_graph_trajectory,
     persist_decision_memory,
+    persist_trajectory_corrections,
+    persist_trajectory_evaluation_labels,
     persist_trajectory_events,
 )
+from cbcap_core.trajectory import TrajectoryCorrection, TrajectoryEvaluationLabel
 
 NOW = datetime(2026, 8, 22, 23, 20, tzinfo=timezone.utc)
 TENANT = "tenant:albany-planning"
@@ -208,6 +211,24 @@ def test_persist_trajectory_sets_tenant_rls_scope_and_writes_append_only_row():
     assert "ON CONFLICT (id) DO NOTHING" in connection.executions[1][0]
 
 
+def test_foundation_trajectory_write_explicitly_clears_tenant_scope():
+    connection = FakeConnection()
+    public_run = run(tenant_id=None)
+    event = canonicalize_trajectory_event(
+        {
+            "id": "trajectory:public:1",
+            "run_id": public_run.run_id,
+            "stage": "public_evidence",
+            "entity_id": "release:1",
+            "outcome": "completed",
+            "occurred_at": NOW,
+        },
+        public_run,
+    )
+    persist_trajectory_events(connection, [event], actor_tenant_id=None)
+    assert connection.executions[0][1] == ("",)
+
+
 def test_persist_county_graph_trajectory_rejects_cross_tenant_actor():
     state = {
         "county_run": run().model_dump(mode="json"),
@@ -217,6 +238,58 @@ def test_persist_county_graph_trajectory_rejects_cross_tenant_actor():
         persist_county_graph_trajectory(
             FakeConnection(),
             state,
+            actor_tenant_id="tenant:other",
+        )
+
+
+def test_evaluation_label_and_correction_are_tenant_bound_append_only_inserts():
+    label = TrajectoryEvaluationLabel(
+        id="label:1",
+        trajectory_event_id="trajectory:persist:1",
+        tenant_id=TENANT,
+        label="incorrect",
+        reason_codes=["scope_error"],
+        evaluator_id="reviewer:1",
+        evaluator_type="human",
+        evaluator_version="review-policy-v1",
+        created_at=NOW,
+    )
+    correction = TrajectoryCorrection(
+        id="correction:1",
+        trajectory_event_id="trajectory:persist:1",
+        tenant_id=TENANT,
+        corrected_entity_id="measure:transportation",
+        correction_type="classification",
+        reason_codes=["context_not_barrier"],
+        corrected_by="reviewer:1",
+        corrected_at=NOW,
+    )
+
+    label_connection = FakeConnection()
+    correction_connection = FakeConnection()
+    assert persist_trajectory_evaluation_labels(
+        label_connection,
+        [label],
+        actor_tenant_id=TENANT,
+    ) == 1
+    assert persist_trajectory_corrections(
+        correction_connection,
+        [correction],
+        actor_tenant_id=TENANT,
+    ) == 1
+    assert "INSERT INTO cbcap.trajectory_evaluation_label" in label_connection.executions[1][0]
+    assert "INSERT INTO cbcap.trajectory_correction" in correction_connection.executions[1][0]
+
+    with pytest.raises(ValueError, match="trajectory evaluation label tenant"):
+        persist_trajectory_evaluation_labels(
+            FakeConnection(),
+            [label],
+            actor_tenant_id="tenant:other",
+        )
+    with pytest.raises(ValueError, match="trajectory correction tenant"):
+        persist_trajectory_corrections(
+            FakeConnection(),
+            [correction],
             actor_tenant_id="tenant:other",
         )
 
