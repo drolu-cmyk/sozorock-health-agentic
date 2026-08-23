@@ -15,6 +15,10 @@ def test_membership_history_is_server_side_tenant_scoped_and_append_only():
     assert "decision IN ('granted', 'revoked')" in sql
     assert "role IN ('read_only', 'analyst', 'planner', 'reviewer', 'admin')" in sql
     assert "workspace_membership_tenant_isolation" in sql
+    assert "workspace_membership_guard" in sql
+    assert "validate_workspace_membership_event" in sql
+    assert "workspace membership geography IDs must be nonblank strings" in sql
+    assert "workspace membership geography IDs must be unique" in sql
     assert "workspace_membership_append_only" in sql
     assert "FORCE ROW LEVEL SECURITY" in sql
     assert "UNIQUE (tenant_id, principal_key, recorded_at)" in sql
@@ -30,6 +34,11 @@ def test_county_run_identity_and_state_are_server_owned_append_only_history():
     assert "county_run_state_guard" in sql
     assert "first county run state version must be 1" in sql
     assert "county run state versions must be contiguous" in sql
+    assert "county run state JSON tenant does not match row tenant" in sql
+    assert "county run state JSON run does not match row run" in sql
+    assert "county run state JSON geography does not match immutable run identity" in sql
+    assert "county run state JSON county FIPS does not match immutable run identity" in sql
+    assert "county run state JSON status does not match row status" in sql
     assert "county_run_identity_append_only" in sql
     assert "county_run_state_append_only" in sql
 
@@ -39,3 +48,5 @@ def test_runtime_registry_rollback_refuses_to_erase_identity_or_run_history():
     assert "Refusing to drop CB-CAP workspace membership history" in rollback
     assert "Refusing to drop CB-CAP county run state history" in rollback
     assert "Refusing to drop CB-CAP county run identities" in rollback
+    assert "workspace_membership_guard" in rollback
+    assert "validate_workspace_membership_event" in rollback
