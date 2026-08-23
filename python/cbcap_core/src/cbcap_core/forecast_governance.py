@@ -131,12 +131,14 @@ class ForecastBacktestPolicy(StrictModel):
 
 
 class BacktestPolicyEvaluation(StrictModel):
+    id: str = Field(min_length=1)
     status: BacktestPolicyStatus
     model_version: str = Field(min_length=1)
     metric_semantics_id: str = Field(min_length=1)
     summary_id: str = Field(min_length=1)
     policy_id: str = Field(min_length=1)
     reason_codes: list[str] = Field(default_factory=list)
+    evaluated_at: datetime
 
 
 class ForecastModelApproval(StrictModel):
@@ -147,6 +149,7 @@ class ForecastModelApproval(StrictModel):
     metric_semantics_id: str = Field(min_length=1)
     policy_id: str = Field(min_length=1)
     backtest_summary_id: str = Field(min_length=1)
+    policy_evaluation_id: str = Field(min_length=1)
     decision: ForecastApprovalDecision
     reason_codes: list[str] = Field(min_length=1)
     decided_by: str = Field(min_length=1)
@@ -168,6 +171,7 @@ class ForecastModelExecutionDecision(StrictModel):
     model_version: str = Field(min_length=1)
     metric_semantics_id: str = Field(min_length=1)
     backtest_summary_id: str | None = None
+    policy_evaluation_id: str | None = None
     approval_id: str | None = None
 
 
@@ -221,6 +225,8 @@ def summarize_backtests(
 def evaluate_backtest_policy(
     summary: ForecastBacktestSummary,
     policy: ForecastBacktestPolicy,
+    *,
+    evaluated_at: datetime,
 ) -> BacktestPolicyEvaluation:
     reasons: list[str] = []
     if policy.review_status != ReviewStatus.VERIFIED:
@@ -257,12 +263,14 @@ def evaluate_backtest_policy(
             reasons.append("interval_coverage_below_policy")
 
     return BacktestPolicyEvaluation(
+        id=f"backtest-evaluation:{policy.id}:{summary.id}:{evaluated_at.isoformat()}",
         status="blocked" if reasons else "passes",
         model_version=summary.model_version,
         metric_semantics_id=summary.metric_semantics_id,
         summary_id=summary.id,
         policy_id=policy.id,
         reason_codes=sorted(set(reasons)),
+        evaluated_at=evaluated_at,
     )
 
 
@@ -301,6 +309,8 @@ def authorize_forecast_model_execution(
         reasons.append("approval_policy_mismatch")
     if approval.backtest_summary_id != policy_evaluation.summary_id:
         reasons.append("approval_backtest_summary_mismatch")
+    if approval.policy_evaluation_id != policy_evaluation.id:
+        reasons.append("approval_policy_evaluation_mismatch")
     if approval.decision != "approved":
         reasons.append("model_not_human_approved")
     if approval.review_status != ReviewStatus.VERIFIED:
@@ -316,5 +326,6 @@ def authorize_forecast_model_execution(
         model_version=registration.model_version,
         metric_semantics_id=metric_semantics_id,
         backtest_summary_id=policy_evaluation.summary_id,
+        policy_evaluation_id=policy_evaluation.id,
         approval_id=approval.id,
     )
