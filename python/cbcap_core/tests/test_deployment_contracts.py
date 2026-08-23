@@ -136,7 +136,7 @@ def test_runtime_migration_and_membership_admin_identities_are_separated():
     stack = _text(RUNTIME_STACK)
     runtime_role = stack.split("  RuntimeTaskExecutionRole:", 1)[1].split("\n  MigrationTaskExecutionRole:", 1)[0]
     migration_role = stack.split("  MigrationTaskExecutionRole:", 1)[1].split("\n  MembershipAdminTaskExecutionRole:", 1)[0]
-    membership_role = stack.split("  MembershipAdminTaskExecutionRole:", 1)[1].split("\n  RuntimeTaskRole:", 1)[0]
+    membership_role = stack.split("  MembershipAdminTaskExecutionRole:", 1)[1].split("\n  RuntimeTaskDefinition:", 1)[0]
     runtime_task = stack.split("  RuntimeTaskDefinition:", 1)[1].split("\n  MigrationTaskDefinition:", 1)[0]
     migration_task = stack.split("  MigrationTaskDefinition:", 1)[1].split("\n  MembershipAdminTaskDefinition:", 1)[0]
     membership_task = stack.split("  MembershipAdminTaskDefinition:", 1)[1].split("\n  Certificate:", 1)[0]
@@ -154,7 +154,9 @@ def test_runtime_migration_and_membership_admin_identities_are_separated():
     assert "CheckpointEncryptionKey" not in membership_role
 
     assert "ExecutionRoleArn: !GetAtt RuntimeTaskExecutionRole.Arn" in runtime_task
-    assert "TaskRoleArn: !GetAtt RuntimeTaskRole.Arn" in runtime_task
+    assert "TaskRoleArn:" not in runtime_task
+    assert "CB_CAP_PRIVATE_EVIDENCE_BUCKET" not in runtime_task
+    assert "CB_CAP_PRIVATE_EVIDENCE_KMS_KEY_ARN" not in runtime_task
     assert "ExecutionRoleArn: !GetAtt MigrationTaskExecutionRole.Arn" in migration_task
     assert "TaskRoleArn:" not in migration_task
     assert "ExecutionRoleArn: !GetAtt MembershipAdminTaskExecutionRole.Arn" in membership_task
