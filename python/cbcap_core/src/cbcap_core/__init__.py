@@ -1,3 +1,17 @@
+from .barriers import (
+    BARRIER_DEFINITIONS,
+    INITIAL_BARRIER_RULES,
+    BarrierAdmissionDecision,
+    BarrierClassificationResult,
+    BarrierCooccurrence,
+    BarrierDefinition,
+    BarrierIntelligenceSummary,
+    BarrierMeasureRule,
+    classify_barrier_measure,
+    classify_barrier_measures,
+    find_barrier_rule,
+    summarize_barriers,
+)
 from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
 from .evidence_adapter import hydrate_public_evidence, select_county_public_evidence
 from .gateway import (
@@ -82,7 +96,15 @@ __all__ = [
     "AgentRun",
     "AgentRunStatus",
     "ApprovedPlanningSource",
+    "BARRIER_DEFINITIONS",
+    "INITIAL_BARRIER_RULES",
+    "BarrierAdmissionDecision",
+    "BarrierClassificationResult",
+    "BarrierCooccurrence",
+    "BarrierDefinition",
     "BarrierFamily",
+    "BarrierIntelligenceSummary",
+    "BarrierMeasureRule",
     "BarrierObservation",
     "BarrierPattern",
     "BranchPayload",
@@ -143,10 +165,14 @@ __all__ = [
     "build_county_planning_graph",
     "build_planning_research_graph",
     "checkpoint_thread_config",
+    "classify_barrier_measure",
+    "classify_barrier_measures",
+    "find_barrier_rule",
     "hydrate_public_evidence",
     "initial_graph_state",
     "postgres_checkpointer",
     "research_candidates",
     "run_planning_pipeline",
     "select_county_public_evidence",
+    "summarize_barriers",
 ]
