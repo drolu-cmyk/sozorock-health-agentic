@@ -45,6 +45,7 @@ class FundingApplicantProfile(StrictModel):
     geography_ids: list[str] = Field(default_factory=list)
     partner_organization_ids: list[str] = Field(default_factory=list)
     designation_evidence_claim_ids: list[str] = Field(default_factory=list)
+    workforce_designation_ids: list[str] = Field(default_factory=list)
     supporting_evidence_claim_ids: list[str] = Field(default_factory=list)
     plan_priority_ids: list[str] = Field(default_factory=list)
     barrier_observation_ids: list[str] = Field(default_factory=list)
@@ -95,6 +96,25 @@ class FundingEvaluationResult(StrictModel):
 
 def _intersection(left: list[str], right: list[str]) -> list[str]:
     return sorted(set(left).intersection(right))
+
+
+def _designation_pool(applicant: FundingApplicantProfile) -> list[str]:
+    return sorted(
+        set(applicant.designation_evidence_claim_ids).union(applicant.workforce_designation_ids)
+    )
+
+
+def _entity_pool(applicant: FundingApplicantProfile, criterion_type: FundingCriterionType) -> list[str]:
+    pools = {
+        "designation": _designation_pool(applicant),
+        "partner": applicant.partner_organization_ids,
+        "evidence": applicant.supporting_evidence_claim_ids,
+        "plan_priority": applicant.plan_priority_ids,
+        "barrier": applicant.barrier_observation_ids,
+    }
+    if criterion_type not in pools:
+        return []
+    return pools[criterion_type]
 
 
 def _criterion_result(
@@ -148,14 +168,7 @@ def _criterion_result(
             source_claim_ids=criterion.source_claim_ids,
         )
 
-    pools = {
-        "designation": applicant.designation_evidence_claim_ids,
-        "partner": applicant.partner_organization_ids,
-        "evidence": applicant.supporting_evidence_claim_ids,
-        "plan_priority": applicant.plan_priority_ids,
-        "barrier": applicant.barrier_observation_ids,
-    }
-    available = pools[criterion.criterion_type]
+    available = _entity_pool(applicant, criterion.criterion_type)
     required_ids = criterion.required_entity_ids
     matched = _intersection(available, required_ids)
     if not required_ids:
@@ -183,6 +196,7 @@ def _criterion_result(
 
 def _base_criteria(request: FundingEvaluationRequest) -> list[FundingCriterion]:
     criteria = list(request.criteria)
+    lineage = request.opportunity.requirement_claim_ids
     if request.opportunity.eligible_applicant_types and not any(
         item.criterion_type == "applicant_type" for item in criteria
     ):
@@ -193,6 +207,7 @@ def _base_criteria(request: FundingEvaluationRequest) -> list[FundingCriterion]:
                 description="Opportunity eligible applicant type.",
                 required=True,
                 accepted_values=request.opportunity.eligible_applicant_types,
+                source_claim_ids=lineage,
             )
         )
     if request.opportunity.geography_ids and not any(
@@ -205,6 +220,7 @@ def _base_criteria(request: FundingEvaluationRequest) -> list[FundingCriterion]:
                 description="Opportunity geographic eligibility.",
                 required=True,
                 accepted_values=request.opportunity.geography_ids,
+                source_claim_ids=lineage,
             )
         )
     return criteria
@@ -276,6 +292,30 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
         )
 
     criteria = _base_criteria(request)
+    untraceable_required = [item for item in criteria if item.required and not item.source_claim_ids]
+    if untraceable_required:
+        for item in untraceable_required:
+            trajectory.append(
+                FundingTrajectoryEvent(
+                    id=f"{opportunity.id}:trajectory:criterion:{item.id}:lineage",
+                    opportunity_id=opportunity.id,
+                    stage="criterion",
+                    decision="blocked",
+                    reason_codes=["required_criterion_missing_source_lineage"],
+                    entity_ids=[item.id],
+                )
+            )
+        return FundingEvaluationResult(
+            opportunity_id=opportunity.id,
+            source_verified=True,
+            deadline_status=deadline_status,
+            eligibility_status="unknown",
+            fit_status="unreviewed",
+            confidence=Confidence.LOW,
+            trajectory=trajectory,
+            caveats=["One or more required funding criteria lack verified source-claim lineage and cannot be used for eligibility reasoning."],
+        )
+
     results = [
         _criterion_result(
             item,
@@ -298,22 +338,19 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
         )
 
     by_id = {item.id: item for item in criteria}
-    hard_failed = [
+    required_applicable = [
         result
         for result in results
-        if by_id[result.criterion_id].required and result.status == "failed"
+        if by_id[result.criterion_id].required and result.status != "not_applicable"
     ]
-    hard_missing = [
-        result
-        for result in results
-        if by_id[result.criterion_id].required and result.status == "missing"
-    ]
+    hard_failed = [result for result in required_applicable if result.status == "failed"]
+    hard_missing = [result for result in required_applicable if result.status == "missing"]
 
     if hard_failed:
         eligibility = "ineligible"
     elif hard_missing:
         eligibility = "possibly_eligible"
-    elif results:
+    elif required_applicable:
         eligibility = "likely_eligible"
     else:
         eligibility = "unknown"
@@ -338,15 +375,14 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
         fit_status = "unreviewed"
         confidence = Confidence.LOW
 
-    missing_evidence = [
-        result.criterion_id
-        for result in hard_missing
-        if result.criterion_type in {"designation", "evidence", "plan_priority", "barrier"}
-    ]
-    missing_partner_ids = []
+    missing_evidence: list[str] = []
+    missing_partner_ids: list[str] = []
     for result in hard_missing:
+        criterion = by_id[result.criterion_id]
+        if result.criterion_type in {"designation", "evidence", "plan_priority", "barrier"}:
+            available = set(_entity_pool(request.applicant, result.criterion_type))
+            missing_evidence.extend(sorted(set(criterion.required_entity_ids) - available))
         if result.criterion_type == "partner":
-            criterion = by_id[result.criterion_id]
             missing_partner_ids.extend(
                 sorted(set(criterion.required_entity_ids) - set(request.applicant.partner_organization_ids))
             )
@@ -358,9 +394,12 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
         geography_id=request.county_id,
         plan_priority_ids=request.applicant.plan_priority_ids,
         barrier_observation_ids=request.applicant.barrier_observation_ids,
-        designation_evidence_claim_ids=request.applicant.designation_evidence_claim_ids,
+        designation_evidence_claim_ids=[
+            *request.applicant.designation_evidence_claim_ids,
+            *request.applicant.workforce_designation_ids,
+        ],
         supporting_evidence_claim_ids=request.applicant.supporting_evidence_claim_ids,
-        missing_evidence=missing_evidence,
+        missing_evidence=sorted(set(missing_evidence)),
         eligibility_status=eligibility,
         fit_status=fit_status,
         confidence=confidence,
@@ -385,6 +424,8 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
         caveats.append("The opportunity is not yet open; current application action is not available.")
     if deadline_status == "unknown":
         caveats.append("The application deadline is not verified and must be confirmed before action.")
+    if eligibility == "unknown":
+        caveats.append("The available required criteria are insufficient to assert likely eligibility.")
 
     return FundingEvaluationResult(
         opportunity_id=opportunity.id,
@@ -394,7 +435,7 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
         eligibility_status=eligibility,
         fit_status=fit_status,
         confidence=confidence,
-        missing_evidence=missing_evidence,
+        missing_evidence=sorted(set(missing_evidence)),
         missing_partner_ids=sorted(set(missing_partner_ids)),
         fit=fit,
         trajectory=trajectory,
