@@ -68,12 +68,23 @@ class TrajectoryEvent(StrictModel):
 
     @model_validator(mode="after")
     def validate_model_accounting(self) -> "TrajectoryEvent":
-        model_used = self.model_provider is not None or self.model_name is not None
-        token_used = self.input_tokens > 0 or self.output_tokens > 0 or self.estimated_cost_usd > 0
-        if token_used and not model_used:
+        has_provider = self.model_provider is not None
+        has_model = self.model_name is not None
+        if has_provider != has_model:
+            raise ValueError("model identity requires both provider and model name")
+
+        model_used = has_provider and has_model
+        token_or_cost_used = (
+            self.input_tokens > 0
+            or self.output_tokens > 0
+            or self.estimated_cost_usd > 0
+        )
+        if token_or_cost_used and not model_used:
             raise ValueError("model token or cost accounting requires model identity")
-        if self.actor_type == "deterministic" and token_used:
-            raise ValueError("deterministic trajectory events cannot report model tokens or model cost")
+        if self.actor_type == "deterministic" and (model_used or token_or_cost_used):
+            raise ValueError(
+                "deterministic trajectory events cannot report model identity, tokens, or model cost"
+            )
         return self
 
 
