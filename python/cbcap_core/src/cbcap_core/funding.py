@@ -7,11 +7,13 @@ from pydantic import Field
 
 from .models import (
     Confidence,
+    DocumentTrust,
     FundingFit,
     FundingOpportunity,
     ReviewStatus,
     SourceDocument,
     StrictModel,
+    TenantVisibility,
 )
 
 FundingCriterionType = Literal[
@@ -79,7 +81,7 @@ class FundingEvaluationRequest(StrictModel):
 class FundingEvaluationResult(StrictModel):
     opportunity_id: str = Field(min_length=1)
     source_verified: bool
-    deadline_status: Literal["open", "closed", "unknown"]
+    deadline_status: Literal["open", "closed", "not_yet_open", "unknown"]
     criterion_results: list[FundingCriterionResult] = Field(default_factory=list)
     eligibility_status: Literal["likely_eligible", "possibly_eligible", "ineligible", "unknown"]
     fit_status: Literal["strong", "moderate", "weak", "not_recommended", "unreviewed"]
@@ -209,6 +211,8 @@ def _base_criteria(request: FundingEvaluationRequest) -> list[FundingCriterion]:
 
 
 def _deadline_status(opportunity: FundingOpportunity, as_of: date) -> str:
+    if opportunity.open_date is not None and as_of < opportunity.open_date:
+        return "not_yet_open"
     if opportunity.close_date is None:
         return "unknown"
     return "closed" if as_of > opportunity.close_date else "open"
@@ -219,13 +223,11 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
     source = request.source_document
     if source.id != opportunity.source_document_id:
         raise ValueError("funding opportunity does not reference the supplied source document")
-    if opportunity.geography_ids and request.county_id not in opportunity.geography_ids:
-        if request.state_id is None or request.state_id not in opportunity.geography_ids:
-            # Geography may still be represented by explicit criteria; do not silently discard it.
-            pass
 
     source_verified = (
         source.review_status == ReviewStatus.VERIFIED
+        and source.trust == DocumentTrust.OFFICIAL_VERIFIED
+        and source.visibility == TenantVisibility.PUBLIC
         and opportunity.review_status == ReviewStatus.VERIFIED
     )
     trajectory = [
@@ -247,7 +249,7 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
             fit_status="unreviewed",
             confidence=Confidence.LOW,
             trajectory=trajectory,
-            caveats=["Funding fit is blocked until the opportunity and its source notice are verified."],
+            caveats=["Funding fit is blocked until the opportunity and its official public source notice are verified."],
         )
 
     deadline_status = _deadline_status(opportunity, request.as_of)
@@ -375,6 +377,15 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
         )
     )
 
+    caveats = [
+        "Funding fit is a planning assessment, not an award prediction or guarantee.",
+        "A provisional fit requires review before it becomes organizational decision memory.",
+    ]
+    if deadline_status == "not_yet_open":
+        caveats.append("The opportunity is not yet open; current application action is not available.")
+    if deadline_status == "unknown":
+        caveats.append("The application deadline is not verified and must be confirmed before action.")
+
     return FundingEvaluationResult(
         opportunity_id=opportunity.id,
         source_verified=True,
@@ -387,8 +398,5 @@ def evaluate_funding_fit(request: FundingEvaluationRequest) -> FundingEvaluation
         missing_partner_ids=sorted(set(missing_partner_ids)),
         fit=fit,
         trajectory=trajectory,
-        caveats=[
-            "Funding fit is a planning assessment, not an award prediction or guarantee.",
-            "A provisional fit requires review before it becomes organizational decision memory.",
-        ],
+        caveats=caveats,
     )
