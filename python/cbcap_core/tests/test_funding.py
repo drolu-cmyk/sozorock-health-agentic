@@ -45,7 +45,7 @@ def source(*, status=ReviewStatus.VERIFIED, trust=DocumentTrust.OFFICIAL_VERIFIE
     )
 
 
-def opportunity(*, open_date=date(2026, 8, 1), close_date=date(2026, 10, 1), status=ReviewStatus.VERIFIED):
+def opportunity(*, open_date=date(2026, 8, 1), close_date=date(2026, 10, 1), status=ReviewStatus.VERIFIED, requirement_claim_ids=None):
     return FundingOpportunity(
         id="funding:opp-1",
         source_document_id="funding-document:opp-1",
@@ -55,12 +55,12 @@ def opportunity(*, open_date=date(2026, 8, 1), close_date=date(2026, 10, 1), sta
         close_date=close_date,
         eligible_applicant_types=["local_health_department"],
         geography_ids=["county:36001"],
-        requirement_claim_ids=["claim:eligibility"],
+        requirement_claim_ids=requirement_claim_ids if requirement_claim_ids is not None else ["claim:eligibility"],
         review_status=status,
     )
 
 
-def applicant(*, applicant_types=None, partners=None):
+def applicant(*, applicant_types=None, partners=None, workforce_designations=None):
     return FundingApplicantProfile(
         tenant_id="tenant-a",
         organization_id="org:health-department",
@@ -68,6 +68,7 @@ def applicant(*, applicant_types=None, partners=None):
         geography_ids=["county:36001"],
         partner_organization_ids=partners or [],
         designation_evidence_claim_ids=["claim:hpsa"],
+        workforce_designation_ids=workforce_designations or [],
         supporting_evidence_claim_ids=["claim:need"],
         plan_priority_ids=["priority:access"],
         barrier_observation_ids=["barrier:transportation"],
@@ -180,3 +181,87 @@ def test_funding_trajectory_retains_criterion_decisions_for_future_evaluation():
     result = evaluate()
     stages = {item.stage for item in result.trajectory}
     assert {"source_validation", "deadline", "criterion", "fit_decision"}.issubset(stages)
+
+
+def test_not_applicable_criteria_do_not_become_likely_eligibility():
+    result = evaluate(
+        opp=FundingOpportunity(
+            id="funding:opp-1",
+            source_document_id="funding-document:opp-1",
+            title="Unspecified opportunity",
+            open_date=date(2026, 8, 1),
+            close_date=date(2026, 10, 1),
+            review_status=ReviewStatus.VERIFIED,
+        ),
+        criteria=[
+            FundingCriterion(
+                id="criterion:empty",
+                criterion_type="evidence",
+                description="No encoded requirement.",
+                required=True,
+                source_claim_ids=["claim:empty-requirement"],
+            )
+        ],
+    )
+    assert result.eligibility_status == "unknown"
+    assert result.fit_status == "unreviewed"
+
+
+def test_workforce_designation_can_satisfy_verified_designation_requirement():
+    designation_id = "workforce-designation:observation:hpsa:county"
+    result = evaluate(
+        profile=applicant(workforce_designations=[designation_id]),
+        criteria=[
+            *aligned_criteria(),
+            FundingCriterion(
+                id="criterion:hpsa",
+                criterion_type="designation",
+                description="Current HPSA designation required.",
+                required=True,
+                required_entity_ids=[designation_id],
+                source_claim_ids=["claim:hpsa-required"],
+            ),
+        ],
+    )
+    assert result.eligibility_status == "likely_eligible"
+    assert result.fit_status == "strong"
+    assert result.fit is not None
+    assert designation_id in result.fit.designation_evidence_claim_ids
+
+
+def test_required_criterion_without_source_lineage_blocks_eligibility_reasoning():
+    result = evaluate(
+        criteria=[
+            FundingCriterion(
+                id="criterion:unsupported",
+                criterion_type="partner",
+                description="An unsupported inferred partner requirement.",
+                required=True,
+                required_entity_ids=["org:partner"],
+                source_claim_ids=[],
+            )
+        ]
+    )
+    assert result.eligibility_status == "unknown"
+    assert result.fit_status == "unreviewed"
+    assert result.fit is None
+    assert any("source-claim lineage" in item.lower() for item in result.caveats)
+
+
+def test_missing_evidence_names_actual_required_entity_not_internal_criterion():
+    missing_id = "claim:required-local-evidence"
+    result = evaluate(
+        criteria=[
+            *aligned_criteria(),
+            FundingCriterion(
+                id="criterion:evidence-gap",
+                criterion_type="evidence",
+                description="Specific evidence attachment required.",
+                required=True,
+                required_entity_ids=[missing_id],
+                source_claim_ids=["claim:evidence-requirement"],
+            ),
+        ]
+    )
+    assert missing_id in result.missing_evidence
+    assert "criterion:evidence-gap" not in result.missing_evidence
