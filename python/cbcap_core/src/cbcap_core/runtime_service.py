@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from time import perf_counter_ns
 from typing import Any, Protocol
 
 from langgraph.types import Command
@@ -21,6 +23,12 @@ from .graph import (
     initial_graph_state,
 )
 from .models import CountyRunState
+from .observability import (
+    RunObservation,
+    build_initial_run_observation,
+    build_review_resume_observation,
+    persist_run_observation,
+)
 from .persistence import (
     ConnectionLike,
     PersistenceSettings,
@@ -51,7 +59,12 @@ class CountyRunExecution:
     graph_state: dict[str, Any]
     interrupted: bool
     trajectory_events: list[TrajectoryEvent]
+    observation: RunObservation
     prepared: PreparedCountyGraphRun | None = None
+
+
+def _elapsed_ms(started_ns: int) -> int:
+    return max(0, (perf_counter_ns() - started_ns) // 1_000_000)
 
 
 def _require_actor_tenant(run_tenant_id: str | None, actor: RuntimeActor) -> None:
@@ -99,10 +112,13 @@ def execute_county_run(
 
     Network retrieval occurs only after tenant, capability and geography scope
     checks. The validated public package is reused by all evidence branches.
-    Trajectory state is persisted on both completed and interrupted runs.
+    Trajectory and operational observation records are persisted on both
+    completed and interrupted runs.
     """
 
     _require_execution_authorization(run, actor)
+    started_at = datetime.now(timezone.utc)
+    total_started_ns = perf_counter_ns()
     prepared = prepare_county_graph_run(
         run,
         budget,
@@ -111,20 +127,41 @@ def execute_county_run(
         cached_response=cached_response,
         planning_pipeline_request=planning_pipeline_request,
     )
+    graph_started_ns = perf_counter_ns()
     graph_state = graph.invoke(
         initial_graph_state(run, budget=prepared.budget),
         config=checkpoint_thread_config(run.run_id, tenant_id=actor.tenant_id),
         context=prepared.context,
     )
+    graph_duration_ms = _elapsed_ms(graph_started_ns)
     events = _persist_graph_state(
         connection,
         graph_state,
         actor=actor,
     )
+    completed_at = datetime.now(timezone.utc)
+    final_run = CountyRunState.model_validate(graph_state["county_run"])
+    final_budget = RunBudget.model_validate(graph_state.get("budget", prepared.budget.model_dump(mode="json")))
+    interrupted = "__interrupt__" in graph_state
+    observation = build_initial_run_observation(
+        run,
+        final_run,
+        final_budget,
+        started_at=started_at,
+        completed_at=completed_at,
+        evidence_fetch_ms=prepared.evidence_fetch_ms,
+        graph_duration_ms=graph_duration_ms,
+        total_duration_ms=_elapsed_ms(total_started_ns),
+        evidence_release_id=prepared.evidence_release_id,
+        evidence_release_hash=prepared.evidence_release_hash,
+        interrupted=interrupted,
+    )
+    persist_run_observation(connection, observation)
     return CountyRunExecution(
         graph_state=graph_state,
-        interrupted="__interrupt__" in graph_state,
+        interrupted=interrupted,
         trajectory_events=events,
+        observation=observation,
         prepared=prepared,
     )
 
@@ -147,14 +184,15 @@ def resume_county_run_review(
     if decision not in {"approved", "rejected", "needs_revision", "deferred"}:
         raise ValueError("invalid review decision")
 
-    # Run scope is checked before the checkpoint is touched. This prevents an
-    # otherwise valid tenant reviewer from probing or resuming another run.
     require_actor_capability(
         actor,
         "resume_human_review",
         run_id=run_id,
     )
 
+    started_at = datetime.now(timezone.utc)
+    total_started_ns = perf_counter_ns()
+    graph_started_ns = perf_counter_ns()
     graph_state = graph.invoke(
         Command(
             resume={
@@ -166,6 +204,7 @@ def resume_county_run_review(
         config=checkpoint_thread_config(run_id, tenant_id=actor.tenant_id),
         context=CountyGraphContext(),
     )
+    graph_duration_ms = _elapsed_ms(graph_started_ns)
     canonical_run = CountyRunState.model_validate(graph_state["county_run"])
     _require_actor_tenant(canonical_run.tenant_id, actor)
     require_actor_capability(
@@ -179,10 +218,24 @@ def resume_county_run_review(
         graph_state,
         actor=actor,
     )
+    completed_at = datetime.now(timezone.utc)
+    final_budget = RunBudget.model_validate(graph_state.get("budget", {}))
+    interrupted = "__interrupt__" in graph_state
+    observation = build_review_resume_observation(
+        canonical_run,
+        final_budget,
+        started_at=started_at,
+        completed_at=completed_at,
+        graph_duration_ms=graph_duration_ms,
+        total_duration_ms=_elapsed_ms(total_started_ns),
+        interrupted=interrupted,
+    )
+    persist_run_observation(connection, observation)
     return CountyRunExecution(
         graph_state=graph_state,
-        interrupted="__interrupt__" in graph_state,
+        interrupted=interrupted,
         trajectory_events=events,
+        observation=observation,
     )
 
 
