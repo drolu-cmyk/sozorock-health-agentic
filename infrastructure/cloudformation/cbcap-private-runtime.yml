@@ -676,7 +676,7 @@ Resources:
       Port: 8080
       TargetType: ip
       HealthCheckEnabled: true
-      HealthCheckPath: /healthz
+      HealthCheckPath: /readyz
       HealthCheckProtocol: HTTP
       Matcher:
         HttpCode: '200'
