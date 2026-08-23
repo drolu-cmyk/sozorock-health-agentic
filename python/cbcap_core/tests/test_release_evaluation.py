@@ -18,9 +18,10 @@ class FakeClient:
 
     def fetch_county(self, county_fips, *, etag=None):
         self.calls.append((county_fips, etag))
+        default_hash_character = format(int(county_fips[-1]) % 16, "x")
         release_id, release_hash = self.release_overrides.get(
             county_fips,
-            ("release:2026-08-23", "sha256:" + "a" * 64),
+            ("release:2026-08-23", "sha256:" + default_hash_character * 64),
         )
         geography_fips = self.wrong_county_fips if county_fips == "36001" and self.wrong_county_fips else county_fips
         geography = SimpleNamespace(
@@ -56,26 +57,37 @@ def test_release_gate_uses_the_locked_five_county_evaluation_set():
     ]
 
 
-def test_release_gate_requires_one_consistent_published_release_across_all_counties():
+def test_release_gate_requires_one_release_id_but_allows_county_specific_package_hashes():
     client = FakeClient()
     result = evaluate_five_county_gateway(client)
 
     assert len(result.counties) == 5
     assert result.contract == "sozorock.evidence-gateway.v1"
     assert result.release_id == "release:2026-08-23"
-    assert result.release_hash == "sha256:" + "a" * 64
     assert [item.county_fips for item in result.counties] == [item[0] for item in FIVE_COUNTY_EVALUATION]
+    assert len({item.release_hash for item in result.counties}) > 1
+    assert all(item.release_hash.startswith("sha256:") for item in result.counties)
     assert all(item.measure_count == 2 for item in result.counties)
     assert client.calls == [(item[0], None) for item in FIVE_COUNTY_EVALUATION]
 
 
-def test_release_gate_fails_if_counties_are_served_from_different_releases():
+def test_release_gate_fails_if_counties_are_served_from_different_release_ids():
     client = FakeClient(
         release_overrides={
             "42029": ("release:other", "sha256:" + "b" * 64),
         }
     )
     with pytest.raises(RuntimeError, match="not pinned to one published release"):
+        evaluate_five_county_gateway(client)
+
+
+def test_release_gate_fails_on_invalid_county_package_hash():
+    client = FakeClient(
+        release_overrides={
+            "36093": ("release:2026-08-23", "not-a-hash"),
+        }
+    )
+    with pytest.raises(RuntimeError, match="invalid package hash for 36093"):
         evaluate_five_county_gateway(client)
 
 
