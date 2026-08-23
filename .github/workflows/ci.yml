@@ -30,3 +30,21 @@ jobs:
         run: python -m pip check
       - name: Run typed contract and service tests
         run: pytest python/cbcap_core/tests
+      - name: Build pinned runtime container
+        run: docker build --file Dockerfile.runtime --tag cbcap-runtime:test .
+      - name: Verify nonroot container identity
+        run: test "$(docker image inspect cbcap-runtime:test --format '{{.Config.User}}')" = "10001:10001"
+      - name: Smoke test runtime health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id=$(docker run --detach --rm --publish 127.0.0.1:18080:8080 cbcap-runtime:test)
+          trap 'docker stop "$container_id" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18080/healthz | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container_id"
+          exit 1
