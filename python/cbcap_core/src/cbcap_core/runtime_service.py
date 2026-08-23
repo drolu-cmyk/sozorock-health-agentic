@@ -78,6 +78,7 @@ def _require_execution_authorization(run: CountyRunState, actor: RuntimeActor) -
         actor,
         "execute_county_run",
         geography_id=run.county.id,
+        run_id=run.run_id,
     )
 
 
@@ -110,10 +111,10 @@ def execute_county_run(
 ) -> CountyRunExecution:
     """Execute one governed county run from one validated public-evidence fetch.
 
-    Network retrieval occurs only after tenant, capability and geography scope
-    checks. The validated public package is reused by all evidence branches.
-    Trajectory and operational observation records are persisted on both
-    completed and interrupted runs.
+    Network retrieval occurs only after tenant, capability, geography and run
+    scope checks. The validated public package is reused by all evidence
+    branches. Trajectory and operational observation records are persisted on
+    both completed and interrupted runs.
     """
 
     _require_execution_authorization(run, actor)
