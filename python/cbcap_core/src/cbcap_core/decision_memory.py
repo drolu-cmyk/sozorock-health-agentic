@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Literal
 
@@ -100,6 +102,17 @@ class DecisionMemoryQuery(StrictModel):
     include_expired: bool = False
 
 
+def _stable_memory_id(prefix: str, payload: dict) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return f"memory:{prefix}:sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
 def build_decision_memory(request: DecisionMemoryWriteRequest) -> DecisionMemoryRecord:
     proposal = request.proposal
     if request.actor_tenant_id != proposal.tenant_id:
@@ -108,11 +121,19 @@ def build_decision_memory(request: DecisionMemoryWriteRequest) -> DecisionMemory
         raise ValueError("only reviewer or admin may create reviewed institutional memory")
 
     status: MemoryStatus = "reviewed" if request.approve_as_reviewed else "proposed"
+    record_id = _stable_memory_id(
+        "decision",
+        {
+            "proposal": proposal.model_dump(mode="json"),
+            "actor_tenant_id": request.actor_tenant_id,
+            "actor_id": request.actor_id,
+            "actor_role": request.actor_role,
+            "decided_at": request.decided_at.isoformat(),
+            "status": status,
+        },
+    )
     return DecisionMemoryRecord(
-        id=(
-            f"memory:{proposal.tenant_id}:{proposal.geography_id}:"
-            f"{proposal.decision_type}:{proposal.subject_id}:{int(request.decided_at.timestamp())}"
-        ),
+        id=record_id,
         tenant_id=proposal.tenant_id,
         geography_id=proposal.geography_id,
         decision_type=proposal.decision_type,
@@ -146,8 +167,20 @@ def supersede_decision_memory(
         raise ValueError("decision memory tenant does not match authenticated actor tenant")
     if actor_role not in {"reviewer", "admin"}:
         raise ValueError("only reviewer or admin may supersede institutional memory")
+    superseding_id = _stable_memory_id(
+        "supersede",
+        {
+            "record_id": record.id,
+            "actor_tenant_id": actor_tenant_id,
+            "actor_id": actor_id,
+            "actor_role": actor_role,
+            "decided_at": decided_at.isoformat(),
+            "reason_code": reason_code,
+            "rationale": rationale,
+        },
+    )
     return DecisionMemoryRecord(
-        id=f"memory:supersede:{record.id}:{int(decided_at.timestamp())}",
+        id=superseding_id,
         tenant_id=record.tenant_id,
         geography_id=record.geography_id,
         decision_type=record.decision_type,
