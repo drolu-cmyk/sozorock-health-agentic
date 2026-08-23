@@ -7,6 +7,7 @@ from typing import Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import Field
 
@@ -22,7 +23,12 @@ from .identity_adapter import IdentityProjectionPolicy
 from .models import CountyRunState, StrictModel
 from .persistence import PersistenceSettings, postgres_connection
 from .runtime_registry import append_county_run_state
-from .runtime_request import authorize_server_owned_run, create_server_owned_run
+from .runtime_request import (
+    RunStateConflict,
+    authorize_server_owned_run,
+    create_server_owned_run,
+    require_run_operation_state,
+)
 from .runtime_service import execute_county_run, resume_county_run_review
 
 ReviewDecision = Literal["approved", "rejected", "needs_revision", "deferred"]
@@ -64,6 +70,22 @@ def _scope_env(name: str) -> list[str]:
     values = [item.strip() for item in raw.split(",") if item.strip()]
     if len(set(values)) != len(values):
         raise RuntimeError(f"{name} must not contain duplicate scopes")
+    return values
+
+
+def _allowed_origins() -> list[str]:
+    raw = os.getenv(
+        "CB_CAP_ALLOWED_ORIGINS",
+        "https://cbcap.sozorockfoundation.org",
+    ).strip()
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    if not values or len(set(values)) != len(values):
+        raise RuntimeError("CB_CAP_ALLOWED_ORIGINS must contain unique HTTPS origins")
+    for origin in values:
+        if not origin.startswith("https://") or origin.endswith("/"):
+            raise RuntimeError("CB_CAP_ALLOWED_ORIGINS must contain exact HTTPS origins without trailing slash")
+        if any(character.isspace() for character in origin):
+            raise RuntimeError("CB_CAP_ALLOWED_ORIGINS cannot contain whitespace")
     return values
 
 
@@ -176,6 +198,15 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["X-Request-Id"],
+    max_age=600,
+)
 
 
 @app.middleware("http")
@@ -184,8 +215,12 @@ async def security_response_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["X-Request-Id"] = request_id
     return response
 
@@ -239,6 +274,8 @@ def _safe_http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=403, detail="not_authorized")
     if isinstance(exc, LookupError):
         return HTTPException(status_code=404, detail="run_not_found")
+    if isinstance(exc, RunStateConflict):
+        return HTTPException(status_code=409, detail="run_state_conflict")
     if isinstance(exc, ValueError):
         return HTTPException(status_code=422, detail="invalid_request")
     return HTTPException(status_code=503, detail="runtime_unavailable")
@@ -346,7 +383,9 @@ def execute_run(tenant_id: str, run_id: str, request: Request):
                     run_id=run_id,
                     token_verifier=dependencies.token_verifier,
                     identity_policy=dependencies.settings.identity_policy,
+                    lock_for_mutation=True,
                 )
+                require_run_operation_state(authorized.run, "execute")
                 execution = execute_county_run(
                     authorized.run,
                     dependencies.settings.run_budget.model_copy(deep=True),
@@ -398,7 +437,9 @@ def review_run(
                     run_id=run_id,
                     token_verifier=dependencies.token_verifier,
                     identity_policy=dependencies.settings.identity_policy,
+                    lock_for_mutation=True,
                 )
+                require_run_operation_state(authorized.run, "review")
                 execution = resume_county_run_review(
                     run_id,
                     graph,
