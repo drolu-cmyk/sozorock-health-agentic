@@ -49,12 +49,29 @@ class ForecastModelAdapter(Protocol):
     ) -> ForecastResult: ...
 
 
-def _period_key(measure: Measure) -> tuple[date | None, date | None, date]:
-    return (
-        measure.data_period_start,
-        measure.data_period_end,
-        measure.source_version.release_date,
+def _period_key(measure: Measure) -> tuple[date, date]:
+    """Return one stable analysis period for sorting and duplicate detection.
+
+    Public datasets do not all supply both period boundaries. Missing boundaries
+    fall back to the available boundary and then to release date, but a later file
+    release cannot turn the same observation period into a new historical point.
+    """
+
+    start = (
+        measure.data_period_start
+        or measure.data_period_end
+        or measure.source_version.data_period_start
+        or measure.source_version.data_period_end
+        or measure.source_version.release_date
     )
+    end = (
+        measure.data_period_end
+        or measure.data_period_start
+        or measure.source_version.data_period_end
+        or measure.source_version.data_period_start
+        or measure.source_version.release_date
+    )
+    return start, end
 
 
 def authorize_forecast(
