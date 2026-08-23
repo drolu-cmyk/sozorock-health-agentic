@@ -3,7 +3,9 @@ from inspect import getsource
 from cbcap_core.migration_runner import (
     RUNTIME_INSERT_TABLES,
     RUNTIME_SELECT_TABLES,
+    RUNTIME_UPDATE_COLUMNS,
     _ensure_runtime_role,
+    _grant_runtime_lock_columns,
 )
 
 
@@ -18,6 +20,9 @@ EXPECTED_RUNTIME_INSERT_TABLES = {
     "trajectory_event",
     "run_observation",
 }
+EXPECTED_RUNTIME_UPDATE_COLUMNS = {
+    "county_run_identity": ("run_id",),
+}
 
 
 def test_shared_runtime_read_allowlist_is_exact_and_minimal():
@@ -26,6 +31,13 @@ def test_shared_runtime_read_allowlist_is_exact_and_minimal():
 
 def test_shared_runtime_write_allowlist_is_exact_and_minimal():
     assert set(RUNTIME_INSERT_TABLES) == EXPECTED_RUNTIME_INSERT_TABLES
+
+
+def test_row_lock_update_privilege_is_one_immutable_identity_column_only():
+    assert RUNTIME_UPDATE_COLUMNS == EXPECTED_RUNTIME_UPDATE_COLUMNS
+    source = getsource(_grant_runtime_lock_columns)
+    assert "GRANT UPDATE ({}) ON TABLE cbcap.{} TO {}" in source
+    assert "GRANT UPDATE ON TABLE" not in source
 
 
 def test_server_authority_ledgers_are_not_runtime_writable():
@@ -45,6 +57,7 @@ def test_server_authority_ledgers_are_not_runtime_writable():
         "trajectory_correction",
     }
     assert forbidden.isdisjoint(RUNTIME_INSERT_TABLES)
+    assert forbidden.isdisjoint(RUNTIME_UPDATE_COLUMNS)
 
 
 def test_private_and_governance_tables_are_not_shared_runtime_readable():
