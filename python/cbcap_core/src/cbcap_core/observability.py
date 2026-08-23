@@ -45,11 +45,21 @@ class RunObservation(StrictModel):
 
     @model_validator(mode="after")
     def validate_phase(self) -> "RunObservation":
+        for label, value in (
+            ("started_at", self.started_at),
+            ("completed_at", self.completed_at),
+            ("requested_at", self.requested_at),
+        ):
+            if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+                raise ValueError(f"run observation {label} must be timezone-aware")
         if self.completed_at < self.started_at:
             raise ValueError("run observation completed_at cannot precede started_at")
-        if self.phase == "review_resume": (
+        if self.total_duration_ms < self.graph_duration_ms:
+            raise ValueError("total run duration cannot be shorter than graph duration")
+        if self.evidence_fetch_ms is not None and self.total_duration_ms < self.evidence_fetch_ms:
+            raise ValueError("total run duration cannot be shorter than evidence fetch duration")
+        if self.phase == "review_resume":
             self._require_resume_fields_absent()
-        )
         if self.phase == "initial" and self.requested_at is None:
             raise ValueError("initial run observation requires requested_at")
         return self
