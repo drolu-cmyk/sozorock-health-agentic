@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy, interrupt
 from pydantic import Field
 
+from .barriers import classify_barrier_measures
 from .evidence_adapter import select_county_public_evidence
 from .models import (
     BarrierObservation,
@@ -178,6 +179,20 @@ def _merge_entities(existing, incoming):
     return list(merged.values())
 
 
+def _trajectory_event(run, *, stage, entity_id, outcome, reason_codes=None):
+    reason_codes = reason_codes or []
+    reason_key = ":".join(sorted(reason_codes)) or "none"
+    return {
+        "id": f"{run.run_id}:{stage}:{entity_id}:{outcome}:{reason_key}",
+        "run_id": run.run_id,
+        "stage": stage,
+        "entity_id": entity_id,
+        "outcome": outcome,
+        "reason_codes": sorted(set(reason_codes)),
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def resolve_geography(state):
     run = _load_run(state)
     verified = run.county.review_status == ReviewStatus.VERIFIED
@@ -276,15 +291,15 @@ def planning_documents_branch(state, runtime):
             run,
             payload,
             complete_override=False,
-            trajectory_events=[{
-                "id": f"{run.run_id}:planning-geography-mismatch",
-                "run_id": run.run_id,
-                "stage": "candidate_policy",
-                "entity_id": request_county.id,
-                "outcome": "rejected",
-                "reason_codes": ["planning_request_geography_mismatch"],
-                "occurred_at": datetime.now(timezone.utc).isoformat(),
-            }],
+            trajectory_events=[
+                _trajectory_event(
+                    run,
+                    stage="candidate_policy",
+                    entity_id=request_county.id,
+                    outcome="rejected",
+                    reason_codes=["planning_request_geography_mismatch"],
+                )
+            ],
         )
 
     pipeline_result = run_planning_pipeline(request)
@@ -312,8 +327,35 @@ def workforce_designations_branch(state, runtime):
 
 def barrier_evidence_branch(state, runtime):
     run = _load_run(state)
-    _ = _runtime_context(runtime).untrusted_source_text
-    return _branch_output(run, _existing_payload(run, "barrier_evidence"))
+    context = _runtime_context(runtime)
+    _ = context.untrusted_source_text
+    if context.public_evidence_package is None:
+        return _branch_output(run, _existing_payload(run, "barrier_evidence"))
+
+    measures, release_id = select_county_public_evidence(run, context.public_evidence_package)
+    classification = classify_barrier_measures(measures)
+    payload = BranchPayload(
+        id=f"{run.run_id}:payload:barrier_evidence",
+        branch="barrier_evidence",
+        source_release_ids=[release_id],
+        barrier_observations=classification.observations,
+    )
+    trajectory = [
+        _trajectory_event(
+            run,
+            stage="barrier_classification",
+            entity_id=decision.measure_id,
+            outcome=decision.status,
+            reason_codes=decision.reason_codes,
+        )
+        for decision in classification.decisions
+    ]
+    return _branch_output(
+        run,
+        payload,
+        complete_override=bool(classification.observations),
+        trajectory_events=trajectory,
+    )
 
 
 def _merge_branch_payloads(run, payloads):
