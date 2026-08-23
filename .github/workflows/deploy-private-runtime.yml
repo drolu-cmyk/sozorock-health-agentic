@@ -26,6 +26,7 @@ jobs:
       REGISTRY_STACK: cbcap-private-runtime-registry
       RUNTIME_STACK: cbcap-private-runtime
       API_DOMAIN: api.cbcap.sozorockfoundation.org
+      WORKSPACE_ORIGIN: https://cbcap.sozorockfoundation.org
       CB_CAP_EVIDENCE_GATEWAY_URL: https://health.sozorockfoundation.org/api/evidence/v1/gateway
       DEPLOY_ROLE_ARN: ${{ vars.CBCAP_PRIVATE_AWS_DEPLOY_ROLE_ARN }}
       CLOUDFORMATION_ROLE_ARN: ${{ vars.CBCAP_PRIVATE_CLOUDFORMATION_ROLE_ARN }}
@@ -110,18 +111,31 @@ jobs:
           echo "REPOSITORY_URI=$repository_uri" >> "$GITHUB_ENV"
           echo "RUNTIME_IMAGE_URI=$repository_uri:$APPROVED_COMMIT" >> "$GITHUB_ENV"
 
-      - name: Build and publish the immutable runtime image
+      - name: Publish or reuse the immutable runtime image
         run: |
           set -euo pipefail
-          registry_host="${REPOSITORY_URI%%/*}"
-          aws ecr get-login-password --region "$AWS_REGION" \
-            | docker login --username AWS --password-stdin "$registry_host"
 
-          docker build \
-            --file Dockerfile.runtime \
-            --tag "$RUNTIME_IMAGE_URI" \
-            .
-          docker push "$RUNTIME_IMAGE_URI"
+          if aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$APPROVED_COMMIT" \
+            --output json > /tmp/cbcap-existing-image.json 2> /tmp/cbcap-existing-image.err; then
+            digest=$(jq -r '.imageDetails[0].imageDigest // ""' /tmp/cbcap-existing-image.json)
+            test "$digest" != ""
+            echo "Reusing immutable ECR image $APPROVED_COMMIT at $digest."
+          elif grep -q 'ImageNotFoundException' /tmp/cbcap-existing-image.err; then
+            registry_host="${REPOSITORY_URI%%/*}"
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | docker login --username AWS --password-stdin "$registry_host"
+
+            docker build \
+              --file Dockerfile.runtime \
+              --tag "$RUNTIME_IMAGE_URI" \
+              .
+            docker push "$RUNTIME_IMAGE_URI"
+          else
+            cat /tmp/cbcap-existing-image.err
+            exit 1
+          fi
 
       - name: Require a clean ECR vulnerability scan
         run: |
@@ -228,11 +242,12 @@ jobs:
           test -n "$service"
           aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
 
-      - name: Prove live health, readiness, and authentication boundary
+      - name: Prove live health, readiness, ingress, CORS, and authentication boundaries
         run: |
           set -euo pipefail
           health_url="https://$API_DOMAIN/healthz"
           ready_url="https://$API_DOMAIN/readyz"
+          protected_url="https://$API_DOMAIN/v1/tenants/probe/runs/probe"
 
           for attempt in $(seq 1 30); do
             if curl \
@@ -255,8 +270,12 @@ jobs:
 
           jq -e '.status == "ok"' /tmp/cbcap-runtime-health.json >/dev/null
           grep -qi '^cache-control: *no-store' /tmp/cbcap-runtime-headers.txt
+          grep -qi '^strict-transport-security: *max-age=31536000; includeSubDomains' /tmp/cbcap-runtime-headers.txt
+          grep -qi "^content-security-policy: *default-src 'none'; frame-ancestors 'none'; base-uri 'none'" /tmp/cbcap-runtime-headers.txt
           grep -qi '^x-content-type-options: *nosniff' /tmp/cbcap-runtime-headers.txt
+          grep -qi '^x-frame-options: *DENY' /tmp/cbcap-runtime-headers.txt
           grep -qi '^referrer-policy: *no-referrer' /tmp/cbcap-runtime-headers.txt
+          grep -qi '^permissions-policy: *camera=(), microphone=(), geolocation=()' /tmp/cbcap-runtime-headers.txt
           grep -qi '^x-request-id:' /tmp/cbcap-runtime-headers.txt
 
           curl \
@@ -275,9 +294,54 @@ jobs:
             --show-error \
             --output /tmp/cbcap-runtime-protected.json \
             --write-out '%{http_code}' \
-            "https://$API_DOMAIN/v1/tenants/probe/runs/probe")
+            "$protected_url")
           test "$protected_status" = "401"
           jq -e '.detail == "authentication_required"' /tmp/cbcap-runtime-protected.json >/dev/null
+
+          allowed_cors_status=$(curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            --silent \
+            --show-error \
+            --request OPTIONS \
+            --header "Origin: $WORKSPACE_ORIGIN" \
+            --header 'Access-Control-Request-Method: GET' \
+            --dump-header /tmp/cbcap-cors-allowed.txt \
+            --output /tmp/cbcap-cors-allowed-body.txt \
+            --write-out '%{http_code}' \
+            "$protected_url")
+          test "$allowed_cors_status" = "200"
+          grep -qi "^access-control-allow-origin: *$WORKSPACE_ORIGIN" /tmp/cbcap-cors-allowed.txt
+          grep -qi '^access-control-allow-methods:.*GET' /tmp/cbcap-cors-allowed.txt
+
+          bad_cors_status=$(curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            --silent \
+            --show-error \
+            --request OPTIONS \
+            --header 'Origin: https://not-cbcap.example' \
+            --header 'Access-Control-Request-Method: GET' \
+            --dump-header /tmp/cbcap-cors-denied.txt \
+            --output /tmp/cbcap-cors-denied-body.txt \
+            --write-out '%{http_code}' \
+            "$protected_url")
+          test "$bad_cors_status" = "400"
+          if grep -qi '^access-control-allow-origin:' /tmp/cbcap-cors-denied.txt; then
+            echo "Disallowed browser origin unexpectedly received an allow-origin header."
+            exit 1
+          fi
+
+          wrong_host_status=$(curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            --silent \
+            --show-error \
+            --header 'Host: not-cbcap.example' \
+            --output /tmp/cbcap-wrong-host.json \
+            --write-out '%{http_code}' \
+            "$health_url")
+          test "$wrong_host_status" = "404"
 
       - name: Reconfirm immutable release source
         run: |
