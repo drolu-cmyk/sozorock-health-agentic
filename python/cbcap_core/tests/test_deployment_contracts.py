@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -7,6 +8,7 @@ DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 REGISTRY_STACK = REPO_ROOT / "infrastructure" / "cloudformation" / "cbcap-runtime-registry.yml"
 RUNTIME_STACK = REPO_ROOT / "infrastructure" / "cloudformation" / "cbcap-private-runtime.yml"
 BOOTSTRAP_STACK = REPO_ROOT / "infrastructure" / "cloudformation" / "cbcap-private-deployment-bootstrap.yml"
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-private-runtime.yml"
 
 
@@ -91,6 +93,16 @@ def test_deployment_identity_roles_cannot_manage_themselves():
     assert "role/${RuntimeStackPrefix}*" not in stack
     assert "iam:PassedToService: cloudformation.amazonaws.com" in stack
     assert "iam:PassedToService: ecs-tasks.amazonaws.com" in stack
+
+
+def test_ci_and_release_actions_are_pinned_to_full_commit_shas():
+    for path in (CI_WORKFLOW, DEPLOY_WORKFLOW):
+        workflow = _text(path)
+        uses_lines = [line.strip() for line in workflow.splitlines() if line.strip().startswith("uses:")]
+        assert uses_lines
+        for line in uses_lines:
+            match = re.fullmatch(r"uses:\s+[^@\s]+@([0-9a-f]{40})(?:\s+#.*)?", line)
+            assert match is not None, f"external action must be SHA pinned: {line}"
 
 
 def test_deployment_workflow_keeps_migration_before_service_enablement():
