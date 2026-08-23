@@ -180,6 +180,9 @@ def _setup_checkpoint_schema(master_url: str, connection: psycopg.Connection) ->
 
     role = sql.Identifier(RUNTIME_ROLE)
     connection.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
+    connection.execute(
+        sql.SQL(f"GRANT SELECT ON TABLE public.{MIGRATION_TABLE} TO {{}}").format(role)
+    )
     for table_name in ("checkpoints", "checkpoint_blobs", "checkpoint_writes"):
         if connection.execute("SELECT to_regclass(%s)", (f"public.{table_name}",)).fetchone()[0]:
             connection.execute(
