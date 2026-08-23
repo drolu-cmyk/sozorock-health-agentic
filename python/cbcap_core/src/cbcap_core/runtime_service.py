@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from langgraph.types import Command
+from pydantic import Field
 
 from .checkpoint import CheckpointSettings, checkpoint_thread_config, postgres_checkpointer
 from .gateway import EvidenceGatewayResponse
@@ -15,7 +16,7 @@ from .graph import (
     build_county_planning_graph,
     initial_graph_state,
 )
-from .models import CountyRunState
+from .models import CountyRunState, StrictModel
 from .persistence import (
     ConnectionLike,
     PersistenceSettings,
@@ -24,6 +25,25 @@ from .persistence import (
 )
 from .run_preparation import PreparedCountyGraphRun, prepare_county_graph_run
 from .trajectory import TrajectoryEvent
+
+RuntimeRole = Literal["read_only", "analyst", "planner", "reviewer", "admin"]
+EXECUTION_ROLES: frozenset[RuntimeRole] = frozenset(
+    {"analyst", "planner", "reviewer", "admin"}
+)
+REVIEW_ROLES: frozenset[RuntimeRole] = frozenset({"reviewer", "admin"})
+
+
+class RuntimeActor(StrictModel):
+    """Authenticated principal projected into the CB-CAP runtime boundary.
+
+    Authentication remains an application-layer responsibility. Runtime code
+    accepts only this typed projection and never accepts an arbitrary reviewer
+    display name or tenant override from a review request.
+    """
+
+    actor_id: str = Field(min_length=1)
+    tenant_id: str | None = None
+    role: RuntimeRole
 
 
 class CompiledGraphLike(Protocol):
@@ -44,23 +64,33 @@ class CountyRunExecution:
     prepared: PreparedCountyGraphRun | None = None
 
 
-def _require_actor_tenant(run_tenant_id: str | None, actor_tenant_id: str | None) -> None:
-    if run_tenant_id != actor_tenant_id:
+def _require_actor_tenant(run_tenant_id: str | None, actor: RuntimeActor) -> None:
+    if run_tenant_id != actor.tenant_id:
         raise ValueError("county run tenant does not match authenticated actor tenant")
+
+
+def _require_execution_role(actor: RuntimeActor) -> None:
+    if actor.role not in EXECUTION_ROLES:
+        raise PermissionError("authenticated actor role cannot execute county planning runs")
+
+
+def _require_review_role(actor: RuntimeActor) -> None:
+    if actor.role not in REVIEW_ROLES:
+        raise PermissionError("authenticated actor role cannot resume human review")
 
 
 def _persist_graph_state(
     connection: ConnectionLike,
     graph_state: dict[str, Any],
     *,
-    actor_tenant_id: str | None,
+    actor: RuntimeActor,
 ) -> list[TrajectoryEvent]:
     if "county_run" not in graph_state:
         raise RuntimeError("county graph returned no canonical county_run state")
     return persist_county_graph_trajectory(
         connection,
         graph_state,
-        actor_tenant_id=actor_tenant_id,
+        actor_tenant_id=actor.tenant_id,
     )
 
 
@@ -71,7 +101,7 @@ def execute_county_run(
     graph: CompiledGraphLike,
     connection: ConnectionLike,
     *,
-    actor_tenant_id: str | None,
+    actor: RuntimeActor,
     planning_pipeline_request: dict[str, Any] | None = None,
     etag: str | None = None,
     cached_response: EvidenceGatewayResponse | None = None,
@@ -84,7 +114,8 @@ def execute_county_run(
     path that led to a human decision.
     """
 
-    _require_actor_tenant(run.tenant_id, actor_tenant_id)
+    _require_execution_role(actor)
+    _require_actor_tenant(run.tenant_id, actor)
     prepared = prepare_county_graph_run(
         run,
         budget,
@@ -95,13 +126,13 @@ def execute_county_run(
     )
     graph_state = graph.invoke(
         initial_graph_state(run, budget=prepared.budget),
-        config=checkpoint_thread_config(run.run_id, tenant_id=run.tenant_id),
+        config=checkpoint_thread_config(run.run_id, tenant_id=actor.tenant_id),
         context=prepared.context,
     )
     events = _persist_graph_state(
         connection,
         graph_state,
-        actor_tenant_id=actor_tenant_id,
+        actor=actor,
     )
     return CountyRunExecution(
         graph_state=graph_state,
@@ -116,18 +147,17 @@ def resume_county_run_review(
     graph: CompiledGraphLike,
     connection: ConnectionLike,
     *,
-    actor_tenant_id: str | None,
+    actor: RuntimeActor,
     decision: str,
-    reviewer: str,
     reason: str,
 ) -> CountyRunExecution:
     """Resume a previously interrupted graph without refetching public evidence."""
 
+    _require_review_role(actor)
     run_id = run_id.strip()
-    reviewer = reviewer.strip()
     reason = reason.strip()
-    if not run_id or not reviewer or not reason:
-        raise ValueError("run_id, reviewer, and reason are required")
+    if not run_id or not reason:
+        raise ValueError("run_id and reason are required")
     if decision not in {"approved", "rejected", "needs_revision", "deferred"}:
         raise ValueError("invalid review decision")
 
@@ -135,19 +165,19 @@ def resume_county_run_review(
         Command(
             resume={
                 "decision": decision,
-                "reviewer": reviewer,
+                "reviewer": actor.actor_id,
                 "reason": reason,
             }
         ),
-        config=checkpoint_thread_config(run_id, tenant_id=actor_tenant_id),
+        config=checkpoint_thread_config(run_id, tenant_id=actor.tenant_id),
         context=CountyGraphContext(),
     )
     canonical_run = CountyRunState.model_validate(graph_state["county_run"])
-    _require_actor_tenant(canonical_run.tenant_id, actor_tenant_id)
+    _require_actor_tenant(canonical_run.tenant_id, actor)
     events = _persist_graph_state(
         connection,
         graph_state,
-        actor_tenant_id=actor_tenant_id,
+        actor=actor,
     )
     return CountyRunExecution(
         graph_state=graph_state,
@@ -160,13 +190,15 @@ def execute_county_run_from_env(
     run: CountyRunState,
     budget: RunBudget,
     *,
-    actor_tenant_id: str | None,
+    actor: RuntimeActor,
     planning_pipeline_request: dict[str, Any] | None = None,
     checkpoint_settings: CheckpointSettings | None = None,
     persistence_settings: PersistenceSettings | None = None,
 ) -> CountyRunExecution:
     """Production convenience entrypoint. No in-memory or insecure fallback."""
 
+    _require_execution_role(actor)
+    _require_actor_tenant(run.tenant_id, actor)
     endpoint = os.getenv("CB_CAP_EVIDENCE_GATEWAY_URL", "").strip()
     if not endpoint:
         raise RuntimeError("CB_CAP_EVIDENCE_GATEWAY_URL is required")
@@ -176,7 +208,7 @@ def execute_county_run_from_env(
         graph = build_county_planning_graph(checkpointer=checkpointer)
         with postgres_connection(
             persistence_settings,
-            tenant_id=actor_tenant_id,
+            tenant_id=actor.tenant_id,
         ) as connection:
             return execute_county_run(
                 run,
@@ -184,6 +216,6 @@ def execute_county_run_from_env(
                 gateway_client,
                 graph,
                 connection,
-                actor_tenant_id=actor_tenant_id,
+                actor=actor,
                 planning_pipeline_request=planning_pipeline_request,
             )
