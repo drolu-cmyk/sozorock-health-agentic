@@ -48,6 +48,27 @@ def test_reviewer_can_promote_structured_funding_rejection_to_reviewed_memory():
     assert record.outcome == "rejected"
     assert record.missing_requirements == ["org:required-partner"]
     assert record.applicability == "reusable"
+    assert record.id.startswith("memory:decision:sha256:")
+
+
+def test_same_decision_is_idempotent_but_distinct_same_second_decision_does_not_collide():
+    first = build_decision_memory(write_request())
+    repeated = build_decision_memory(write_request())
+    changed_proposal = funding_rejection_proposal().model_copy(
+        update={
+            "outcome": "deferred",
+            "reason_codes": ["partner_due_diligence_pending"],
+            "rationale": "The opportunity is deferred while the implementation partner completes due diligence.",
+        }
+    )
+    changed = build_decision_memory(
+        write_request().model_copy(update={"proposal": changed_proposal})
+    )
+
+    assert repeated.id == first.id
+    assert changed.decided_at == first.decided_at
+    assert changed.subject_id == first.subject_id
+    assert changed.id != first.id
 
 
 def test_analyst_cannot_create_reviewed_institutional_memory():
@@ -132,5 +153,6 @@ def test_reviewer_can_supersede_memory_without_mutating_prior_record():
     )
     assert reviewed.status == "reviewed"
     assert superseding.status == "superseded"
+    assert superseding.id.startswith("memory:supersede:sha256:")
     assert superseding.supersedes_memory_id == reviewed.id
     assert superseding.expires_at == NOW + timedelta(days=30)
