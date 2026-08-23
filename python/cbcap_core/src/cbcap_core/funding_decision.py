@@ -1,26 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import Field
 
+from .authorization import AuthorizedActor, require_actor_capability
 from .decision_memory import DecisionMemoryProposal
 from .models import FundingFit, ReviewStatus, StrictModel
 
 FundingPursuitAction = Literal["pursue", "defer", "decline"]
-FundingDecisionActorRole = Literal["planner", "reviewer", "admin"]
 
 
 class FundingPursuitDecisionRequest(StrictModel):
+    """Organizational pursuit intent only. Identity, tenant and time are trusted service data."""
+
     funding_fit: FundingFit
-    actor_tenant_id: str = Field(min_length=1)
-    actor_id: str = Field(min_length=1)
-    actor_role: FundingDecisionActorRole
     action: FundingPursuitAction
     reason_codes: list[str] = Field(min_length=1)
     rationale: str = Field(min_length=1)
-    decided_at: datetime
     required_partner_ids: list[str] = Field(default_factory=list)
     unresolved_requirement_ids: list[str] = Field(default_factory=list)
 
@@ -29,15 +27,26 @@ class FundingPursuitDecisionResult(StrictModel):
     action: FundingPursuitAction
     opportunity_id: str = Field(min_length=1)
     funding_fit_id: str = Field(min_length=1)
+    decided_by: str = Field(min_length=1)
+    decided_at: datetime
     memory_proposal: DecisionMemoryProposal
 
 
 def build_funding_pursuit_decision(
     request: FundingPursuitDecisionRequest,
+    *,
+    actor: AuthorizedActor,
 ) -> FundingPursuitDecisionResult:
+    """Record organizational pursuit intent separately from funding-fit review."""
+
     fit = request.funding_fit
-    if fit.tenant_id != request.actor_tenant_id:
+    if fit.tenant_id != actor.tenant_id:
         raise ValueError("funding decision tenant does not match authenticated actor tenant")
+    require_actor_capability(
+        actor,
+        "decide_funding_pursuit",
+        geography_id=fit.geography_id,
+    )
     if fit.review_status != ReviewStatus.VERIFIED:
         raise ValueError("organizational funding decision requires a reviewed funding-fit assessment")
     if request.action == "pursue" and fit.eligibility_status == "ineligible":
@@ -50,13 +59,21 @@ def build_funding_pursuit_decision(
         "defer": "deferred",
         "decline": "rejected",
     }
-    evidence_ids = list(dict.fromkeys([
-        fit.id,
-        *fit.supporting_evidence_claim_ids,
-        *fit.designation_evidence_claim_ids,
-        *fit.plan_priority_ids,
-        *fit.barrier_observation_ids,
-    ]))
+    evidence_ids = list(
+        dict.fromkeys(
+            [
+                fit.id,
+                *fit.supporting_evidence_claim_ids,
+                *fit.designation_evidence_claim_ids,
+                *fit.plan_priority_ids,
+                *fit.barrier_observation_ids,
+            ]
+        )
+    )
+    if not evidence_ids:
+        raise ValueError("funding pursuit decision must retain the reviewed funding-fit evidence chain")
+
+    decided_at = datetime.now(timezone.utc)
     memory = DecisionMemoryProposal(
         tenant_id=fit.tenant_id,
         geography_id=fit.geography_id,
@@ -64,27 +81,41 @@ def build_funding_pursuit_decision(
         subject_type="funding_pursuit_decision",
         subject_id=fit.opportunity_id,
         outcome=outcome_map[request.action],
-        reason_codes=list(dict.fromkeys([
-            f"action:{request.action}",
-            f"eligibility:{fit.eligibility_status}",
-            f"fit:{fit.fit_status}",
-            *request.reason_codes,
-        ])),
+        reason_codes=list(
+            dict.fromkeys(
+                [
+                    f"action:{request.action}",
+                    f"eligibility:{fit.eligibility_status}",
+                    f"fit:{fit.fit_status}",
+                    *request.reason_codes,
+                ]
+            )
+        ),
         rationale=request.rationale,
         evidence_entity_ids=evidence_ids,
-        related_entity_ids=list(dict.fromkeys([
-            fit.id,
-            *request.required_partner_ids,
-        ])),
-        missing_requirements=list(dict.fromkeys([
-            *fit.missing_evidence,
-            *request.unresolved_requirement_ids,
-        ])),
+        related_entity_ids=list(
+            dict.fromkeys(
+                [
+                    fit.id,
+                    *request.required_partner_ids,
+                ]
+            )
+        ),
+        missing_requirements=list(
+            dict.fromkeys(
+                [
+                    *fit.missing_evidence,
+                    *request.unresolved_requirement_ids,
+                ]
+            )
+        ),
         applicability="context_specific",
     )
     return FundingPursuitDecisionResult(
         action=request.action,
         opportunity_id=fit.opportunity_id,
         funding_fit_id=fit.id,
+        decided_by=actor.actor_id,
+        decided_at=decided_at,
         memory_proposal=memory,
     )
