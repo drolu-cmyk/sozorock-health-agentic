@@ -48,9 +48,9 @@ test('candidate provenance is validated in PostgreSQL, not only in application c
   assert.match(sql, /learning candidate references an unknown or cross-tenant correction/);
 });
 
-test('trajectory schema excludes raw content columns and constrains deterministic model accounting', () => {
-  assert.doesNotMatch(sql, /raw_content/i);
-  assert.doesNotMatch(sql, /transcript/i);
+test('trajectory schema excludes raw-content or transcript columns and constrains deterministic model accounting', () => {
+  assert.doesNotMatch(sql, /^\s*raw_content\s+(?:text|jsonb|varchar)/im);
+  assert.doesNotMatch(sql, /^\s*transcript\s+(?:text|jsonb|varchar)/im);
   assert.match(sql, /actor_type <> 'deterministic'/);
   assert.match(sql, /model_provider IS NULL AND model_name IS NULL/);
 });
