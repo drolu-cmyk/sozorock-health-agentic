@@ -1,6 +1,6 @@
 const { GeographyAgent } = require('../packages/agents/sub-agents/geography-agent');
 const { CBCAPPlanningEngine } = require('../packages/cbcap/planning-engine');
-const { hasUserAssumptions, isApprovedHumanRecord } = require('../packages/runtime/contracts');
+const { hasUserAssumptions } = require('../packages/runtime/contracts');
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -94,24 +94,21 @@ function createCBCAPApi(options = {}) {
       if (!location) return { statusCode: 400, body: { error: 'location is required' } };
       if (location.length > 120) return { statusCode: 400, body: { error: 'location is too long' } };
 
+      if (Object.prototype.hasOwnProperty.call(input, 'approval')) {
+        return {
+          statusCode: 400,
+          body: {
+            code: 'review_continuation_required',
+            error: 'Approval is not accepted on the initial planning request. Review must continue the exact saved run and Evidence Gateway release.',
+          },
+        };
+      }
+
       let assumptions;
       try {
         assumptions = validateAssumptions(input.assumptions);
       } catch (error) {
         return { statusCode: 400, body: { error: error.message } };
-      }
-
-      let approval;
-      if (input.approval !== undefined && input.approval !== null) {
-        if (!isApprovedHumanRecord(input.approval)) {
-          return {
-            statusCode: 400,
-            body: {
-              error: 'approval must include status=approved, reviewer identity, county_plan scope, and a valid reviewedAt timestamp',
-            },
-          };
-        }
-        approval = clone(input.approval);
       }
 
       const resolved = await geographyAgent.resolve(location);
@@ -120,7 +117,6 @@ function createCBCAPApi(options = {}) {
 
       const request = { countyFips: resolved.fips };
       if (assumptions !== undefined) request.assumptions = assumptions;
-      if (approval !== undefined) request.approval = approval;
 
       let result;
       try {
