@@ -34,10 +34,33 @@ class InMemoryRunMemory {
     return clone(record);
   }
 
+  checkpoint(runId, state, details = {}) {
+    if (!state || typeof state !== 'object' || Array.isArray(state)) {
+      throw new Error('Checkpoint state must be an object.');
+    }
+    return this.append(runId, {
+      type: 'state_checkpoint',
+      nodeId: details.nodeId || null,
+      step: Number.isInteger(details.step) ? details.step : null,
+      status: details.status || state.status || null,
+      resumeAt: details.resumeAt || null,
+      state: clone(state),
+    });
+  }
+
   read(runId) {
     const events = this.runs.get(runId);
     if (!events) return [];
     return clone(events);
+  }
+
+  latestCheckpoint(runId) {
+    const events = this.runs.get(runId);
+    if (!events) return null;
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (events[index].type === 'state_checkpoint') return clone(events[index]);
+    }
+    return null;
   }
 }
 

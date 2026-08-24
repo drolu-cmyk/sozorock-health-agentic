@@ -70,8 +70,11 @@ function createCBCAPGraph(options = {}) {
           patch: { approval: { ...(state.approval || {}), status: 'required' } },
           halt: {
             code: 'human_review_required',
-            reason: 'CB-CAP generated a draft. A human must review this exact run and evidence release before approved output.',
+            reason: publish
+              ? 'CB-CAP generated a draft. A human must review this exact run and evidence release before approved output.'
+              : 'CB-CAP generated a draft. Human review is required, but no publish capability is installed in this runtime.',
             status: 'awaiting_human_review',
+            resumeAt: publish ? 'publish' : null,
           },
         };
       },

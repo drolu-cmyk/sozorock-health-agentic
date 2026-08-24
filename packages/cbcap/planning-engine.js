@@ -26,6 +26,7 @@ function normalizeRequest(input) {
 class CBCAPPlanningEngine {
   constructor(options = {}) {
     this.auditSink = options.auditSink || (() => {});
+    this.tenantId = typeof options.tenantId === 'string' && options.tenantId.trim() ? options.tenantId.trim() : null;
     this.evidenceClient = options.evidenceClient || new EvidenceGatewayClient({
       baseUrl: options.evidenceOrigin || process.env.EVIDENCE_GATEWAY_ORIGIN || DEFAULT_EVIDENCE_ORIGIN,
       fetchImpl: options.fetchImpl,
@@ -67,6 +68,21 @@ class CBCAPPlanningEngine {
     });
   }
 
+  _formatState(state) {
+    return {
+      type: 'cbcap_county_plan',
+      ...state,
+      meta: {
+        engine: 'cbcap-governed-planning-v3',
+        evidenceAuthority: 'sozorock-evidence-gateway',
+        distinctFrom: 'place-intelligence-front-door',
+        syntheticPlanningOutputs: false,
+        humanReviewRequired: state.status !== 'approved_output',
+        resumableReview: state.status === 'awaiting_human_review' && Boolean(this.publishHandler),
+      },
+    };
+  }
+
   async buildCountyPlan(input) {
     const request = normalizeRequest(input);
     if (!COUNTY_FIPS.test(request.countyFips)) {
@@ -78,9 +94,10 @@ class CBCAPPlanningEngine {
           reason: 'Governed CB-CAP planning requires an exact five-digit county FIPS. Resolve names, places, and ZIP-linked inputs before calling the planning engine.',
         },
         meta: {
-          engine: 'cbcap-governed-planning-v2',
+          engine: 'cbcap-governed-planning-v3',
           evidenceAuthority: 'sozorock-evidence-gateway',
           syntheticPlanningOutputs: false,
+          resumableReview: false,
         },
       };
       this.auditSink({ action: 'cbcap_request_rejected', code: result.error.code });
@@ -94,6 +111,7 @@ class CBCAPPlanningEngine {
     if (request.assumptions !== undefined) task.assumptions = request.assumptions;
 
     const initial = {};
+    if (this.tenantId) initial.tenantId = this.tenantId;
     if (request.approval !== undefined) initial.approval = request.approval;
 
     const state = await this.graph.run(task, initial);
@@ -103,19 +121,46 @@ class CBCAPPlanningEngine {
       status: state.status,
       runId: state.runId,
       releaseId: state.evidence?.releaseId || null,
+      tenantId: this.tenantId,
     });
 
+    return this._formatState(state);
+  }
+
+  async getRunReviewCheckpoint(runId) {
+    if (typeof runId !== 'string' || !runId.trim()) throw new Error('runId is required.');
+    if (!this.graph.memory || typeof this.graph.memory.latestCheckpoint !== 'function') {
+      throw new Error('Configured graph memory does not expose review checkpoints.');
+    }
+    const checkpoint = await this.graph.memory.latestCheckpoint(runId.trim());
+    if (!checkpoint) return null;
+    const state = checkpoint.state || {};
     return {
-      type: 'cbcap_county_plan',
-      ...state,
-      meta: {
-        engine: 'cbcap-governed-planning-v2',
-        evidenceAuthority: 'sozorock-evidence-gateway',
-        distinctFrom: 'place-intelligence-front-door',
-        syntheticPlanningOutputs: false,
-        humanReviewRequired: state.status !== 'approved_output',
-      },
+      runId: state.runId || runId.trim(),
+      tenantId: state.tenantId || null,
+      status: checkpoint.status || state.status || null,
+      resumeAt: checkpoint.resumeAt || null,
+      evidenceReleaseId: state.evidence?.releaseId || null,
+      countyFips: state.evidence?.countyFips || state.place?.countyFips || state.task?.countyFips || null,
+      draft: clone(state.draft || null),
+      checkpointSequence: checkpoint.sequence,
     };
+  }
+
+  async resumeCountyPlan(runId, approval) {
+    if (!this.publishHandler) {
+      throw new Error('No reviewed publish capability is installed for CB-CAP review continuation.');
+    }
+    const state = await this.graph.resume(runId, { approval: clone(approval) });
+    this.auditSink({
+      action: 'cbcap_review_continued',
+      fips: state.evidence?.countyFips || state.place?.countyFips || null,
+      status: state.status,
+      runId: state.runId,
+      releaseId: state.evidence?.releaseId || null,
+      tenantId: this.tenantId,
+    });
+    return this._formatState(state);
   }
 }
 

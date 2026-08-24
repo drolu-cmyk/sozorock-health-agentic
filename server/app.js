@@ -18,9 +18,11 @@ function createApp(options = {}) {
     : parseAllowedOrigins(options.allowedOrigins || process.env.AGENTIC_ALLOWED_ORIGINS);
   const enableLegacySessions = options.enableLegacySessions ?? process.env.ENABLE_LEGACY_SESSIONS === 'true';
   const legacySessionStore = options.sessionStore || defaultSessionStore;
+  const reviewAPI = options.cbcapReviewAPI || null;
   const auditSink = typeof options.auditSink === 'function' ? options.auditSink : () => {};
   const placeAPI = options.placeAPI || createPlaceIntelligenceAPI({ onAudit: auditSink });
   const cbcapAPI = options.cbcapAPI || createCBCAPApi({
+    tenantId: options.tenantId,
     evidenceOrigin: options.evidenceOrigin,
     fetchImpl: options.fetchImpl,
     auditSink,
@@ -28,6 +30,8 @@ function createApp(options = {}) {
     harness: options.harness,
     killSwitch: options.killSwitch,
     clock: options.clock,
+    scenarioHandler: options.scenarioHandler,
+    publishHandler: options.publishHandler,
   });
 
   app.disable('x-powered-by');
@@ -43,7 +47,7 @@ function createApp(options = {}) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-Id');
     }
     if (req.method === 'OPTIONS') {
       if (origin && !allowedOrigins.has(origin)) return res.sendStatus(403);
@@ -56,12 +60,13 @@ function createApp(options = {}) {
     res.json({
       status: 'ok',
       service: 'sozorock-health-agentic',
-      version: '0.6.0',
+      version: '0.7.0',
       runtime: 'governed-graph',
       time: new Date().toISOString(),
       geography: countyMeta(),
       zipCrosswalk: zipMeta(),
       legacySessionsEnabled: enableLegacySessions,
+      reviewContinuationEnabled: Boolean(reviewAPI),
     });
   });
 
@@ -84,6 +89,19 @@ function createApp(options = {}) {
       res.status(500).json({ error: 'Internal error' });
     }
   });
+
+  if (reviewAPI) {
+    if (typeof reviewAPI.handle !== 'function') throw new Error('cbcapReviewAPI must expose handle().');
+    app.post('/api/cbcap/runs/:runId/review', async (req, res) => {
+      try {
+        const result = await reviewAPI.handle(req.params.runId, req.body || {}, { request: req });
+        res.status(result.statusCode).json(result.body);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal error' });
+      }
+    });
+  }
 
   if (enableLegacySessions) {
     app.post('/api/sessions', (req, res) => {
