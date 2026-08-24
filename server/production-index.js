@@ -13,6 +13,17 @@ function parseAllowedHosts(value) {
   return hosts;
 }
 
+function createProductionAuditSink(logger = console) {
+  return function productionAuditSink(event = {}) {
+    const payload = {
+      type: 'cbcap_audit',
+      recordedAt: new Date().toISOString(),
+      ...event,
+    };
+    logger.log(JSON.stringify(payload));
+  };
+}
+
 function productionPublishHandlerForActor(actor) {
   return async function publishApprovedCountyPlan(state) {
     if (!state || state.tenantId !== actor.tenantId || !state.runId || !state.evidence?.releaseId) {
@@ -91,6 +102,7 @@ async function createProductionRuntime(options = {}) {
   const allowedOrigins = parseAllowedOrigins(requiredEnv(env, 'AGENTIC_ALLOWED_ORIGINS', 2048));
   const allowedHosts = parseAllowedHosts(requiredEnv(env, 'AGENTIC_ALLOWED_HOSTS', 1024));
   const pool = options.pool || createProductionPool(env);
+  const auditSink = options.auditSink || createProductionAuditSink(options.logger || console);
 
   try {
     await pool.query('SELECT 1 AS ok');
@@ -99,7 +111,7 @@ async function createProductionRuntime(options = {}) {
       region,
       evidenceOrigin,
       publishHandlerForActor: options.publishHandlerForActor || productionPublishHandlerForActor,
-      auditSink: options.auditSink,
+      auditSink,
     });
 
     const readinessProbe = async () => {
@@ -114,11 +126,13 @@ async function createProductionRuntime(options = {}) {
     const innerApp = createApp({
       institutionalCBCAPGateway,
       allowedOrigins,
+      auditSink,
       enableLegacySessions: false,
       allowUnauthenticatedDevCBCAP: false,
     });
     const app = createProductionEdge(innerApp, { allowedHosts, readinessProbe });
-    return { app, pool };
+    auditSink({ action: 'production_runtime_composed', institutionalAccessEnabled: true });
+    return { app, pool, auditSink };
   } catch (error) {
     if (!options.pool) await closePool(pool).catch(() => {});
     throw error;
@@ -130,11 +144,11 @@ async function main() {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT is invalid.');
   const runtime = await createProductionRuntime();
   const server = runtime.app.listen(port, '0.0.0.0', () => {
-    console.log(`CB-CAP governed production runtime listening on ${port}`);
+    runtime.auditSink({ action: 'production_runtime_started', port });
   });
 
   async function shutdown(signal) {
-    console.log(`Received ${signal}; shutting down CB-CAP runtime.`);
+    runtime.auditSink({ action: 'production_runtime_shutdown', signal });
     server.close(async () => {
       await closePool(runtime.pool).catch(() => {});
       process.exit(0);
@@ -152,6 +166,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createProductionAuditSink,
   createProductionEdge,
   createProductionRuntime,
   parseAllowedHosts,
