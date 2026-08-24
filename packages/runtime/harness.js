@@ -1,6 +1,6 @@
 const {
+  approvalMatchesState,
   hasUserAssumptions,
-  isApprovedHumanRecord,
   validateEvidenceEnvelope,
 } = require('./contracts');
 
@@ -24,11 +24,11 @@ class GovernedHarness {
     if (nodeId === 'scenario' && !hasUserAssumptions(state.task?.assumptions)) {
       return { ok: false, code: 'assumptions_required', reason: 'Scenario execution requires explicit user assumptions.' };
     }
-    if (nodeId === 'publish' && !isApprovedHumanRecord(state.approval)) {
+    if (nodeId === 'publish' && !approvalMatchesState(state.approval, state)) {
       return {
         ok: false,
         code: 'human_approval_required',
-        reason: 'Publishing requires an explicit human approval record with reviewer, county-plan scope, and review time.',
+        reason: 'Publishing requires a human approval bound to this graph run and Evidence Gateway release.',
       };
     }
     return { ok: true };
