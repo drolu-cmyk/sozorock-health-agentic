@@ -36,12 +36,26 @@ test('live proof rejects legacy frontend and unauthenticated place routes', () =
   assert.match(script, /legacyPlaceApiDenied:true/);
 });
 
+test('live proof exercises the five-county Evidence Gateway visualization workspace and render claim', () => {
+  const script = readFileSync(path.join(__dirname, '..', 'scripts', 'live-cognito-probe.sh'), 'utf8');
+  assert.match(script, /api\/cbcap\/visualizations\/workspace/);
+  assert.match(script, /36001.*36093.*36057.*42029.*48029/);
+  assert.match(script, /LACKTRPT:Crude/);
+  assert.match(script, /cbcap\.visualization-workspace\.v1/);
+  assert.match(script, /cbcap\.visualization-render-package\.v1/);
+  assert.match(script, /visualizationWorkspaceVerified:true/);
+  assert.match(script, /visualizationWorkspaceFiveCountyEvidenceVerified:true/);
+  assert.match(script, /visualizationWorkspaceRenderClaimVerified:true/);
+  assert.match(script, /compositeScore == null/);
+});
+
 test('deployment script binds the live probe to the stack client and fails closed to zero tasks', () => {
   const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
   assert.match(script, /USER_POOL_CLIENT_ID=\$\(stack_output UserPoolClientId\)/);
   assert.match(script, /USER_POOL_CLIENT_ID="\$USER_POOL_CLIENT_ID" API_DOMAIN/);
   assert.match(script, /DesiredCount=0 ActivationEnabled=false/);
   assert.match(script, /productionAppClientVerified/);
+  assert.match(script, /visualizationWorkspaceVerified/);
 });
 
 test('production workflow deploys only the exact triggering commit', () => {
