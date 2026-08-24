@@ -76,6 +76,7 @@ function geographyResponse(resolved, query) {
 function createCBCAPApi(options = {}) {
   const geographyAgent = options.geographyAgent || new GeographyAgent();
   const engine = options.engine || new CBCAPPlanningEngine({
+    tenantId: options.tenantId,
     evidenceOrigin: options.evidenceOrigin,
     fetchImpl: options.fetchImpl,
     auditSink: options.auditSink,
@@ -83,6 +84,8 @@ function createCBCAPApi(options = {}) {
     harness: options.harness,
     killSwitch: options.killSwitch,
     clock: options.clock,
+    scenarioHandler: options.scenarioHandler,
+    publishHandler: options.publishHandler,
   });
 
   return {
@@ -121,7 +124,7 @@ function createCBCAPApi(options = {}) {
       let result;
       try {
         result = await engine.buildCountyPlan(request);
-      } catch (error) {
+      } catch {
         return {
           statusCode: 502,
           body: {
