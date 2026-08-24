@@ -1,3 +1,5 @@
+const { buildChaChipWorkbench } = require('./cha-chip-workbench');
+
 const PATHWAY_BARRIERS = Object.freeze({
   'ACCESS2:Crude': { key: 'insurance', label: 'Adults without health insurance' },
   'LACKTRPT:Crude': { key: 'transportation', label: 'Lack of reliable transportation' },
@@ -167,7 +169,7 @@ function buildBarrierProfile(evidence) {
 function buildPlanningWorkspace(evidence, barriers) {
   const geography = evidence.package.geographies[0];
   return {
-    kind: 'cbcap_county_planning_workspace_v1',
+    kind: 'cbcap_county_planning_workspace_v2',
     geography: {
       id: geography.id,
       countyFips: geography.county_fips,
@@ -195,12 +197,7 @@ function buildPlanningWorkspace(evidence, barriers) {
         'partner and implementation context',
       ],
     },
-    chaChipWorkspace: {
-      status: 'draft_evidence_organization',
-      workflow: ['assess', 'validate', 'prioritize', 'act', 'measure_and_learn'],
-      humanAuthorityRequiredFor: ['priority_setting', 'action_selection', 'ownership', 'approval', 'evaluation'],
-      replacesOfficialChaChip: false,
-    },
+    chaChipWorkspace: buildChaChipWorkbench(evidence),
     fundingIntelligence: {
       status: 'not_evaluated',
       allocationDecision: 'human_only',
@@ -215,7 +212,7 @@ function buildPlanningBrief(state) {
   const unavailable = pathway.filter((item) => item.status !== 'published_public_estimate');
 
   return {
-    kind: 'cbcap_county_planning_draft_v1',
+    kind: 'cbcap_county_planning_draft_v2',
     status: 'draft_requires_human_review',
     geography: clone(state.planning.geography),
     evidenceRelease: clone(state.planning.evidenceRelease),
@@ -228,6 +225,7 @@ function buildPlanningBrief(state) {
     })),
     accessibilityContext: clone(state.planning.accessibilityContext),
     capacityContext: clone(state.planning.capacityContext),
+    chaChipEvidence: clone(state.planning.chaChipWorkspace),
     planningQuestions: [
       'Which local records and community experience confirm, qualify, or challenge these public estimates?',
       'Which assets, workforce constraints, service-capacity limits, and partner roles are still missing from the evidence record?',
