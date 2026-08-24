@@ -77,7 +77,7 @@ class GeographyAgent {
       return null;
     }
 
-    // Name only — detect ambiguity across states
+    // Name only — detect ambiguity across states.
     const matches = findAllByName(q);
     if (matches.length === 1) {
       const rec = matches[0];
@@ -94,7 +94,7 @@ class GeographyAgent {
     if (matches.length > 1) {
       return {
         status: "ambiguous",
-        message: "Multiple counties match this name. Specify state (e.g. \"Orange, CA\").",
+        message: "Multiple counties match this name. Specify the state before continuing.",
         matches: matches.map(r => ({
           fips: r.fips,
           county: r.name,
@@ -103,15 +103,7 @@ class GeographyAgent {
       };
     }
 
-    // Legacy demo hints
-    const lower = q.toLowerCase();
-    if (lower.includes("schoharie") || lower.includes("cobleskill")) {
-      return this.resolve("36095");
-    }
-    if (lower.includes("delaware") && (lower.includes("ny") || lower.includes("new york"))) {
-      return this.resolve("36025");
-    }
-
+    // No fuzzy or demo fallback is permitted. Unresolved input fails closed.
     return null;
   }
 }
