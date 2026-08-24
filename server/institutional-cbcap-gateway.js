@@ -90,6 +90,16 @@ function createInstitutionalCBCAPGateway(options = {}) {
       return result;
     },
 
+    async handleVisualizationWorkspace(input, context = {}) {
+      const auth = await actorFor(context.request, 'cbcap.visualization.plan');
+      if (auth.error) return auth.error;
+      const selected = await runtime(auth.actor);
+      if (!selected?.visualizationWorkspaceApi || typeof selected.visualizationWorkspaceApi.handle !== 'function') return unavailable();
+      const result = await selected.visualizationWorkspaceApi.handle(input || {}, { ...context, workspaceActor: auth.actor });
+      auditSink({ action: 'cbcap_visualization_workspace_request_completed', tenantId: auth.actor.tenantId, principalId: auth.actor.principalId, role: auth.actor.role, question: result.body?.question || input?.question || null, artifactFamily: result.body?.plan?.artifactFamily || null, claimId: result.body?.claimId || null, statusCode: result.statusCode });
+      return result;
+    },
+
     async handleWorkforce(input, context = {}) {
       const auth = await actorFor(context.request, 'cbcap.workforce.view');
       if (auth.error) return auth.error;

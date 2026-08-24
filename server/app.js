@@ -63,6 +63,9 @@ function createApp(options = {}) {
   const workforceCapacityRouteEnabled = Boolean(
     institutionalGateway && typeof institutionalGateway.handleWorkforce === 'function',
   );
+  const visualizationWorkspaceRouteEnabled = Boolean(
+    institutionalGateway && typeof institutionalGateway.handleVisualizationWorkspace === 'function',
+  );
   const privateEvidenceRouteEnabled = Boolean(
     institutionalGateway
     && typeof institutionalGateway.handlePrivateEvidenceSubmit === 'function'
@@ -105,6 +108,7 @@ function createApp(options = {}) {
       reviewContinuationEnabled: Boolean(institutionalGateway),
       fundingIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleFunding === 'function'),
       visualizationIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleVisualization === 'function'),
+      visualizationWorkspaceRouteEnabled,
       monitoringIntelligenceRouteEnabled,
       workforceCapacityRouteEnabled,
       privateEvidenceRouteEnabled,
@@ -168,6 +172,17 @@ function createApp(options = {}) {
     try {
       if (!institutionalGateway || typeof institutionalGateway.handleVisualization !== 'function') return res.sendStatus(404);
       const result = await institutionalGateway.handleVisualization(req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/visualizations/workspace', async (req, res) => {
+    try {
+      if (!visualizationWorkspaceRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handleVisualizationWorkspace(req.body || {}, { request: req });
       return res.status(result.statusCode).json(result.body);
     } catch (error) {
       console.error(error);

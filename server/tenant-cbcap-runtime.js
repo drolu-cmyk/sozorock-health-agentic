@@ -8,6 +8,7 @@ const { createCBCAPMonitoringApi } = require('./cbcap-monitoring-api');
 const { createCBCAPPrivateEvidenceApi } = require('./cbcap-private-evidence-api');
 const { createCBCAPReviewApi } = require('./cbcap-review-api');
 const { createCBCAPVisualizationApi } = require('./cbcap-visualization-api');
+const { createCBCAPVisualizationWorkspaceApi } = require('./cbcap-visualization-workspace-api');
 const { createCBCAPWorkforceApi } = require('./cbcap-workforce-api');
 const { workspaceActorReviewAuthorizer } = require('./institutional-cbcap-gateway');
 
@@ -74,6 +75,10 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       : null;
 
     const visualizationApi = createCBCAPVisualizationApi({ auditSink: options.auditSink });
+    const visualizationWorkspaceApi = createCBCAPVisualizationWorkspaceApi({
+      evidenceClient: engine.evidenceClient,
+      auditSink: options.auditSink,
+    });
     const workforceApi = createCBCAPWorkforceApi({ evidenceClient: engine.evidenceClient, auditSink: options.auditSink });
 
     const monitoringApi = typeof options.monitoringDefinitionForActor === 'function'
@@ -134,6 +139,7 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       reviewApi,
       fundingApi,
       visualizationApi,
+      visualizationWorkspaceApi,
       workforceApi,
       monitoringApi,
       privateEvidenceApi,
@@ -141,6 +147,7 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       learningMemory,
       scenarioCapabilityEnabled: typeof scenarioHandler === 'function',
       workforceCapacityEnabled: Boolean(workforceApi),
+      visualizationWorkspaceEnabled: Boolean(visualizationWorkspaceApi),
       monitoringIntelligenceEnabled: Boolean(monitoringApi),
       privateEvidenceEnabled: Boolean(privateEvidenceApi),
       learningEvaluationEnabled: Boolean(learningMemory),
