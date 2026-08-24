@@ -17,9 +17,12 @@ function validateFinding(input, tenantId) {
   if (!/^sha256:[0-9a-f]{64}$/.test(findingKey)) throw new Error('findingKey must be a sha256 hash.');
   if (!Array.isArray(input.reasonCodes) || !input.reasonCodes.length) throw new Error('recorded monitoring findings require at least one reason code.');
   if (!Array.isArray(input.changedFields)) throw new Error('changedFields must be an array.');
-  if (!Array.isArray(input.current?.sourceEntityIds)) throw new Error('current.sourceEntityIds must be an array.');
   const status = requiredString(input.status, 'status', 80);
   if (!PERSISTED_STATUSES.has(status)) throw new Error('Only actionable or blocked monitoring findings may be persisted.');
+  const sourceEntityIds = input.current?.sourceEntityIds === undefined
+    ? []
+    : input.current.sourceEntityIds;
+  if (!Array.isArray(sourceEntityIds)) throw new Error('current.sourceEntityIds must be an array when a current snapshot exists.');
   return {
     tenantId,
     findingKey,
@@ -35,7 +38,7 @@ function validateFinding(input, tenantId) {
     currentState: input.current?.state || null,
     currentDeadline: input.current?.deadline || null,
     currentValidThrough: input.current?.validThrough || null,
-    sourceEntityIds: [...new Set(input.current.sourceEntityIds.map((value, index) => requiredString(value, `sourceEntityIds[${index}]`, 500)))],
+    sourceEntityIds: [...new Set(sourceEntityIds.map((value, index) => requiredString(value, `sourceEntityIds[${index}]`, 500)))],
     asOf: requiredString(input.asOf, 'asOf', 10),
   };
 }
