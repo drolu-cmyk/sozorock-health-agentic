@@ -9,13 +9,16 @@ probe_id="${GITHUB_RUN_ID:-$(date +%s)}"
 client_id=""
 planner_user="cbcap-preflight-planner-${probe_id}@example.invalid"
 agent_user="cbcap-preflight-agent-${probe_id}@example.invalid"
+other_planner_user="cbcap-preflight-other-${probe_id}@example.invalid"
 planner_password="Aa9!$(openssl rand -hex 18)"
 agent_password="Aa9!$(openssl rand -hex 18)"
+other_planner_password="Aa9!$(openssl rand -hex 18)"
 
 cleanup() {
   set +e
   aws cognito-idp admin-delete-user --user-pool-id "$USER_POOL_ID" --username "$planner_user" >/dev/null 2>&1 || true
   aws cognito-idp admin-delete-user --user-pool-id "$USER_POOL_ID" --username "$agent_user" >/dev/null 2>&1 || true
+  aws cognito-idp admin-delete-user --user-pool-id "$USER_POOL_ID" --username "$other_planner_user" >/dev/null 2>&1 || true
   if [[ -n "$client_id" ]]; then
     aws cognito-idp delete-user-pool-client --user-pool-id "$USER_POOL_ID" --client-id "$client_id" >/dev/null 2>&1 || true
   fi
@@ -67,7 +70,8 @@ create_user() {
 }
 
 create_user "$planner_user" "$planner_password" "cbcap-preflight-tenant-a" county_planner owner
-create_user "$agent_user" "$agent_password" "cbcap-preflight-tenant-b" evidence_agent viewer
+create_user "$agent_user" "$agent_password" "cbcap-preflight-tenant-a" evidence_agent viewer
+create_user "$other_planner_user" "$other_planner_password" "cbcap-preflight-tenant-b" county_planner owner
 
 authenticate_with_totp() {
   local username="$1"
@@ -133,6 +137,7 @@ authenticate_with_totp() {
 
 planner_token=$(authenticate_with_totp "$planner_user" "$planner_password")
 agent_token=$(authenticate_with_totp "$agent_user" "$agent_password")
+other_planner_token=$(authenticate_with_totp "$other_planner_user" "$other_planner_password")
 
 planner_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
   --output /tmp/cbcap-planner-plan.json --write-out '%{http_code}' \
@@ -164,6 +169,21 @@ agent_review_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
   "https://$API_DOMAIN/api/cbcap/runs/$run_id/review")
 test "$agent_review_status" = "403"
 
+cross_tenant_review_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+  --output /tmp/cbcap-cross-tenant-review.json --write-out '%{http_code}' \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $other_planner_token" \
+  --data '{"decision":"approve"}' \
+  "https://$API_DOMAIN/api/cbcap/runs/$run_id/review")
+case "$cross_tenant_review_status" in
+  403|404) ;;
+  *)
+    echo "Cross-tenant planner unexpectedly received HTTP $cross_tenant_review_status."
+    exit 1
+    ;;
+esac
+
 planner_review_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
   --output /tmp/cbcap-planner-review.json --write-out '%{http_code}' \
   --request POST \
@@ -177,6 +197,7 @@ test "$(jq -r '.runId // ""' /tmp/cbcap-planner-review.json)" = "$run_id"
 
 jq -cn \
   --arg runId "$run_id" \
+  --arg crossTenantStatus "$cross_tenant_review_status" \
   '{
     claimsVerified:true,
     sameTenantAuthorized:true,
@@ -184,5 +205,6 @@ jq -cn \
     humanReviewAuthorityVerified:true,
     livePlanAndReviewVerified:true,
     unauthorizedAgentDenied:true,
+    crossTenantReviewStatus:$crossTenantStatus,
     runId:$runId
   }'
