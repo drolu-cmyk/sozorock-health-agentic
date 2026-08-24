@@ -73,4 +73,12 @@ describe("Geography agent", () => {
     const g = await agent.resolve("King, WA");
     assert.equal(g.fips, "53033");
   });
+
+  it("does not convert a demo locality into a county", async () => {
+    assert.equal(await agent.resolve("Cobleskill"), null);
+  });
+
+  it("does not use legacy free-text demo hints", async () => {
+    assert.equal(await agent.resolve("Delaware New York"), null);
+  });
 });
