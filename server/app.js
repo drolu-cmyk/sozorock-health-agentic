@@ -22,6 +22,7 @@ function createApp(options = {}) {
   const auditSink = typeof options.auditSink === 'function' ? options.auditSink : () => {};
   const placeAPI = options.placeAPI || createPlaceIntelligenceAPI({ onAudit: auditSink });
   const cbcapAPI = options.cbcapAPI || createCBCAPApi({
+    tenantId: options.tenantId,
     evidenceOrigin: options.evidenceOrigin,
     fetchImpl: options.fetchImpl,
     auditSink,
@@ -29,6 +30,8 @@ function createApp(options = {}) {
     harness: options.harness,
     killSwitch: options.killSwitch,
     clock: options.clock,
+    scenarioHandler: options.scenarioHandler,
+    publishHandler: options.publishHandler,
   });
 
   app.disable('x-powered-by');
