@@ -17,22 +17,32 @@ function createApp(options = {}) {
     ? options.allowedOrigins
     : parseAllowedOrigins(options.allowedOrigins || process.env.AGENTIC_ALLOWED_ORIGINS);
   const enableLegacySessions = options.enableLegacySessions ?? process.env.ENABLE_LEGACY_SESSIONS === 'true';
+  const allowUnauthenticatedDevCBCAP = options.allowUnauthenticatedDevCBCAP
+    ?? process.env.ENABLE_UNAUTHENTICATED_CBCAP_DEV === 'true';
   const legacySessionStore = options.sessionStore || defaultSessionStore;
-  const reviewAPI = options.cbcapReviewAPI || null;
+  const institutionalGateway = options.institutionalCBCAPGateway || null;
   const auditSink = typeof options.auditSink === 'function' ? options.auditSink : () => {};
   const placeAPI = options.placeAPI || createPlaceIntelligenceAPI({ onAudit: auditSink });
-  const cbcapAPI = options.cbcapAPI || createCBCAPApi({
-    tenantId: options.tenantId,
-    evidenceOrigin: options.evidenceOrigin,
-    fetchImpl: options.fetchImpl,
-    auditSink,
-    memory: options.memory,
-    harness: options.harness,
-    killSwitch: options.killSwitch,
-    clock: options.clock,
-    scenarioHandler: options.scenarioHandler,
-    publishHandler: options.publishHandler,
-  });
+  const devCbcapAPI = allowUnauthenticatedDevCBCAP
+    ? (options.cbcapAPI || createCBCAPApi({
+        tenantId: options.tenantId,
+        evidenceOrigin: options.evidenceOrigin,
+        fetchImpl: options.fetchImpl,
+        auditSink,
+        memory: options.memory,
+        harness: options.harness,
+        killSwitch: options.killSwitch,
+        clock: options.clock,
+        scenarioHandler: options.scenarioHandler,
+        publishHandler: options.publishHandler,
+      }))
+    : null;
+
+  if (institutionalGateway) {
+    if (typeof institutionalGateway.handlePlan !== 'function' || typeof institutionalGateway.handleReview !== 'function') {
+      throw new Error('institutionalCBCAPGateway must expose handlePlan() and handleReview().');
+    }
+  }
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '200kb' }));
@@ -60,13 +70,15 @@ function createApp(options = {}) {
     res.json({
       status: 'ok',
       service: 'sozorock-health-agentic',
-      version: '0.7.0',
+      version: '0.8.0',
       runtime: 'governed-graph',
       time: new Date().toISOString(),
       geography: countyMeta(),
       zipCrosswalk: zipMeta(),
+      institutionalAccessEnabled: Boolean(institutionalGateway),
+      reviewContinuationEnabled: Boolean(institutionalGateway),
+      unauthenticatedDevCBCAPEnabled: Boolean(devCbcapAPI),
       legacySessionsEnabled: enableLegacySessions,
-      reviewContinuationEnabled: Boolean(reviewAPI),
     });
   });
 
@@ -82,26 +94,31 @@ function createApp(options = {}) {
 
   app.post('/api/cbcap', async (req, res) => {
     try {
-      const result = await cbcapAPI.handle(req.body || {});
-      res.status(result.statusCode).json(result.body);
+      if (institutionalGateway) {
+        const result = await institutionalGateway.handlePlan(req.body || {}, { request: req });
+        return res.status(result.statusCode).json(result.body);
+      }
+      if (devCbcapAPI) {
+        const result = await devCbcapAPI.handle(req.body || {});
+        return res.status(result.statusCode).json(result.body);
+      }
+      return res.sendStatus(404);
     } catch (error) {
       console.error(error);
-      res.status(500).json({ error: 'Internal error' });
+      return res.status(500).json({ error: 'Internal error' });
     }
   });
 
-  if (reviewAPI) {
-    if (typeof reviewAPI.handle !== 'function') throw new Error('cbcapReviewAPI must expose handle().');
-    app.post('/api/cbcap/runs/:runId/review', async (req, res) => {
-      try {
-        const result = await reviewAPI.handle(req.params.runId, req.body || {}, { request: req });
-        res.status(result.statusCode).json(result.body);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Internal error' });
-      }
-    });
-  }
+  app.post('/api/cbcap/runs/:runId/review', async (req, res) => {
+    try {
+      if (!institutionalGateway) return res.sendStatus(404);
+      const result = await institutionalGateway.handleReview(req.params.runId, req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
 
   if (enableLegacySessions) {
     app.post('/api/sessions', (req, res) => {
