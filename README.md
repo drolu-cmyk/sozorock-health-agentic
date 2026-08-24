@@ -2,7 +2,7 @@
 
 This repository is the governed execution and control plane for SozoRock Health agents and the institutional CB-CAP decision workflow. It is not a second Evidence Core or public-data warehouse. Governed public evidence comes from the versioned Evidence Core and Evidence Gateway in `drolu-cmyk/sozorock-health`.
 
-## Current runtime: 0.9
+## Current runtime: 0.10
 
 The control plane now includes:
 
@@ -15,6 +15,8 @@ The control plane now includes:
 - a CHA/CHIP evidence workbench using reviewed current-plan claims and page/section locators;
 - feature-gated Funding Intelligence that matches reviewed requirements to governed institutional evidence without determining eligibility or award probability;
 - visualization intelligence that chooses evidence-preserving maps, charts, matrices, tables, and fallbacks from data-shape and semantic metadata;
+- tenant-scoped workspace collaboration state with optimistic concurrency and immutable change events;
+- append-only institutional memory with explicit proposal, human review, evidence revalidation, expiry, and supersession;
 - no public audit endpoint and no legacy unauthenticated sessions by default.
 
 **AI drafts. People decide.**
@@ -99,21 +101,25 @@ Every specification includes a simpler fallback, mobile behavior, accessibility,
 The platform deliberately separates:
 
 1. **Run memory** for immutable execution events, checkpoints, approvals, traces, and evidence releases.
-2. **Workspace memory** for authenticated drafts, comments, owners, tasks, saved views, and collaboration state.
-3. **Institutional memory** for reviewed reusable decisions, policies, definitions, partner roles, and operating knowledge.
+2. **Workspace memory** for authenticated drafts, comments, tasks, saved views, review questions, and collaboration state. Writes use optimistic version checks and immutable event history.
+3. **Institutional memory** for reviewed reusable decisions and operating knowledge. Records are proposed first, revalidated against governed evidence, promoted only by authorized human review, and retained through expiry or supersession.
 4. **Learning memory** for evaluated outcomes and regression evidence that may improve future behavior only after governance review.
 
-Only run memory is currently production-contract complete. The remaining memory domains must keep separate authorization, retention, provenance, and promotion rules.
+Run, workspace, and institutional memory now have distinct runtime contracts. Learning memory remains intentionally separate so ordinary user interactions, agent output, and approvals cannot autonomously modify production prompts, code, policy, tools, or model routing.
 
-## PostgreSQL run-state contract
+See `docs/MEMORY_GOVERNANCE.md` and `docs/MEMORY_API.md`.
 
-`SqlRunMemory` and `infrastructure/postgres/001_agent_run_memory.sql` provide tenant-scoped run identity, atomic sequence allocation, append-only events, composite tenant integrity, forced RLS, and `app.tenant_id` policies.
+## PostgreSQL memory contract
+
+`SqlRunMemory`, `SqlWorkspaceMemory`, `SqlInstitutionalMemory`, and the PostgreSQL migrations under `infrastructure/postgres/` provide tenant-scoped identity, append-only execution and decision records, optimistic workspace versions, composite tenant integrity, forced RLS, and `app.tenant_id` policies.
 
 Production application roles must not own the protected tables and must not hold `BYPASSRLS`. Tenant context is transaction-local so pooled connections cannot leak identity between requests.
 
 ## Server exposure
 
-Institutional planning, review, funding, and visualization routes fail closed without an authenticated institutional gateway. The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, or visualization endpoints and is not a production authentication mode.
+Institutional planning, review, funding, visualization, workspace, and institutional-memory routes fail closed without an authenticated institutional gateway. Unknown `/api/...` paths also terminate with 404 and cannot fall through to the frontend SPA.
+
+The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, visualization, workspace, or institutional-memory endpoints and is not a production authentication mode.
 
 ## Verification
 
@@ -127,13 +133,12 @@ Node 24 or later is required.
 
 ## Outstanding activation work
 
-1. deploy authenticated workspace and institutional memory separately from the immutable run log;
-2. add a governed scenario/forecast handler with explicit assumptions, formulas, ranges, comparability, model/method version, and evaluation status;
-3. add controlled trajectory evaluation and promotion so the runtime can improve without autonomous self-modification;
-4. add governed workforce/capacity and relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
-5. add monitoring for evidence releases, local-plan changes, funding opportunity changes, and workflow commitments;
-6. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
-7. run the production preflight against real Cognito, PostgreSQL, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime.
+1. add a governed scenario/forecast handler with explicit assumptions, formulas, ranges, comparability, model/method version, and evaluation status;
+2. add controlled trajectory evaluation and learning-memory promotion so the runtime can improve without autonomous self-modification;
+3. add governed workforce/capacity and relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
+4. add monitoring for evidence releases, local-plan changes, funding opportunity changes, and workflow commitments;
+5. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
+6. run the production preflight against real Cognito, PostgreSQL, workspace/institutional-memory migrations, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime.
 
 See `ARCHITECTURE.md` for the full control-plane boundary.
 
