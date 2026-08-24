@@ -143,7 +143,7 @@ test('run() refuses to overwrite an existing run ID', async () => {
   );
 });
 
-test('CB-CAP graph runs scenarios only from explicit user assumptions', async () => {
+test('CB-CAP graph runs scenarios only from explicit user assumptions plus scenario context', async () => {
   const calls = counters();
   const graph = createCBCAPGraph({ handlers: handlers(calls) });
   const result = await graph.run({
@@ -152,6 +152,10 @@ test('CB-CAP graph runs scenarios only from explicit user assumptions', async ()
     assumptions: {
       uptakeRate: { source: 'user', value: 0.12 },
       months: { source: 'user', value: 12 },
+    },
+    scenario: {
+      asOf: '2026-08-23',
+      horizonEnd: '2027-08-23',
     },
   });
 

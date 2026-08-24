@@ -19,6 +19,10 @@ function requiredHandler(handlers, name) {
   return handlers[name];
 }
 
+function hasScenarioContext(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
 function createCBCAPGraph(options = {}) {
   const handlers = options.handlers || {};
   const resolvePlace = requiredHandler(handlers, 'resolvePlace');
@@ -49,7 +53,9 @@ function createCBCAPGraph(options = {}) {
       async run(state) {
         return {
           patch: { planning: await organizePlan(state) },
-          next: hasUserAssumptions(state.task.assumptions) && buildScenario ? 'scenario' : 'draft_brief',
+          next: hasUserAssumptions(state.task.assumptions) && hasScenarioContext(state.task.scenario) && buildScenario
+            ? 'scenario'
+            : 'draft_brief',
         };
       },
     },

@@ -1,4 +1,5 @@
 const { CBCAPPlanningEngine } = require('../packages/cbcap/planning-engine');
+const { createGovernedScenarioHandler } = require('../packages/cbcap/scenario-governance');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
 const { createCBCAPApi } = require('./cbcap-api');
 const { createCBCAPFundingApi } = require('./cbcap-funding-api');
@@ -19,9 +20,20 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       throw new Error('Tenant CB-CAP runtime requires a valid tenant-scoped run-memory implementation.');
     }
 
-    const scenarioHandler = typeof options.scenarioHandlerForActor === 'function'
-      ? await options.scenarioHandlerForActor(actor)
-      : null;
+    let scenarioHandler = null;
+    if (typeof options.scenarioRegistrationsForActor === 'function') {
+      const registrations = await options.scenarioRegistrationsForActor(actor);
+      if (Array.isArray(registrations) && registrations.length > 0) {
+        scenarioHandler = createGovernedScenarioHandler({ registrations, clock: options.clock });
+      }
+    } else if (typeof options.scenarioHandlerForActor === 'function') {
+      // Compatibility path for an already-reviewed, server-owned handler. Production
+      // composition should prefer scenarioRegistrationsForActor so formulas stay on
+      // the governed built-in method allowlist.
+      const supplied = await options.scenarioHandlerForActor(actor);
+      scenarioHandler = typeof supplied === 'function' ? supplied : null;
+    }
+
     const publishHandler = typeof options.publishHandlerForActor === 'function'
       ? await options.publishHandlerForActor(actor)
       : null;
@@ -89,6 +101,7 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       fundingApi,
       visualizationApi,
       memoryApi,
+      scenarioCapabilityEnabled: typeof scenarioHandler === 'function',
     };
   };
 }

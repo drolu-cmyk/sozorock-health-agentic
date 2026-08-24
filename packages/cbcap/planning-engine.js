@@ -19,6 +19,7 @@ function normalizeRequest(input) {
   return {
     countyFips,
     assumptions: clone(source.assumptions),
+    scenario: clone(source.scenario),
     approval: clone(source.approval),
   };
 }
@@ -73,10 +74,12 @@ class CBCAPPlanningEngine {
       type: 'cbcap_county_plan',
       ...state,
       meta: {
-        engine: 'cbcap-governed-planning-v3',
+        engine: 'cbcap-governed-planning-v4',
         evidenceAuthority: 'sozorock-evidence-gateway',
         distinctFrom: 'place-intelligence-front-door',
         syntheticPlanningOutputs: false,
+        scenarioContract: state.scenario?.contract || null,
+        scenarioRequiresHumanReview: Boolean(state.scenario),
         humanReviewRequired: state.status !== 'approved_output',
         resumableReview: state.status === 'awaiting_human_review' && Boolean(this.publishHandler),
       },
@@ -94,9 +97,11 @@ class CBCAPPlanningEngine {
           reason: 'Governed CB-CAP planning requires an exact five-digit county FIPS. Resolve names, places, and ZIP-linked inputs before calling the planning engine.',
         },
         meta: {
-          engine: 'cbcap-governed-planning-v3',
+          engine: 'cbcap-governed-planning-v4',
           evidenceAuthority: 'sozorock-evidence-gateway',
           syntheticPlanningOutputs: false,
+          scenarioContract: null,
+          scenarioRequiresHumanReview: false,
           resumableReview: false,
         },
       };
@@ -109,6 +114,7 @@ class CBCAPPlanningEngine {
       countyFips: request.countyFips,
     };
     if (request.assumptions !== undefined) task.assumptions = request.assumptions;
+    if (request.scenario !== undefined) task.scenario = request.scenario;
 
     const initial = {};
     if (this.tenantId) initial.tenantId = this.tenantId;
@@ -121,6 +127,7 @@ class CBCAPPlanningEngine {
       status: state.status,
       runId: state.runId,
       releaseId: state.evidence?.releaseId || null,
+      scenarioEvaluationStatus: state.scenario?.evaluationStatus || null,
       tenantId: this.tenantId,
     });
 
@@ -143,6 +150,7 @@ class CBCAPPlanningEngine {
       evidenceReleaseId: state.evidence?.releaseId || null,
       countyFips: state.evidence?.countyFips || state.place?.countyFips || state.task?.countyFips || null,
       draft: clone(state.draft || null),
+      scenario: clone(state.scenario || null),
       checkpointSequence: checkpoint.sequence,
     };
   }

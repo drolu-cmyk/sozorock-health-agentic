@@ -1,18 +1,18 @@
 openapi: 3.1.0
 info:
   title: SozoRock Health Agentic API
-  version: 0.9.0
+  version: 0.10.0
   description: |
     Non-clinical place intelligence and identity-gated CB-CAP execution.
     Institutional CB-CAP uses authenticated workspace identity, authoritative
     tenant assignment, governed Evidence Gateway packages, resumable run state,
-    human review, funding evidence matching, and evidence-preserving visualization
-    specifications. It does not diagnose, determine final funding eligibility,
-    predict awards, allocate funding, rank people, or replace county or funder judgment.
+    human review, funding evidence matching, evidence-preserving visualization,
+    governed deterministic scenarios, and separated workspace/institutional memory.
 
-    Institutional endpoints fail closed unless an authenticated gateway is
-    configured. The unauthenticated CB-CAP mode is an explicit local development
-    override and is not part of this production API contract.
+    It does not diagnose, determine final funding eligibility, predict awards,
+    allocate funding, rank people, or replace county, funder, or licensed-provider
+    judgment. Institutional endpoints fail closed unless an authenticated gateway
+    is configured. The unauthenticated development override enables planning only.
   license:
     name: MIT
 servers:
@@ -32,34 +32,23 @@ paths:
                 type: object
                 required: [status, service, version, runtime, time]
                 properties:
-                  status:
-                    const: ok
-                  service:
-                    const: sozorock-health-agentic
-                  version:
-                    type: string
-                  runtime:
-                    const: governed-graph
-                  time:
-                    type: string
-                    format: date-time
-                  institutionalAccessEnabled:
-                    type: boolean
-                  reviewContinuationEnabled:
-                    type: boolean
-                  fundingIntelligenceRouteEnabled:
-                    type: boolean
-                  visualizationIntelligenceRouteEnabled:
-                    type: boolean
-                  unauthenticatedDevCBCAPEnabled:
-                    type: boolean
-                  legacySessionsEnabled:
-                    type: boolean
+                  status: { const: ok }
+                  service: { const: sozorock-health-agentic }
+                  version: { type: string }
+                  runtime: { const: governed-graph }
+                  time: { type: string, format: date-time }
+                  institutionalAccessEnabled: { type: boolean }
+                  reviewContinuationEnabled: { type: boolean }
+                  fundingIntelligenceRouteEnabled: { type: boolean }
+                  visualizationIntelligenceRouteEnabled: { type: boolean }
+                  workspaceMemoryRouteEnabled: { type: boolean }
+                  institutionalMemoryRouteEnabled: { type: boolean }
+                  unauthenticatedDevCBCAPEnabled: { type: boolean }
+                  legacySessionsEnabled: { type: boolean }
   /api/place:
     post:
       summary: Run the legacy place-intelligence entry point
       operationId: postPlace
-      description: This endpoint remains during migration. Institutional CB-CAP planning uses the authenticated /api/cbcap route.
       requestBody:
         required: true
         content:
@@ -68,90 +57,52 @@ paths:
               type: object
               required: [location]
               properties:
-                location:
-                  type: string
-                  maxLength: 120
+                location: { type: string, maxLength: 120 }
                 purpose:
                   type: string
                   enum: [resident, planner, funder, cbcap]
       responses:
-        "200":
-          description: Place-intelligence response
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        "400":
-          description: Invalid request
-        "422":
-          description: Unresolved or policy-blocked request
+        "200": { description: Place-intelligence response }
+        "400": { description: Invalid request }
+        "422": { description: Unresolved or policy-blocked request }
   /api/cbcap:
     post:
       summary: Start an authenticated CB-CAP county planning run
       operationId: postCbcap
-      security:
-        - bearerAuth: []
+      security: [{ bearerAuth: [] }]
       description: |
-        Resolves the authenticated workspace actor and tenant before selecting a
-        tenant-scoped runtime. The request is then resolved to exactly one county
-        FIPS before evidence access. Multi-county ZIP inputs and ambiguous county
-        names stop for explicit selection. The planning engine uses the reviewed
-        Evidence Gateway, checkpoints the run, and produces a source-backed draft
-        that requires human review.
-
-        Foundation reviewers, county planners, and community partners with owner
-        or contributor access may start planning work. Viewers and agent actors
-        cannot start institutional plans.
+        Resolves authenticated workspace authority before selecting a tenant runtime.
+        Planning resolves exactly one county and binds evidence to one verified
+        Evidence Gateway release. Optional scenario execution requires explicit user
+        assumptions plus date-only scenario context. Clients cannot supply executable
+        scenario formulas, model versions, source selection, or baselines.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/CbcapRequest"
+            schema: { $ref: "#/components/schemas/CbcapRequest" }
       responses:
         "202":
           description: Draft created and awaiting human review
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/CbcapRun"
-        "400":
-          description: Invalid request or assumptions
-        "403":
-          description: Authentication or workspace authorization failed
-        "409":
-          description: Geography requires explicit county selection
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CbcapRun"
-        "422":
-          description: Governed runtime blocked the request
-        "502":
-          description: Governed evidence source unavailable
-        "503":
-          description: Tenant runtime is not configured
+              schema: { $ref: "#/components/schemas/CbcapRun" }
+        "400": { description: Invalid request, assumptions, or scenario context }
+        "403": { description: Authentication or workspace authorization failed }
+        "409": { description: Geography requires explicit county selection }
+        "422": { description: Governed runtime blocked the request }
+        "502": { description: Governed evidence source unavailable }
+        "503": { description: Tenant runtime is not configured }
   /api/cbcap/runs/{runId}/review:
     post:
       summary: Continue an authenticated saved CB-CAP review run
       operationId: reviewCbcapRun
-      security:
-        - bearerAuth: []
+      security: [{ bearerAuth: [] }]
       parameters:
         - name: runId
           in: path
           required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 128
-      description: |
-        Continues the exact saved review checkpoint. Only foundation reviewers
-        and county planners with owner or contributor access may approve. The
-        client supplies only the decision. Reviewer identity and tenant come from
-        the authenticated workspace session; run identity and Evidence Gateway
-        release identity come from the saved checkpoint.
+          schema: { type: string, minLength: 1, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -161,123 +112,254 @@ paths:
               additionalProperties: false
               required: [decision]
               properties:
-                decision:
-                  const: approve
+                decision: { const: approve }
       responses:
-        "200":
-          description: Saved run continued to approved output
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CbcapRun"
-        "400":
-          description: Invalid review request
-        "403":
-          description: Authentication, role, access, or tenant authorization failed
-        "404":
-          description: Saved run not found in the authenticated tenant
-        "409":
-          description: Run is not resumable or continuation failed
-        "422":
-          description: Continued run did not reach approved output
-        "503":
-          description: Tenant review runtime is not configured
+        "200": { description: Saved run continued to approved output }
+        "400": { description: Invalid review request }
+        "403": { description: Review authorization failed }
+        "404": { description: Saved run not found in authenticated tenant }
+        "409": { description: Run is not resumable or continuation failed }
+        "422": { description: Continued run did not reach approved output }
+        "503": { description: Tenant review runtime is not configured }
   /api/cbcap/funding/evaluate:
     post:
       summary: Evaluate reviewed funding requirements against governed institutional evidence
       operationId: evaluateCbcapFundingFit
-      security:
-        - bearerAuth: []
-      description: |
-        Performs read-only evidence matching for one governed funding opportunity.
-        The client supplies only the opportunity ID, county context, optional state
-        context, and optional as-of date. Opportunity criteria and the institutional
-        applicant profile are loaded from server-side governed providers.
-
-        The result never determines final eligibility, predicts an award, allocates
-        funding, or recommends a funding decision. It reports requirement matching,
-        evidence fit, missing evidence, missing partners, source lineage, deadline
-        state, and caveats for human review.
+      security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/FundingEvaluationRequest"
+            schema: { $ref: "#/components/schemas/FundingEvaluationRequest" }
       responses:
         "200":
-          description: Provisional evidence-matching result or closed-opportunity state
+          description: Provisional evidence-matching result
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/FundingFitResult"
-        "400":
-          description: Invalid request. Client-supplied opportunity criteria or applicant profiles are rejected.
-        "403":
-          description: Authentication, workspace authorization, or tenant profile authorization failed
-        "404":
-          description: Reviewed opportunity was not found
-        "422":
-          description: Funding reasoning was blocked by an unverified source, missing criterion lineage, or invalid governed record
-        "503":
-          description: Governed funding opportunity or tenant profile provider is not configured or unavailable
+              schema: { $ref: "#/components/schemas/FundingFitResult" }
+        "400": { description: Invalid request }
+        "403": { description: Authentication or workspace authorization failed }
+        "404": { description: Reviewed opportunity not found }
+        "422": { description: Funding reasoning blocked by governed evidence conditions }
+        "503": { description: Governed funding provider unavailable }
   /api/cbcap/visualizations/spec:
     post:
       summary: Select an evidence-preserving visualization specification
       operationId: createCbcapVisualizationSpec
-      security:
-        - bearerAuth: []
-      description: |
-        Selects the simplest truthful visualization family for an analytical job.
-        The endpoint accepts only data-shape and reviewed semantic metadata, not raw
-        institutional rows, arbitrary renderer code, or uploaded visual content.
-
-        It may return a blocked specification when the requested visual claim is not
-        supported, for example a choropleth without defensible normalization or a
-        trend line across incomparable vintages. Every specification includes a
-        nonvisual fallback, mobile behavior, accessibility requirements, export
-        expectations, disclosures, and anti-distortion guardrails.
+      security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/VisualizationSpecRequest"
+            schema: { $ref: "#/components/schemas/VisualizationSpecRequest" }
       responses:
         "200":
           description: Renderable or fallback visualization specification
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/VisualizationSpec"
-        "400":
-          description: Invalid analytical job or unsupported request field
-        "403":
-          description: Authentication or workspace authorization failed
-        "422":
-          description: Requested visual claim is blocked by the evidence conditions
-        "503":
-          description: Tenant visualization runtime is unavailable
+              schema: { $ref: "#/components/schemas/VisualizationSpec" }
+        "400": { description: Invalid analytical job }
+        "403": { description: Authentication or workspace authorization failed }
+        "422": { description: Requested visual claim blocked by evidence conditions }
+        "503": { description: Tenant visualization runtime unavailable }
+  /api/cbcap/workspaces/{workspaceId}/items:
+    get:
+      summary: List tenant-scoped workspace collaboration items
+      operationId: listWorkspaceItems
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, maxLength: 120 }
+      responses:
+        "200": { description: Workspace items }
+        "403": { description: Workspace read authorization failed }
+        "503": { description: Institutional memory runtime unavailable }
+    post:
+      summary: Create a tenant-scoped workspace collaboration item
+      operationId: createWorkspaceItem
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceItemCreate" }
+      responses:
+        "201": { description: Workspace item created }
+        "400": { description: Invalid workspace item }
+        "403": { description: Workspace write authorization failed }
+        "503": { description: Institutional memory runtime unavailable }
+  /api/cbcap/workspaces/{workspaceId}/items/{itemId}:
+    put:
+      summary: Update a workspace item with optimistic concurrency
+      operationId: updateWorkspaceItem
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 240 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceItemUpdate" }
+      responses:
+        "200": { description: Workspace item updated }
+        "400": { description: Invalid update }
+        "403": { description: Workspace write authorization failed }
+        "404": { description: Workspace item not found }
+        "409": { description: Workspace version conflict }
+        "503": { description: Institutional memory runtime unavailable }
+  /api/cbcap/memory/query:
+    post:
+      summary: Query reviewed active institutional memory
+      operationId: queryInstitutionalMemory
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InstitutionalMemoryQuery" }
+      responses:
+        "200": { description: Institutional memory records }
+        "400": { description: Invalid memory query }
+        "403": { description: Institutional memory authorization failed }
+        "503": { description: Institutional memory runtime unavailable }
+  /api/cbcap/memory/proposals:
+    post:
+      summary: Propose evidence-bound institutional memory
+      operationId: proposeInstitutionalMemory
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InstitutionalMemoryProposal" }
+      responses:
+        "201": { description: Proposal recorded but not promoted to institutional truth }
+        "400": { description: Invalid proposal }
+        "403": { description: Proposal authorization failed }
+        "422": { description: Governed evidence is not fully verified }
+        "503": { description: Evidence validation or memory runtime unavailable }
+  /api/cbcap/memory/proposals/{proposalId}/review:
+    post:
+      summary: Approve or reject an institutional-memory proposal
+      operationId: reviewInstitutionalMemoryProposal
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: proposalId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 240 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, rationale]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                rationale: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        "200": { description: Review record created }
+        "400": { description: Invalid review }
+        "403": { description: Review authorization failed }
+        "404": { description: Proposal not found }
+        "409": { description: Proposal already reviewed }
+        "422": { description: Evidence no longer fully verified }
+        "503": { description: Evidence validation or memory runtime unavailable }
+  /api/cbcap/memory/{memoryId}/supersede:
+    post:
+      summary: Supersede reviewed institutional memory without erasing history
+      operationId: supersedeInstitutionalMemory
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: memoryId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 240 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200": { description: Supersession record created }
+        "400": { description: Invalid supersession }
+        "403": { description: Review authorization failed }
+        "404": { description: Reviewed memory not found }
+        "409": { description: Memory already superseded }
+        "503": { description: Institutional memory runtime unavailable }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: Cognito access token
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 240 }
   schemas:
     UserAssumption:
       type: object
       required: [source, value]
       additionalProperties: false
       properties:
-        source:
-          const: user
+        source: { const: user }
         value:
           oneOf:
-            - type: string
-            - type: number
-            - type: boolean
-            - type: "null"
+            - { type: string }
+            - { type: number }
+            - { type: boolean }
+            - { type: "null" }
+        unit: { type: string, minLength: 1, maxLength: 120 }
+        range:
+          type: object
+          additionalProperties: false
+          required: [low, high]
+          properties:
+            low: { type: number }
+            high: { type: number }
+        rationale: { type: string, maxLength: 1000 }
+    ScenarioContext:
+      type: object
+      additionalProperties: false
+      required: [horizonEnd]
+      properties:
+        asOf: { type: string, format: date }
+        horizonEnd: { type: string, format: date }
+    ScenarioOutput:
+      type: object
+      additionalProperties: true
+      required: [contract, status, evaluationStatus, scenarioType, evidenceState, outputs, limitations, officialEstimate, statisticalPrediction, humanReviewRequired]
+      properties:
+        contract: { const: cbcap.scenario.v1 }
+        status: { const: scenario_output }
+        evaluationStatus: { type: string, enum: [ready, blocked] }
+        scenarioType: { const: deterministic_planning_sensitivity }
+        evidenceState: { const: scenario_output }
+        asOf: { type: [string, "null"], format: date }
+        horizonEnd: { type: [string, "null"], format: date }
+        outputs: { type: array, items: { type: object, additionalProperties: true } }
+        reasonCodes: { type: array, items: { type: string } }
+        limitations: { type: array, items: { type: string } }
+        officialEstimate: { const: false }
+        statisticalPrediction: { const: false }
+        probabilityOfOccurrence: { type: "null" }
+        humanReviewRequired: { const: true }
     CbcapRequest:
       type: object
       required: [location]
@@ -287,172 +369,62 @@ components:
           type: string
           minLength: 1
           maxLength: 120
-          description: County FIPS, supported ZIP input, or county name. Ambiguous or multi-county inputs require explicit county selection.
         assumptions:
           type: object
           minProperties: 1
           maxProperties: 20
-          additionalProperties:
-            $ref: "#/components/schemas/UserAssumption"
+          additionalProperties: { $ref: "#/components/schemas/UserAssumption" }
+        scenario: { $ref: "#/components/schemas/ScenarioContext" }
     PlaceResolution:
       type: object
       additionalProperties: true
       properties:
-        status:
-          type: string
-          enum: [resolved, ambiguous, unresolved]
-        countyFips:
-          type: string
-          pattern: "^[0-9]{5}$"
-        county:
-          type: string
-        state:
-          type: string
-        input:
-          type: string
-        matches:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
+        status: { type: string, enum: [resolved, ambiguous, unresolved] }
+        countyFips: { type: string, pattern: "^[0-9]{5}$" }
+        county: { type: [string, "null"] }
+        state: { type: [string, "null"] }
+        input: { type: string }
     CbcapRun:
       type: object
       additionalProperties: true
       properties:
-        type:
-          const: cbcap_county_plan
-        runId:
-          type: string
-        tenantId:
-          type: string
+        type: { const: cbcap_county_plan }
+        runId: { type: string }
+        tenantId: { type: string }
         status:
           type: string
           enum: [awaiting_human_review, approved_output, needs_place_selection, evidence_unavailable, blocked, error]
-        placeResolution:
-          $ref: "#/components/schemas/PlaceResolution"
-        evidence:
-          type: object
-          description: Governed Evidence Gateway package and release identity retained for audit and exact-run continuation.
-          additionalProperties: true
-        barriers:
-          type: object
-          description: Reviewed pathway barriers and accessibility context. No composite score or automatic priority ranking is produced.
-          additionalProperties: true
-        planning:
-          type: object
-          description: Draft evidence organization including the governed CHA/CHIP workbench. Funding allocation, county priorities, and official CHA/CHIP decisions remain human authority.
-          additionalProperties: true
-        scenario:
-          type: object
-          description: Present only when a reviewed scenario capability is installed and explicit user assumptions authorize it.
-          additionalProperties: true
-        draft:
-          type: object
-          description: Draft for human review.
-          additionalProperties: true
-        output:
-          type: object
-          description: Approved output generated only through exact-run authenticated review continuation.
-          additionalProperties: true
+        placeResolution: { $ref: "#/components/schemas/PlaceResolution" }
+        evidence: { type: object, additionalProperties: true }
+        barriers: { type: object, additionalProperties: true }
+        planning: { type: object, additionalProperties: true }
+        scenario: { $ref: "#/components/schemas/ScenarioOutput" }
+        draft: { type: object, additionalProperties: true }
+        output: { type: object, additionalProperties: true }
     FundingEvaluationRequest:
       type: object
       additionalProperties: false
       required: [opportunityId, countyId]
       properties:
-        opportunityId:
-          type: string
-          minLength: 1
-          maxLength: 240
-        countyId:
-          type: string
-          minLength: 1
-          maxLength: 240
-        stateId:
-          type: string
-          minLength: 1
-          maxLength: 240
-        asOf:
-          type: string
-          format: date
-    FundingCriterionResult:
-      type: object
-      additionalProperties: true
-      properties:
-        criterionId:
-          type: string
-        type:
-          type: string
-          enum: [applicant_type, geography, designation, partner, evidence, plan_priority, barrier]
-        status:
-          type: string
-          enum: [matched, incomplete, conflict, not_applicable]
-        explanation:
-          type: string
+        opportunityId: { type: string, minLength: 1, maxLength: 240 }
+        countyId: { type: string, minLength: 1, maxLength: 240 }
+        stateId: { type: string, minLength: 1, maxLength: 240 }
+        asOf: { type: string, format: date }
     FundingFitResult:
       type: object
       additionalProperties: true
       required: [kind, opportunityId, status, deadlineStatus, requirementsStatus, fitStatus, humanReviewRequired, finalEligibilityAuthority, awardPredictionProduced, fundingAllocationProduced]
       properties:
-        kind:
-          const: cbcap_funding_fit_v1
-        opportunityId:
-          type: string
-        opportunityTitle:
-          type: string
-        status:
-          type: string
-          enum: [provisional_review_required, blocked, closed_opportunity]
-        deadlineStatus:
-          type: string
-          enum: [open, closed, not_yet_open, unknown]
-        requirementsStatus:
-          type: string
-          enum: [matched, incomplete, conflict, unknown]
-        fitStatus:
-          type: string
-          enum: [strong_evidence_fit, partial_evidence_fit, weak_evidence_fit, not_evaluated]
-        criteria:
-          type: array
-          items:
-            $ref: "#/components/schemas/FundingCriterionResult"
-        missingEvidenceIds:
-          type: array
-          items:
-            type: string
-        missingPartnerIds:
-          type: array
-          items:
-            type: string
-        humanReviewRequired:
-          const: true
-        finalEligibilityAuthority:
-          const: funder_and_authorized_humans
-        awardPredictionProduced:
-          const: false
-        fundingAllocationProduced:
-          const: false
-    VisualizationMeasure:
-      type: object
-      additionalProperties: false
-      required: [id, name]
-      properties:
-        id:
-          type: string
-          minLength: 1
-          maxLength: 240
-        name:
-          type: string
-          minLength: 1
-          maxLength: 500
-        unit:
-          type: string
-          maxLength: 120
-        direction:
-          type: string
-          maxLength: 80
-        comparisonPolicy:
-          type: string
-          maxLength: 120
+        kind: { const: cbcap_funding_fit_v1 }
+        opportunityId: { type: string }
+        status: { type: string, enum: [provisional_review_required, blocked, closed_opportunity] }
+        deadlineStatus: { type: string, enum: [open, closed, not_yet_open, unknown] }
+        requirementsStatus: { type: string, enum: [matched, incomplete, conflict, unknown] }
+        fitStatus: { type: string, enum: [strong_evidence_fit, partial_evidence_fit, weak_evidence_fit, not_evaluated] }
+        humanReviewRequired: { const: true }
+        finalEligibilityAuthority: { const: funder_and_authorized_humans }
+        awardPredictionProduced: { const: false }
+        fundingAllocationProduced: { const: false }
     VisualizationSpecRequest:
       type: object
       additionalProperties: false
@@ -461,76 +433,82 @@ components:
         question:
           type: string
           enum: [spatial_pattern, compare_places, uncertainty, time_change, distribution, relationship, barrier_matrix, planning_alignment, funding_fit, evidence_relationships]
-        measure:
-          $ref: "#/components/schemas/VisualizationMeasure"
-        itemCount:
-          type: integer
-          minimum: 0
-        seriesCount:
-          type: integer
-          minimum: 0
-        timePointCount:
-          type: integer
-          minimum: 0
-        geographyKind:
-          type: string
-          maxLength: 80
-        spatiallyMeaningful:
-          type: boolean
-        hasBoundaryGeometry:
-          type: boolean
-        hasConfidenceIntervals:
-          type: boolean
-        hasMissingValues:
-          type: boolean
-        comparableVintages:
-          type: boolean
-        distributionAvailable:
-          type: boolean
-        relationshipEdgesAvailable:
-          type: boolean
-        normalizationStatus:
-          type: string
-          enum: [valid, not_required, missing, invalid]
+        measure: { type: object, additionalProperties: true }
+        itemCount: { type: integer, minimum: 0 }
+        seriesCount: { type: integer, minimum: 0 }
+        timePointCount: { type: integer, minimum: 0 }
+        geographyKind: { type: string, maxLength: 80 }
+        spatiallyMeaningful: { type: boolean }
+        hasBoundaryGeometry: { type: boolean }
+        hasConfidenceIntervals: { type: boolean }
+        hasMissingValues: { type: boolean }
+        comparableVintages: { type: boolean }
+        distributionAvailable: { type: boolean }
+        relationshipEdgesAvailable: { type: boolean }
+        normalizationStatus: { type: string, enum: [valid, not_required, missing, invalid] }
     VisualizationSpec:
       type: object
       additionalProperties: true
       required: [contract, status, question, insightTitle, artifactFamily, primaryRoute, fallbackRoute, renderer, requiredDisclosures, interaction, mobile, accessibility, export, guardrails]
       properties:
-        contract:
-          const: cbcap.visualization.v1
-        status:
+        contract: { const: cbcap.visualization.v1 }
+        status: { type: string, enum: [renderable, fallback_required, blocked] }
+        question: { type: string }
+        insightTitle: { type: string }
+        artifactFamily: { type: string }
+        primaryRoute: { type: string }
+        fallbackRoute: { type: string }
+        renderer: { type: string }
+        requiredDisclosures: { type: array, items: { type: string } }
+        interaction: { type: object, additionalProperties: true }
+        mobile: { type: object, additionalProperties: true }
+        accessibility: { type: object, additionalProperties: true }
+        export: { type: object, additionalProperties: true }
+        guardrails: { type: array, items: { type: string } }
+    WorkspaceItemCreate:
+      type: object
+      additionalProperties: true
+      required: [itemType, content]
+      properties:
+        itemType: { type: string, enum: [draft, comment, task, saved_view, review_question] }
+        geographyId: { type: string }
+        title: { type: string }
+        content: { type: object, additionalProperties: true }
+        status: { type: string }
+    WorkspaceItemUpdate:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, patch]
+      properties:
+        expectedVersion: { type: integer, minimum: 1 }
+        patch: { type: object, additionalProperties: true }
+    InstitutionalMemoryQuery:
+      type: object
+      additionalProperties: true
+      properties:
+        geographyId: { type: string }
+        decisionType: { type: string }
+        subjectId: { type: string }
+        asOf: { type: string, format: date-time }
+        includeProposed: { type: boolean }
+        includeRejected: { type: boolean }
+        includeExpired: { type: boolean }
+    InstitutionalMemoryProposal:
+      type: object
+      additionalProperties: true
+      required: [geographyId, decisionType, subjectType, subjectId, outcome, reasonCodes, rationale, evidenceEntityIds, applicability]
+      properties:
+        geographyId: { type: string }
+        decisionType:
           type: string
-          enum: [renderable, fallback_required, blocked]
-        question:
-          type: string
-        insightTitle:
-          type: string
-        artifactFamily:
-          type: string
-        primaryRoute:
-          type: string
-        fallbackRoute:
-          type: string
-        renderer:
-          type: string
-        requiredDisclosures:
-          type: array
-          items:
-            type: string
-        interaction:
-          type: object
-          additionalProperties: true
-        mobile:
-          type: object
-          additionalProperties: true
-        accessibility:
-          type: object
-          additionalProperties: true
-        export:
-          type: object
-          additionalProperties: true
-        guardrails:
-          type: array
-          items:
-            type: string
+          enum: [planning_interpretation, funding_fit, partner_requirement, scenario_decision, evidence_correction, publication_decision, monitoring_commitment]
+        subjectType: { type: string }
+        subjectId: { type: string }
+        outcome: { type: string, enum: [accepted, rejected, needs_revision, deferred] }
+        reasonCodes: { type: array, minItems: 1, items: { type: string } }
+        rationale: { type: string, minLength: 1 }
+        evidenceEntityIds: { type: array, minItems: 1, items: { type: string } }
+        relatedEntityIds: { type: array, items: { type: string } }
+        missingRequirements: { type: array, items: { type: string } }
+        applicability: { type: string, enum: [context_specific, reusable, expired] }
+        expiresAt: { type: string, format: date-time }

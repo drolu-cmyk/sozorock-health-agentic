@@ -26,6 +26,33 @@ function validateAssumptions(assumptions) {
   return clone(assumptions);
 }
 
+function validDateOnly(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function validateScenarioContext(value, assumptions) {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('scenario must be an object');
+  }
+  const keys = Object.keys(value);
+  const unsupported = keys.filter((key) => !['asOf', 'horizonEnd'].includes(key));
+  if (unsupported.length) {
+    throw new Error(`scenario contains unsupported fields: ${unsupported.sort().join(', ')}`);
+  }
+  if (!assumptions) throw new Error('scenario requires explicit user assumptions');
+  if (!validDateOnly(value.horizonEnd)) throw new Error('scenario.horizonEnd must be a valid YYYY-MM-DD date');
+  if (value.asOf !== undefined && !validDateOnly(value.asOf)) {
+    throw new Error('scenario.asOf must be a valid YYYY-MM-DD date');
+  }
+  if (value.asOf !== undefined && value.horizonEnd <= value.asOf) {
+    throw new Error('scenario.horizonEnd must be after scenario.asOf');
+  }
+  return clone(value);
+}
+
 function geographyResponse(resolved, query) {
   if (!resolved) {
     return {
@@ -108,8 +135,10 @@ function createCBCAPApi(options = {}) {
       }
 
       let assumptions;
+      let scenario;
       try {
         assumptions = validateAssumptions(input.assumptions);
+        scenario = validateScenarioContext(input.scenario, assumptions);
       } catch (error) {
         return { statusCode: 400, body: { error: error.message } };
       }
@@ -120,6 +149,7 @@ function createCBCAPApi(options = {}) {
 
       const request = { countyFips: resolved.fips };
       if (assumptions !== undefined) request.assumptions = assumptions;
+      if (scenario !== undefined) request.scenario = scenario;
 
       let result;
       try {
@@ -173,4 +203,5 @@ function createCBCAPApi(options = {}) {
 module.exports = {
   createCBCAPApi,
   validateAssumptions,
+  validateScenarioContext,
 };

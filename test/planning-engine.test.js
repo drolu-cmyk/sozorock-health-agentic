@@ -191,12 +191,13 @@ test('user assumptions do not create a scenario without a reviewed scenario hand
     assumptions: {
       annualPopulationChange: { source: 'user', value: 0.5 },
     },
+    scenario: { asOf: '2026-08-23', horizonEnd: '2027-08-23' },
   });
   assert.equal(result.status, 'awaiting_human_review');
   assert.equal(result.scenario, undefined);
 });
 
-test('a reviewed scenario handler runs only from explicit user assumptions', async () => {
+test('a reviewed scenario handler runs only from explicit user assumptions plus scenario context', async () => {
   let scenarioCalls = 0;
   const { engine } = engineFor(evidencePackage(), {
     scenarioHandler: async (_state, assumptions) => {
@@ -210,19 +211,32 @@ test('a reviewed scenario handler runs only from explicit user assumptions', asy
     },
   });
 
-  const withoutAssumptions = await engine.buildCountyPlan('36001');
+  const withoutAssumptions = await engine.buildCountyPlan({
+    countyFips: '36001',
+    scenario: { asOf: '2026-08-23', horizonEnd: '2027-08-23' },
+  });
   assert.equal(withoutAssumptions.scenario, undefined);
   assert.equal(scenarioCalls, 0);
 
-  const withAssumptions = await engine.buildCountyPlan({
+  const withoutScenarioContext = await engine.buildCountyPlan({
     countyFips: '36001',
     assumptions: {
       annualPopulationChange: { source: 'user', value: 0.5 },
     },
   });
+  assert.equal(withoutScenarioContext.scenario, undefined);
+  assert.equal(scenarioCalls, 0);
+
+  const withBoth = await engine.buildCountyPlan({
+    countyFips: '36001',
+    assumptions: {
+      annualPopulationChange: { source: 'user', value: 0.5 },
+    },
+    scenario: { asOf: '2026-08-23', horizonEnd: '2027-08-23' },
+  });
   assert.equal(scenarioCalls, 1);
-  assert.equal(withAssumptions.scenario.status, 'scenario_output');
-  assert.equal(withAssumptions.status, 'awaiting_human_review');
+  assert.equal(withBoth.scenario.status, 'scenario_output');
+  assert.equal(withBoth.status, 'awaiting_human_review');
 });
 
 test('an approval record cannot publish unless an explicit publish capability is installed', async () => {
