@@ -1,6 +1,45 @@
 const { selectVisualization } = require('../packages/cbcap/visualization-intelligence');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
 
+const ALLOWED_FIELDS = new Set([
+  'question',
+  'measure',
+  'itemCount',
+  'seriesCount',
+  'timePointCount',
+  'geographyKind',
+  'spatiallyMeaningful',
+  'hasBoundaryGeometry',
+  'hasConfidenceIntervals',
+  'hasMissingValues',
+  'comparableVintages',
+  'distributionAvailable',
+  'relationshipEdgesAvailable',
+  'normalizationStatus',
+]);
+
+const ALLOWED_MEASURE_FIELDS = new Set([
+  'id',
+  'name',
+  'unit',
+  'direction',
+  'comparisonPolicy',
+]);
+
+function validateRequestShape(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('request body must be an object.');
+  for (const key of Object.keys(input)) {
+    if (!ALLOWED_FIELDS.has(key)) throw new Error(`Unsupported visualization request field ${key}.`);
+  }
+  if (input.measure !== undefined && input.measure !== null) {
+    if (typeof input.measure !== 'object' || Array.isArray(input.measure)) throw new Error('measure must be an object.');
+    for (const key of Object.keys(input.measure)) {
+      if (!ALLOWED_MEASURE_FIELDS.has(key)) throw new Error(`Unsupported measure field ${key}.`);
+    }
+  }
+  return input;
+}
+
 function createCBCAPVisualizationApi(options = {}) {
   const auditSink = typeof options.auditSink === 'function' ? options.auditSink : () => {};
 
@@ -15,7 +54,7 @@ function createCBCAPVisualizationApi(options = {}) {
 
       let spec;
       try {
-        spec = selectVisualization(input || {});
+        spec = selectVisualization(validateRequestShape(input || {}));
       } catch (error) {
         return { statusCode: 400, body: { error: error.message } };
       }
@@ -34,4 +73,8 @@ function createCBCAPVisualizationApi(options = {}) {
   };
 }
 
-module.exports = { createCBCAPVisualizationApi };
+module.exports = {
+  ALLOWED_FIELDS,
+  createCBCAPVisualizationApi,
+  validateRequestShape,
+};
