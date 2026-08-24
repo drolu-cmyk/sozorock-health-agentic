@@ -1,52 +1,104 @@
-# Visualization Intelligence and analytical workspace
+# Visualization Intelligence and evidence-backed workspace
 
-CB-CAP visualization is an analytical system, not a chart gallery. The primary reading path is one focal view, a linked comparison, and a source/method inspector. Every view reads the same canonical observation rows and carries the same evidence fingerprint into accessible and exported output.
+CB-CAP visualization is an analytical system, not a chart gallery. It has two deliberately separate boundaries.
 
-## Technical design
+`POST /api/cbcap/visualizations/spec` is metadata-only. It chooses a deterministic chart or map family from analytical purpose and data-shape metadata. It never accepts raw analytical rows, institutional values, arbitrary renderer code, or caller-supplied evidence packages.
 
-The initial workload is asynchronous reviewed evidence rather than a high-frequency stream. A workspace request can carry up to 12 reviewed measures and 200 reviewed geographies. The normal five-county planning view has one primary renderer instance, one linked comparison, one inspector, and one nonvisual table. There is no equal-card dashboard wall.
+`POST /api/cbcap/visualizations/workspace` is the evidence-backed execution boundary. An authenticated caller supplies only the visualization question, county FIPS values, reviewed source-measure IDs, and an optional selected county. The server retrieves the exact county packages from the actor-scoped Evidence Gateway client and constructs the workspace from reviewed evidence.
 
-Renderer ownership is explicit:
+## Evidence boundary
 
-- MapLibre GL JS owns reviewed geographic substrates, polygon/point placement, pan/zoom, and geographic selection.
-- SVG owns direct-labeled ranking, interval, comparison, and other modest analytical mark counts.
-- HTML owns source/method ledgers, accessible values, low-bandwidth fallback, and nonvisual output.
-- Canvas or GPU renderers are not selected unless mark volume later justifies them and the analytical contract remains unchanged.
+The workspace never trusts browser-supplied values, geographies, source versions, uncertainty, coverage status, or metric permissions. Those fields come from the Evidence Gateway package and reviewed Barrier Registry.
 
-The browser or host application may render MapLibre from the returned `cbcap.visualization-render-package.v1`. Geometry is external to the evidence value state: the join key is the governed geography ID and feature state carries value, value state, uncertainty, and source version. Missingness is never encoded as numeric zero.
+A workspace fails closed when:
 
-## Contracts
+- an Evidence Gateway package is unavailable
+- county FIPS is invalid or duplicated
+- requested counties do not share one compatible Evidence Gateway release ID
+- a source measure does not resolve to one reviewed semantic definition
+- the measure is not registered for Barrier Intelligence
+- the reviewed semantic policy does not permit the requested visualization
+- a trend is requested for a non-trendable measure
+- a selected county is outside the requested county set
 
-A full request is `cbcap.visualization-request.v1`. It contains reviewed metric semantics, reviewed geography identities, exact source versions, canonical observations, evidence release identity, output scope, and the required data-shape facts for deterministic selection.
+Missing or partial coverage remains unavailable. It is never converted to zero or filled merely to complete a map.
 
-The selected plan is `cbcap.visualization-plan.v1`. Before a renderer is chosen, CB-CAP checks the metric's `allowed_visualizations`. A non-trendable metric cannot create a trend. A bivariate map requires exactly two reviewed metrics that both permit `bivariate_map`. A service-gap map requires observed component evidence IDs for each derived gap record.
+## Five-county evaluation set
 
-The linked workspace is `cbcap.analytical-workspace.v1`. Its primary view, comparison, inspector, accessible table, and export share one canonical row set and SHA-256 data fingerprint. Selecting a place updates all three linked selections and URL state together.
+The locked evaluation counties use the same contract and code path:
 
-The render package is `cbcap.visualization-render-package.v1`. Ranked and interval comparisons include direct-labeled SVG. Spatial views expose MapLibre feature state and an accessible HTML fallback. Bivariate maps include a text-decodable 3 × 3 legend.
+- Albany County, New York — 36001
+- Schenectady County, New York — 36093
+- Montgomery County, New York — 36057
+- Chester County, Pennsylvania — 42029
+- Bexar County, Texas — 48029
 
-## Reading path
+No county-specific scoring or presentation logic is allowed.
 
-Large screens show primary evidence first, then linked comparison, then source/method detail. Filters belong near the view they change and do not precede the evidence.
+## Analytical plans
 
-Mobile portrait follows `primary → comparison → inspector → controls`. Hover is never required. A selected geography must be reachable by tap or keyboard and essential values stay visible in text. The accessible table is the low-bandwidth and nonvisual fallback rather than a separate analytical claim.
+The workspace supports governed comparison, uncertainty, spatial pattern, relationship, barrier matrix, bivariate map, service-gap, and explicitly reviewed time-change requests.
 
-## Evidence states
+County ranking uses a ranked or interval dot view rather than a map by reflex. A map is selected only when geography is part of the reasoning and reviewed geometry is available.
 
-Observed, modeled, derived, forecast, scenario, and unavailable values are separate states. `unavailable` carries no numeric value. Uncertainty remains attached to the canonical observation and appears in the inspector, table, and direct-labeled SVG when present.
+A bivariate map requires exactly two reviewed measures. Both measures must explicitly permit `bivariate_map`. The plan carries a decodable three-by-three legend with direct axis labels and preserves missingness outside the quantitative scale.
 
-Public output cannot include tenant-private layers unless the request records an explicit approved public transformation. The visualization API is identity-gated and audits workspace creation by tenant, principal, request, artifact family, renderer, scope, and evidence fingerprint.
+A service-gap view requires exactly two reviewed evidence layers. Its source layers remain identified as observed or official designation evidence. Gap logic is explicitly derived, has no composite score, carries no causal claim, and cannot be presented as observed source data.
 
-## Deterministic selection
+Barrier matrices require reviewed `barrier_matrix` permission. They may compare registered barrier evidence without creating a universal barrier score or mixing incompatible units into one quantitative scale.
 
-County ranking uses a ranked or interval dot view, not a map by reflex. Spatial patterns use a choropleth only when geography is analytically meaningful, reviewed boundary geometry exists, and normalization is valid. Bivariate maps use exactly two measures. Service-gap views visibly separate observed layers from derived gap logic. Trend, distribution, relationship, planning-alignment, funding-fit, and barrier-matrix requests retain the existing fail-closed selection rules.
+## Source and method ledger
 
-## Export and failure behavior
+Every workspace returns a source/method ledger containing:
 
-Static export carries the same claim, canonical rows, source ledger, artifact family, and data fingerprint as the interactive workspace. Export therefore cannot silently change the analytical statement.
+- county and Evidence Gateway release identity
+- release hash for each county package
+- source versions
+- reviewed metric semantics
+- observation IDs
+- source-measure IDs
+- data periods
+- review status
 
-If a requested renderer is not permitted by reviewed metric semantics, the request fails closed. If MapLibre geometry is unavailable, the map cannot be fabricated; the accessible evidence table remains available. Partial and unavailable source coverage stays visible. Stale or future live-data behavior must preserve the last reviewed evidence and mark its state rather than replacing it with an empty chart.
+This ledger is part of the analytical artifact rather than a detached documentation page.
+
+## Linked state
+
+The workspace returns one synchronized selection contract for the primary view, comparison, and inspector. Selecting a county updates the selected county and inspector together. The contract identifies URL-backed keys and separates committed state from ephemeral map or hover state.
+
+The host UI owns navigation, URL state, filters, selection, and panel composition. MapLibre or an SVG/chart renderer owns only its marks and local interaction. Renderers do not fetch evidence or create analytical state.
+
+## Mobile and accessibility
+
+Mobile portrait shows the insight and primary evidence before filters or diagnostic controls. Controls belong in a sheet or drawer and must return the user to the affected evidence. Wide maps may support landscape without making landscape mandatory.
+
+Hover is optional preview only. Essential values are available through text and the required table fallback. Keyboard inspection is required. Missingness, selection, and other states may not depend on color alone.
+
+## Export parity
+
+The workspace creates a deterministic SHA-256 claim ID from the evidence rows that support the analytical statement. Static fallback, accessible table, source ledger, and interactive view must preserve that same claim ID and selection/filter state.
+
+Export is not a second analytical pipeline. It cannot silently change values, exclude missingness, change the selected evidence, or make a stronger claim than the interactive workspace.
+
+## Public and private separation
+
+This workspace consumes the reviewed public Evidence Gateway. Tenant-private evidence and workspace memory are separate authority domains and are not written into Evidence Core by visualization. Public Evidence Gateway data and tenant-private planning state must not be blended into a public artifact without a separately governed approved transformation.
+
+The production API surface remains under `/api/cbcap/*`; the retired `/api/place` composite-scoring path is not part of the production runtime.
 
 ## QA
 
-Acceptance tests cover transportation comparison, non-map ranking, partial PLACES coverage, non-trendable rejection, exactly-two-measure bivariate mapping, observed-versus-derived service gaps, uncertainty retention, five-county linked state without value drift, non-hover access, static/interactive claim parity, tenant-private/public separation, direct-labeled SVG, and MapLibre missing-value feature state.
+Acceptance coverage includes:
+
+- transportation comparison with source, release, and uncertainty retained
+- ranking without reflexive mapping
+- partial PLACES HRSN coverage remaining unavailable rather than zero
+- non-trendable measure rejection
+- exactly-two-measure bivariate mapping with a decodable legend
+- observed-versus-derived service-gap separation
+- five-county linked selection and source inspection
+- no hover-only essential evidence
+- static and interactive claim parity
+- rejection of incompatible releases and unregistered measures
+- rejection of caller-supplied raw values at the HTTP boundary
+- authorization before request parsing or Evidence Gateway access
