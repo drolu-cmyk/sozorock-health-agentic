@@ -112,6 +112,23 @@ test('no-change monitoring result is not persisted', async () => {
   assert.equal(store.list().length, 0);
 });
 
+test('invalid governed snapshot is persisted as blocked even without current snapshot fields', async () => {
+  const store = new InMemoryMonitoringFindingStore({ tenantId: 'tenant-a', clock: () => '2026-08-23T12:00:00.000Z' });
+  const api = createCBCAPMonitoringApi({
+    async definitionForActor() { return definition(); },
+    async snapshotForActor() {
+      return { kind: 'wrong-kind', subjectId: 'wrong-subject', reviewStatus: 'verified', sourceAuthority: 'governed' };
+    },
+    async findingStoreForActor() { return store; },
+  });
+  const result = await api.handle({ monitorId: 'monitor-release', asOf: '2026-08-23' }, { workspaceActor: actor() });
+  assert.equal(result.statusCode, 422);
+  assert.equal(result.body.status, 'blocked');
+  assert.ok(result.body.reasonCodes.includes('governed_snapshot_invalid'));
+  assert.equal(store.list().length, 1);
+  assert.deepEqual(store.list()[0].sourceEntityIds, []);
+});
+
 test('monitoring requires authenticated workspace actor', async () => {
   const api = createCBCAPMonitoringApi({
     async definitionForActor() { return definition(); },
