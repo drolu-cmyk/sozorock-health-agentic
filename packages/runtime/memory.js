@@ -39,6 +39,15 @@ class InMemoryRunMemory {
     if (!events) return [];
     return clone(events);
   }
+
+  latestCheckpoint(runId) {
+    const events = this.runs.get(runId);
+    if (!events) return null;
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (events[index].type === 'checkpoint_saved') return clone(events[index]);
+    }
+    return null;
+  }
 }
 
 module.exports = { InMemoryRunMemory };
