@@ -5,6 +5,12 @@ const { GovernedHarness } = require('../packages/runtime/harness');
 const { InMemoryRunMemory } = require('../packages/runtime/memory');
 
 const HASH = `sha256:${'a'.repeat(64)}`;
+const APPROVAL = {
+  status: 'approved',
+  by: 'reviewer-1',
+  scope: 'county_plan',
+  reviewedAt: '2026-08-24T00:00:00.000Z',
+};
 
 function handlers(calls) {
   return {
@@ -65,12 +71,12 @@ test('CB-CAP graph runs scenarios only from explicit user assumptions', async ()
   assert.equal(result.scenario.status, 'scenario_output');
 });
 
-test('CB-CAP graph publishes only with an explicit approval record', async () => {
+test('CB-CAP graph publishes only with a complete human approval record', async () => {
   const calls = { scenario: 0, publish: 0 };
   const graph = createCBCAPGraph({ handlers: handlers(calls) });
   const result = await graph.run(
     { type: 'county_plan', location: '36001' },
-    { approval: { status: 'approved', by: 'reviewer-1', scope: 'county_plan' } },
+    { approval: APPROVAL },
   );
 
   assert.equal(result.status, 'approved_output');
@@ -79,13 +85,17 @@ test('CB-CAP graph publishes only with an explicit approval record', async () =>
   assert.ok(result.trace.some((entry) => entry.nodeId === 'publish'));
 });
 
-test('publishing is blocked by the harness without explicit human approval', () => {
+test('publishing is blocked when approval lacks review provenance', () => {
   const harness = new GovernedHarness({ allowedNodes: ['publish'] });
-  const blocked = harness.authorize({ nodeId: 'publish', state: { approval: { status: 'required' } }, step: 1 });
+  const blocked = harness.authorize({
+    nodeId: 'publish',
+    state: { approval: { status: 'approved', by: 'reviewer', scope: 'county_plan' } },
+    step: 1,
+  });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.code, 'human_approval_required');
 
-  const allowed = harness.authorize({ nodeId: 'publish', state: { approval: { status: 'approved', by: 'reviewer' } }, step: 1 });
+  const allowed = harness.authorize({ nodeId: 'publish', state: { approval: APPROVAL }, step: 1 });
   assert.equal(allowed.ok, true);
 });
 
