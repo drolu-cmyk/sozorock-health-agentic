@@ -155,11 +155,12 @@ test('Evidence Gateway production probe fails closed on release drift or missing
   assert.ok(result.issues.includes('planning_contract_missing:48029'));
 });
 
-test('production configuration disables development/legacy bypass and requires explicit HTTPS origins and AWS region', () => {
+test('production configuration disables bypasses and requires explicit origins, hosts, and AWS region', () => {
   const good = inspectProductionConfiguration({ env: {
     ENABLE_UNAUTHENTICATED_CBCAP_DEV: 'false',
     ENABLE_LEGACY_SESSIONS: 'false',
     AGENTIC_ALLOWED_ORIGINS: 'https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org',
+    AGENTIC_ALLOWED_HOSTS: 'api.cbcap.sozorockfoundation.org',
     AWS_REGION: 'us-east-1',
   } });
   assert.equal(good.ok, true);
@@ -168,10 +169,12 @@ test('production configuration disables development/legacy bypass and requires e
     ENABLE_UNAUTHENTICATED_CBCAP_DEV: 'true',
     ENABLE_LEGACY_SESSIONS: 'true',
     AGENTIC_ALLOWED_ORIGINS: '*',
+    AGENTIC_ALLOWED_HOSTS: '*',
   } });
   assert.equal(bad.ok, false);
   assert.ok(bad.issues.includes('unauthenticated_dev_mode_enabled'));
   assert.ok(bad.issues.includes('legacy_sessions_enabled'));
+  assert.ok(bad.issues.includes('allowed_host_invalid_or_wildcard'));
   assert.ok(bad.issues.includes('aws_region_missing_or_invalid'));
 });
 
@@ -179,6 +182,7 @@ test('full activation gate stays blocked if any target-environment proof is miss
   const result = await runProductionReadiness({
     env: {
       AGENTIC_ALLOWED_ORIGINS: 'https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org',
+      AGENTIC_ALLOWED_HOSTS: 'api.cbcap.sozorockfoundation.org',
       AWS_REGION: 'us-east-1',
     },
     pool: inspectionPool(),
@@ -186,6 +190,23 @@ test('full activation gate stays blocked if any target-environment proof is miss
     tenantB: 'tenant-b',
     evidenceClient: { async getCountyPackage(county) { return evidencePackage(county); } },
     identityProbe: async () => ({ claimsVerified: true, sameTenantAuthorized: true, crossTenantDenied: true, humanReviewAuthorityVerified: true }),
+    deploymentProbe: async () => ({
+      oidcIdentityVerified: true,
+      deploymentAccountVerified: true,
+      protectedMainShaVerified: true,
+      immutableImageVerified: true,
+      vulnerabilityScanClean: true,
+      managedSecretsVerified: true,
+      privateEvidenceStorageVerified: true,
+      databaseNetworkIsolationVerified: true,
+      migrationsCompletedBeforeTraffic: true,
+      runtimeEnabledAfterMigrations: true,
+      tlsCertificateVerified: true,
+      edgeProtectionVerified: true,
+      securityHeadersVerified: true,
+      corsBoundaryVerified: true,
+      unauthenticatedProtectedRouteDenied: true,
+    }),
     recoveryProbe: async () => ({ backupVerified: true, restoreVerified: true }),
     observabilityProbe: async () => ({ logsReachable: true, auditEventsReachable: true, alertsConfigured: true, incidentRouteConfigured: true }),
     // rollback probe intentionally omitted
