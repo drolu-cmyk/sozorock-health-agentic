@@ -1,85 +1,53 @@
-# SozoRock Health Agentic Runtime
+# SozoRock Health Agentic Infrastructure
 
-This repository is the execution and control plane for governed SozoRock Health agents, including the CB-CAP decision workflow.
+This repository is the governed execution and control plane for SozoRock Health agentic workflows. It is not a second Evidence Core.
 
-It is **not** the production public-data warehouse. Governed evidence is supplied by the versioned Evidence Core and Evidence Gateway in `drolu-cmyk/sozorock-health`.
+The authoritative public evidence pipeline lives in `drolu-cmyk/sozorock-health`. Production agents consume its reviewed Evidence Gateway contract and preserve release identity, geography, source coverage, metric semantics, and missingness.
 
-## Current runtime foundation
+## Current foundation
 
-The current branch introduces the first governed graph contracts:
+The first governed CB-CAP runtime establishes:
 
-- append-only run memory;
-- a directed execution graph with explicit state transitions;
-- deterministic policy harness with allowlists, step budgets, and a kill switch;
-- Evidence Gateway contract, release, release-hash, and county identity validation;
-- scenario execution only from explicit user assumptions;
-- a mandatory human-review state before publication;
-- fail-closed behavior when governed evidence identity is inconsistent.
+1. An explicit directed graph for county planning work.
+2. A deterministic harness with node allowlists, step budgets, and a kill switch.
+3. Append-only graph run memory.
+4. A fail-closed Evidence Gateway client.
+5. Scenario execution only when a user supplies assumptions.
+6. A mandatory human review stop before publication.
+7. Full graph proof that publication occurs only with an explicit approval record.
 
-The operating principle is:
+## Product boundary
 
-**AI drafts. People decide.**
+CB-CAP is a distinct institutional planning environment. Explore / Place Intelligence is the open public evidence surface. They may share governed evidence contracts, but they do not share product depth or decision authority.
 
-## CB-CAP graph
+The agent runtime must never invent production evidence or turn demonstrations into claims. In particular, production CB-CAP must not publish synthetic reach numbers, invented barrier-reduction percentages, arbitrary cost indices, demo heat points, unsupported planning-attention scores, or local priorities that are not backed by governed evidence.
 
-```text
-resolve_place
-  -> load_evidence
-  -> synthesize_barriers
-  -> organize_plan
-  -> scenario?        # only with explicit user assumptions
-  -> draft_brief
-  -> await_review     # mandatory unless an authenticated approval is present
-  -> publish?         # only after approval
-```
+## Legacy migration boundary
 
-The graph is intentionally separate from model choice. Models may change without replacing the workflow, policy, evidence, memory, review, and audit contracts.
+The existing ACS and CDC PLACES adapters, linear Chief of Staff pipeline, file-backed sessions, and `CBCAPPlanningEngine` are retained temporarily as migration assets. They are not the target production architecture and must not become a competing ingestion path.
 
-## Evidence boundary
+Migration order:
 
-Production CB-CAP agents consume governed Evidence Gateway packages. They validate exact geography and release identity before using evidence.
+1. Governed graph runtime and Evidence Gateway client.
+2. Replace legacy server CB-CAP execution with the graph.
+3. Replace file-backed session state with governed durable workflow memory.
+4. Retire synthetic scenario and demo heat logic.
+5. Add specialized governed subagents only where each agent has a narrow role, tool contract, evidence boundary, evaluation set, and audit record.
 
-Legacy ACS and CDC PLACES adapters in this repository remain migration assets and fixtures for now. They are not a second production evidence authority and should not be extended as a competing ingest path.
-
-## Scenario boundary
-
-Production scenarios must use explicit user assumptions and source-backed baselines where required. The runtime must preserve formulas, units, uncertainty, missing inputs, and the distinction between published evidence and user assumptions.
-
-Synthetic reach numbers, invented barrier-reduction percentages, arbitrary cost indices, demo heat points, and unsupported planning-attention scores are not acceptable production CB-CAP outputs.
-
-## Memory
-
-The current `InMemoryRunMemory` establishes an append-only event contract for graph runs. It is not the production persistence layer.
-
-The intended production model separates:
-
-1. run events and traces;
-2. authenticated workspace state;
-3. reviewed institutional memory;
-4. evaluated learning memory.
-
-Unreviewed model output must not become institutional truth automatically.
-
-## Quick start
+## Local validation
 
 ```bash
 npm install
 npm test
-npm start
 ```
 
-The existing server and linear Chief of Staff path remain during migration. New production CB-CAP work should target the governed graph runtime rather than adding more behavior to the legacy orchestration path.
+The repository CI runs on Node 24 with read-only contents permission, pinned GitHub Actions, disabled checkout credentials, tests, and a production dependency audit.
 
-## Next migration steps
+## Non-clinical boundary
 
-1. migrate the legacy CB-CAP planning engine onto the governed graph;
-2. replace synthetic scenario and heat-map output with governed evidence and explicit assumptions;
-3. route production evidence through the Evidence Gateway client;
-4. add authenticated persistent workspace memory and approval records;
-5. add evaluated specialist graph nodes for barriers, CHA/CHIP, funding intelligence, monitoring, and briefs;
-6. connect the CB-CAP product surface only after those runtime gates pass.
+The system does not diagnose, triage, prescribe, recommend treatment, infer individual clinical risk, replace licensed care, determine funding eligibility, allocate funding, or replace county or partner judgment.
 
-See `ARCHITECTURE.md` for the authoritative runtime boundary.
+**AI drafts. People decide.**
 
 ## License
 
