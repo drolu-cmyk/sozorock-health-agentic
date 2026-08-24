@@ -41,6 +41,14 @@ function createInstitutionalCBCAPGateway(options = {}) {
     return selected.memoryApi[method](...args, { ...context, workspaceActor: auth.actor });
   }
 
+  async function privateEvidenceCall(method, action, args, context) {
+    const auth = await actorFor(context.request, action);
+    if (auth.error) return auth.error;
+    const selected = await runtime(auth.actor);
+    if (!selected?.privateEvidenceApi || typeof selected.privateEvidenceApi[method] !== 'function') return unavailable();
+    return selected.privateEvidenceApi[method](...args, { ...context, workspaceActor: auth.actor });
+  }
+
   return {
     async handlePlan(input, context = {}) {
       const auth = await actorFor(context.request, 'cbcap.plan.create');
@@ -100,6 +108,16 @@ function createInstitutionalCBCAPGateway(options = {}) {
       const result = await selected.monitoringApi.handle(input || {}, { ...context, workspaceActor: auth.actor });
       auditSink({ action: 'cbcap_monitoring_request_completed', tenantId: auth.actor.tenantId, principalId: auth.actor.principalId, role: auth.actor.role, monitorId: result.body?.monitorId || null, findingStatus: result.body?.status || null, statusCode: result.statusCode });
       return result;
+    },
+
+    handlePrivateEvidenceSubmit(input, context = {}) {
+      return privateEvidenceCall('submit', 'cbcap.private_evidence.submit', [input || {}], context);
+    },
+    handlePrivateEvidenceReview(documentId, input, context = {}) {
+      return privateEvidenceCall('review', 'cbcap.private_evidence.review', [documentId, input || {}], context);
+    },
+    handlePrivateEvidenceQuery(input, context = {}) {
+      return privateEvidenceCall('query', 'cbcap.private_evidence.read', [input || {}], context);
     },
 
     handleWorkspaceList(workspaceId, input, context = {}) { return memoryCall('listWorkspace', 'cbcap.workspace.read', [workspaceId, input || {}], context); },
