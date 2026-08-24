@@ -1,12 +1,18 @@
 openapi: 3.1.0
 info:
   title: SozoRock Health Agentic API
-  version: 0.6.0
+  version: 0.7.0
   description: |
     Non-clinical place intelligence and governed CB-CAP execution.
     CB-CAP resolves one county, consumes reviewed Evidence Gateway packages,
-    and stops generated planning work for human review. It does not diagnose,
-    determine funding, rank people, or replace county judgment.
+    checkpoints the resulting graph state, and stops generated planning work
+    for human review. It does not diagnose, determine funding, rank people,
+    or replace county judgment.
+
+    Version 0.7 introduces resumable run-state contracts. The authenticated
+    review-continuation route remains disabled and is not part of this public
+    contract unless an authorized review service and tenant-scoped durable
+    persistence are explicitly installed.
   license:
     name: MIT
 servers:
@@ -38,6 +44,8 @@ paths:
                     type: string
                     format: date-time
                   legacySessionsEnabled:
+                    type: boolean
+                  reviewContinuationEnabled:
                     type: boolean
   /api/place:
     post:
@@ -77,12 +85,12 @@ paths:
       description: |
         Resolves the request to exactly one county FIPS before the planning engine
         may access evidence. Multi-county ZIP inputs and ambiguous county names stop
-        for explicit selection. The planning engine uses the reviewed Evidence Gateway
-        and produces a source-backed draft that requires human review.
+        for explicit selection. The planning engine uses the reviewed Evidence Gateway,
+        checkpoints the run, and produces a source-backed draft that requires human review.
 
-        Approval is intentionally not accepted on this initial request. Approval must
-        later continue the exact saved run and exact Evidence Gateway release through
-        a dedicated authenticated review-continuation workflow.
+        Approval is intentionally not accepted on this initial request. Approval may
+        later continue the exact saved run and exact Evidence Gateway release only when
+        an authenticated tenant-scoped review service is explicitly installed.
       requestBody:
         required: true
         content:
@@ -175,7 +183,7 @@ components:
           $ref: "#/components/schemas/PlaceResolution"
         evidence:
           type: object
-          description: Governed Evidence Gateway package and release identity retained for audit.
+          description: Governed Evidence Gateway package and release identity retained for audit and exact-run continuation.
           additionalProperties: true
         barriers:
           type: object
