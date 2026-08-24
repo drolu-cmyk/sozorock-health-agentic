@@ -22,6 +22,7 @@ The control plane now includes:
 - tenant-scoped workspace collaboration state with optimistic concurrency and immutable change events;
 - append-only institutional memory with explicit proposal, human review, evidence revalidation, expiry, and supersession;
 - append-only learning and evaluation memory for trajectories, evaluations, corrections, and reviewed improvement candidates, with no automatic production mutation;
+- an executable fail-closed production-readiness gate covering runtime configuration, live database role/TLS/RLS/privileges, cross-tenant isolation, Evidence Gateway reachability, identity authority, backup/restore, observability, and rollback proof;
 - no public audit endpoint and no legacy unauthenticated sessions by default.
 
 **AI drafts. People decide.**
@@ -166,6 +167,19 @@ Institutional planning, review, funding, visualization, workforce, monitoring, t
 
 The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, visualization, workforce, monitoring, private evidence, workspace, institutional memory, or learning-memory access and is not a production authentication mode.
 
+## Production readiness
+
+Repository CI proves the code contract. Target-environment activation additionally requires the fail-closed `cbcap.production-readiness.v1` gate.
+
+```bash
+CB_CAP_PRODUCTION_READINESS_ADAPTER=/secure/runtime/cbcap-readiness-adapter.js \
+AGENTIC_ALLOWED_ORIGINS='https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org' \
+AWS_REGION=us-east-1 \
+npm run preflight:production
+```
+
+The gate exits nonzero unless live configuration, PostgreSQL TLS/role/RLS/privileges, rollback-only cross-tenant isolation, the five-county Evidence Gateway planning contract, Cognito authority, backup/restore, observability, and institutional-runtime rollback are all verified. See `docs/PRODUCTION_ACTIVATION.md`.
+
 ## Verification
 
 ```bash
@@ -176,11 +190,11 @@ npm audit --omit=dev --audit-level=high
 
 Node 24 or later is required.
 
-## Outstanding activation work
+## Remaining activation work
 
-1. add relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
-2. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
-3. extend production preflight to all memory, monitoring, and private-evidence tables, then run it against real Cognito, PostgreSQL, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime;
+1. add relationship evidence only as reviewed feeds become available through the shared Evidence Gateway; absence is never synthesized;
+2. retire the superseded Python/FastAPI draft architecture after the remaining reusable deployment rules are preserved;
+3. run the production-readiness gate against the real AWS Cognito, PostgreSQL, backup/restore, observability, managed-secret, network, and rollback adapters before enabling institutional routes;
 4. connect a production scheduler or event source only after the monitoring evaluator, persistence, credentials, observability, retry behavior, and alert destination are verified in the target environment.
 
 See `ARCHITECTURE.md` for the full control-plane boundary.
