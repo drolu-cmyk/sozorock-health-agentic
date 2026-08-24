@@ -18,7 +18,6 @@ class GeographyAgent {
     if (!query) return null;
     const q = String(query).trim();
 
-    // Five-digit: FIPS first, then ZIP
     if (/^\d{5}$/.test(q)) {
       const asFips = getByFips(q);
       if (asFips) {
@@ -59,7 +58,6 @@ class GeographyAgent {
       return null;
     }
 
-    // "County, ST" or "Name ST"
     const m = q.match(/^(.+?)[,\s]+([A-Za-z]{2})$/);
     if (m) {
       const rec = resolveByName(m[1], m[2]);
@@ -77,7 +75,6 @@ class GeographyAgent {
       return null;
     }
 
-    // Name only — detect ambiguity across states
     const matches = findAllByName(q);
     if (matches.length === 1) {
       const rec = matches[0];
@@ -94,22 +91,13 @@ class GeographyAgent {
     if (matches.length > 1) {
       return {
         status: "ambiguous",
-        message: "Multiple counties match this name. Specify state (e.g. \"Orange, CA\").",
+        message: "Multiple counties match this name. Specify the state before continuing.",
         matches: matches.map(r => ({
           fips: r.fips,
           county: r.name,
           state: r.state
         }))
       };
-    }
-
-    // Legacy demo hints
-    const lower = q.toLowerCase();
-    if (lower.includes("schoharie") || lower.includes("cobleskill")) {
-      return this.resolve("36095");
-    }
-    if (lower.includes("delaware") && (lower.includes("ny") || lower.includes("new york"))) {
-      return this.resolve("36025");
     }
 
     return null;
