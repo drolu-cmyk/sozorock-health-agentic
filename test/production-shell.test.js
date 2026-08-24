@@ -44,6 +44,12 @@ test('production workflow deploys only the exact triggering commit', () => {
   assert.match(workflow, /test "\$origin_main" = "\$approved_commit"/);
 });
 
+test('production image excludes the retired demonstration frontend', () => {
+  const dockerfile = readFileSync(path.join(__dirname, '..', 'Dockerfile.runtime'), 'utf8');
+  assert.doesNotMatch(dockerfile, /^COPY frontend\b/m);
+  assert.match(dockerfile, /CMD \["node", "server\/production-index\.js"\]/);
+});
+
 test('production template composes private evidence without the obsolete SSM placeholder', () => {
   const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
   assert.doesNotMatch(template, /CommonContainerEnvironment/);
