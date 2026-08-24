@@ -26,7 +26,15 @@ class EvidenceGatewayClient {
     if (contract !== EVIDENCE_CONTRACT) throw new Error(`Unexpected Evidence Gateway contract ${contract || 'missing'}.`);
 
     const body = await response.json();
-    const geography = body?.package?.geographies?.[0];
+    const geographies = body?.package?.geographies;
+    if (!Array.isArray(geographies) || geographies.length !== 1) {
+      throw new Error('Evidence Gateway county package must contain exactly one geography.');
+    }
+    const geography = geographies[0];
+    if (geography?.kind !== 'county') {
+      throw new Error('Evidence Gateway county package must contain a county geography.');
+    }
+
     const envelope = validateEvidenceEnvelope({
       contract: body?.manifest?.contract_version,
       releaseId: body?.manifest?.release_id,
