@@ -40,9 +40,12 @@ function createProductionEdge(innerApp, options = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
-    const authority = String(req.get('host') || '').trim().toLowerCase();
-    const host = authority.startsWith('[') ? authority : authority.split(':')[0];
-    if (!allowedHosts.has(host)) return res.status(421).json({ error: 'Misdirected request' });
+    const healthProbe = req.path === '/healthz' || req.path === '/readyz';
+    if (!healthProbe) {
+      const authority = String(req.get('host') || '').trim().toLowerCase();
+      const host = authority.startsWith('[') ? authority : authority.split(':')[0];
+      if (!allowedHosts.has(host)) return res.status(421).json({ error: 'Misdirected request' });
+    }
 
     const suppliedRequestId = String(req.get('x-request-id') || '').trim();
     const requestId = /^[A-Za-z0-9._:-]{1,128}$/.test(suppliedRequestId) ? suppliedRequestId : crypto.randomUUID();
@@ -52,7 +55,7 @@ function createProductionEdge(innerApp, options = {}) {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    if (req.path.startsWith('/api/') || req.path === '/healthz' || req.path === '/readyz') {
+    if (req.path.startsWith('/api/') || healthProbe) {
       res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
       res.setHeader('Cache-Control', 'no-store');
     }
