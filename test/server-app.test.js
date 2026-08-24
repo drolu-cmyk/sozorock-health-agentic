@@ -36,7 +36,7 @@ test('POST /api/cbcap preserves governed API status and disables caching', async
   });
 });
 
-test('public audit and legacy session endpoints are closed by default', async () => {
+test('public audit, legacy session, and review endpoints are closed by default', async () => {
   await withServer({}, async (base) => {
     const audit = await fetch(`${base}/api/audit`);
     assert.equal(audit.status, 404);
@@ -47,6 +47,39 @@ test('public audit and legacy session endpoints are closed by default', async ()
       body: JSON.stringify({ location: '36001' }),
     });
     assert.equal(session.status, 404);
+
+    const review = await fetch(`${base}/api/cbcap/runs/run-1/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'approve' }),
+    });
+    assert.equal(review.status, 404);
+  });
+});
+
+test('review route is mounted only when a configured review service is injected', async () => {
+  let seenContext = false;
+  const cbcapReviewAPI = {
+    async handle(runId, body, context) {
+      seenContext = Boolean(context?.request);
+      assert.equal(runId, 'run-1');
+      assert.deepEqual(body, { decision: 'approve' });
+      return { statusCode: 200, body: { status: 'approved_output', runId } };
+    },
+  };
+  await withServer({ cbcapReviewAPI }, async (base) => {
+    const response = await fetch(`${base}/api/cbcap/runs/run-1/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'approve' }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.status, 'approved_output');
+    assert.equal(seenContext, true);
+
+    const health = await fetch(`${base}/api/health`).then((item) => item.json());
+    assert.equal(health.reviewContinuationEnabled, true);
   });
 });
 
@@ -58,6 +91,7 @@ test('CORS is allowlisted and rejects disallowed preflight requests', async () =
     assert.equal(allowed.status, 200);
     assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://cbcap.sozorockfoundation.org');
     assert.equal(allowed.headers.get('vary'), 'Origin');
+    assert.match(allowed.headers.get('access-control-allow-headers'), /Authorization/);
 
     const denied = await fetch(`${base}/api/cbcap`, {
       method: 'OPTIONS',
@@ -102,12 +136,13 @@ test('legacy sessions may be enabled only by explicit server configuration', asy
   });
 });
 
-test('health endpoint identifies governed runtime and session boundary', async () => {
+test('health endpoint identifies governed runtime and disabled optional boundaries', async () => {
   await withServer({}, async (base) => {
     const response = await fetch(`${base}/api/health`);
     const body = await response.json();
-    assert.equal(body.version, '0.6.0');
+    assert.equal(body.version, '0.7.0');
     assert.equal(body.runtime, 'governed-graph');
     assert.equal(body.legacySessionsEnabled, false);
+    assert.equal(body.reviewContinuationEnabled, false);
   });
 });
