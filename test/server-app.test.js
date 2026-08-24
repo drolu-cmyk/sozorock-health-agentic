@@ -71,7 +71,25 @@ test('CORS is allowlisted and rejects disallowed preflight requests', async () =
 });
 
 test('legacy sessions may be enabled only by explicit server configuration', async () => {
-  await withServer({ enableLegacySessions: true }, async (base) => {
+  const memory = new Map();
+  const sessionStore = {
+    create(input) {
+      const session = { id: 'session-1', location: input.location || null };
+      memory.set(session.id, session);
+      return session;
+    },
+    get(id) {
+      return memory.get(id) || null;
+    },
+    update(id, patch) {
+      const current = memory.get(id);
+      if (!current) return null;
+      const next = { ...current, ...patch };
+      memory.set(id, next);
+      return next;
+    },
+  };
+  await withServer({ enableLegacySessions: true, sessionStore }, async (base) => {
     const response = await fetch(`${base}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
