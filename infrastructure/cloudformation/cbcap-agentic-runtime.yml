@@ -393,6 +393,24 @@ Resources:
           - Effect: Allow
             Principal: {Service: ecs-tasks.amazonaws.com}
             Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadTenantPrivateEvidenceMetadata
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ListTenantPrivateEvidence
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt PrivateEvidenceBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: tenant-evidence/*
+              - Sid: ReadTenantPrivateEvidenceMetadata
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub '${PrivateEvidenceBucket.Arn}/tenant-evidence/*'
 
   MigrationTaskExecutionRole:
     Type: AWS::IAM::Role
@@ -414,13 +432,6 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: [!Ref RuntimeDatabasePassword, !GetAtt Database.MasterUserSecret.SecretArn]
-
-  CommonContainerEnvironment: 
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /cbcap-agentic/placeholder
-      Type: String
-      Value: managed-by-cloudformation
 
   RuntimeTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -456,6 +467,8 @@ Resources:
             - {Name: CB_CAP_DATABASE_CA_FILE, Value: /app/certs/global-bundle.pem}
             - {Name: CB_CAP_COGNITO_USER_POOL_ID, Value: !Ref UserPool}
             - {Name: CB_CAP_COGNITO_APP_CLIENT_ID, Value: !Ref UserPoolClient}
+            - {Name: CB_CAP_PRIVATE_EVIDENCE_BUCKET, Value: !Ref PrivateEvidenceBucket}
+            - {Name: CB_CAP_PRIVATE_EVIDENCE_KMS_KEY_ARN, Value: !GetAtt PrivateEvidenceKey.Arn}
           Secrets:
             - Name: CB_CAP_DATABASE_PASSWORD
               ValueFrom: !Ref RuntimeDatabasePassword
