@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const express = require('express');
 const {
+  createProductionAuditSink,
   createProductionEdge,
   parseAllowedHosts,
   productionPublishHandlerForActor,
@@ -17,6 +19,30 @@ async function withServer(app, fn) {
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+}
+
+function requestWithHost(base, requestPath, host) {
+  const target = new URL(base);
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: target.hostname,
+      port: Number(target.port),
+      path: requestPath,
+      method: 'GET',
+      headers: { Host: host },
+    }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => resolve({
+        status: response.statusCode,
+        headers: response.headers,
+        body,
+      }));
+    });
+    request.on('error', reject);
+    request.end();
+  });
 }
 
 test('production host allowlist rejects wildcards and URL-shaped values', () => {
@@ -42,12 +68,12 @@ test('production edge keeps institutional routes host-bound while health probes 
     assert.equal(health.headers.get('x-frame-options'), 'DENY');
     assert.ok(health.headers.get('x-request-id'));
 
-    const denied = await fetch(`${base}/api/protected`, { headers: { Host: 'attacker.example' } });
+    const denied = await requestWithHost(base, '/api/protected', 'attacker.example');
     assert.equal(denied.status, 421);
 
-    const allowed = await fetch(`${base}/api/protected`, { headers: { Host: 'api.cbcap.sozorockfoundation.org' } });
+    const allowed = await requestWithHost(base, '/api/protected', 'api.cbcap.sozorockfoundation.org');
     assert.equal(allowed.status, 200);
-    assert.equal(allowed.headers.get('cache-control'), 'no-store');
+    assert.equal(allowed.headers['cache-control'], 'no-store');
   });
 });
 
@@ -62,6 +88,18 @@ test('production readiness endpoint fails closed when database readiness fails',
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { status: 'not_ready' });
   });
+});
+
+test('production audit sink emits structured audit records', () => {
+  const lines = [];
+  const sink = createProductionAuditSink({ log(value) { lines.push(value); } });
+  sink({ action: 'test_event', tenantId: 'tenant-a' });
+  assert.equal(lines.length, 1);
+  const event = JSON.parse(lines[0]);
+  assert.equal(event.type, 'cbcap_audit');
+  assert.equal(event.action, 'test_event');
+  assert.equal(event.tenantId, 'tenant-a');
+  assert.match(event.recordedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test('production approval handler emits an internal governed artifact and rejects cross-tenant state', async () => {
