@@ -1,11 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { readFile } = require('node:fs/promises');
 
-const migrationUrl = new URL('../infrastructure/postgres/005_tenant_private_evidence.sql', import.meta.url);
+const migrationPath = path.join(__dirname, '../infrastructure/postgres/005_tenant_private_evidence.sql');
 
 test('tenant-private evidence tables force tenant row-level security', async () => {
-  const sql = await readFile(migrationUrl, 'utf8');
+  const sql = await readFile(migrationPath, 'utf8');
   for (const table of ['cbcap_tenant_evidence_documents', 'cbcap_tenant_evidence_reviews']) {
     assert.match(sql, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, 'i'));
     assert.match(sql, new RegExp(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`, 'i'));
@@ -14,7 +15,7 @@ test('tenant-private evidence tables force tenant row-level security', async () 
 });
 
 test('private evidence review has same-tenant referential integrity and append-only history', async () => {
-  const sql = await readFile(migrationUrl, 'utf8');
+  const sql = await readFile(migrationPath, 'utf8');
   assert.match(sql, /FOREIGN KEY \(tenant_id, document_id\)[\s\S]*REFERENCES cbcap_tenant_evidence_documents \(tenant_id, id\)/i);
   assert.match(sql, /BEFORE UPDATE OR DELETE ON cbcap_tenant_evidence_documents/i);
   assert.match(sql, /BEFORE UPDATE OR DELETE ON cbcap_tenant_evidence_reviews/i);
@@ -22,7 +23,7 @@ test('private evidence review has same-tenant referential integrity and append-o
 });
 
 test('eligible private evidence is structurally barred from PHI, person-level records, secrets, public storage, or incomplete security scan', async () => {
-  const sql = await readFile(migrationUrl, 'utf8');
+  const sql = await readFile(migrationPath, 'utf8');
   assert.match(sql, /aggregation_level <> 'person_level'/i);
   assert.match(sql, /NOT contains_phi/i);
   assert.match(sql, /NOT contains_individual_health_records/i);
@@ -33,7 +34,7 @@ test('eligible private evidence is structurally barred from PHI, person-level re
 });
 
 test('migration stores metadata and governance state, not raw document content or public evidence fields', async () => {
-  const sql = await readFile(migrationUrl, 'utf8');
+  const sql = await readFile(migrationPath, 'utf8');
   assert.doesNotMatch(sql, /\braw_content\b/i);
   assert.doesNotMatch(sql, /\bdocument_text\b/i);
   assert.doesNotMatch(sql, /\bembedding\b/i);
