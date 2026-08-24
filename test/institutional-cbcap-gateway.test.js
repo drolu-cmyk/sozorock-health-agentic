@@ -18,7 +18,7 @@ function actor(overrides = {}) {
 }
 
 function fixture(options = {}) {
-  const calls = { identity: 0, runtime: [], plan: 0, review: 0, reviewContext: null };
+  const calls = { identity: 0, runtime: [], plan: 0, review: 0, funding: 0, reviewContext: null, fundingContext: null };
   const identityResolver = async () => {
     calls.identity += 1;
     if (options.identityError) throw new Error('invalid session');
@@ -42,6 +42,16 @@ function fixture(options = {}) {
             hasRequest: Boolean(context.request),
           });
           return { statusCode: 200, body: { status: 'approved_output', runId, input } };
+        },
+      },
+      fundingApi: options.noFunding ? null : {
+        async handle(input, context) {
+          calls.funding += 1;
+          calls.fundingContext = structuredClone({
+            workspaceActor: context.workspaceActor,
+            hasRequest: Boolean(context.request),
+          });
+          return { statusCode: 200, body: { status: 'provisional_review_required', opportunityId: input.opportunityId } };
         },
       },
     };
@@ -73,6 +83,16 @@ test('review request requires review role and passes authenticated actor into re
   assert.equal(calls.reviewContext.hasRequest, true);
 });
 
+test('funding request authenticates before selecting tenant runtime and passes trusted actor context', async () => {
+  const { gateway, calls } = fixture({ actor: actor({ role: 'research_funder_viewer', access: 'viewer' }) });
+  const result = await gateway.handleFunding({ opportunityId: 'opp-1', countyId: 'county:36001' }, { request: { id: 'req-funding' } });
+  assert.equal(result.statusCode, 200);
+  assert.equal(calls.funding, 1);
+  assert.equal(calls.fundingContext.workspaceActor.tenantId, 'tenant-a');
+  assert.equal(calls.fundingContext.workspaceActor.role, 'research_funder_viewer');
+  assert.equal(calls.fundingContext.hasRequest, true);
+});
+
 test('unauthenticated request fails before runtime selection', async () => {
   const { gateway, calls } = fixture({ identityError: true });
   const result = await gateway.handlePlan({ location: '36001' }, { request: {} });
@@ -91,6 +111,16 @@ test('viewer and evidence-agent actors cannot create institutional plans', async
     assert.equal(result.statusCode, 403);
     assert.equal(calls.runtime.length, 0);
   }
+});
+
+test('evidence agent cannot evaluate institutional funding fit', async () => {
+  const { gateway, calls } = fixture({
+    actor: actor({ principalId: 'agent-1', role: 'evidence_agent', actorType: 'agent' }),
+  });
+  const result = await gateway.handleFunding({ opportunityId: 'opp-1', countyId: 'county:36001' }, { request: {} });
+  assert.equal(result.statusCode, 403);
+  assert.equal(calls.funding, 0);
+  assert.equal(calls.runtime.length, 0);
 });
 
 test('community partner can create a plan but cannot approve it', async () => {
@@ -114,6 +144,13 @@ test('review unavailable for a tenant returns service unavailable rather than fa
   const result = await gateway.handleReview('run-1', { decision: 'approve' }, { request: {} });
   assert.equal(result.statusCode, 503);
   assert.equal(calls.review, 0);
+});
+
+test('funding unavailable for a tenant returns service unavailable rather than accepting client data', async () => {
+  const { gateway, calls } = fixture({ noFunding: true });
+  const result = await gateway.handleFunding({ opportunityId: 'opp-1', countyId: 'county:36001' }, { request: {} });
+  assert.equal(result.statusCode, 503);
+  assert.equal(calls.funding, 0);
 });
 
 test('workspace actor review authorizer derives subject and tenant from trusted context', () => {
