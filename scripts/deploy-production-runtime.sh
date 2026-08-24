@@ -245,7 +245,7 @@ snapshot_id="cbcap-agentic-proof-${APPROVED_COMMIT:0:12}-${GITHUB_RUN_ID:-manual
 restore_id="cbcap-agentic-restore-${APPROVED_COMMIT:0:8}-${GITHUB_RUN_ID:-manual}"
 RESTORE_INSTANCE="$restore_id"
 aws rds create-db-snapshot --db-instance-identifier "$DATABASE_ID" --db-snapshot-identifier "$snapshot_id" >/dev/null
-aws rds wait db-snapshot-completed --db-snapshot-identifier "$snapshot_id"
+aws rds wait db-snapshot-available --db-snapshot-identifier "$snapshot_id"
 aws rds restore-db-instance-from-db-snapshot \
   --db-instance-identifier "$restore_id" \
   --db-snapshot-identifier "$snapshot_id" \
@@ -284,7 +284,7 @@ grep -qi '^x-request-id:' /tmp/cbcap-live-headers.txt
 grep -qi '^cache-control: *no-store' /tmp/cbcap-live-headers.txt
 curl --proto '=https' --tlsv1.2 --fail --silent --show-error "https://$API_DOMAIN/readyz" | jq -e '.status=="ready"' >/dev/null
 
-protected_status=$(curl --proto '=https' --tlsv1.2 --silent --output /tmp/cbcap-protected.json --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"countyFips":"36001"}' "https://$API_DOMAIN/api/cbcap")
+protected_status=$(curl --proto '=https' --tlsv1.2 --silent --output /tmp/cbcap-protected.json --write-out '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"location":"36001"}' "https://$API_DOMAIN/api/cbcap")
 test "$protected_status" = "403"
 
 allowed_status=$(curl --proto '=https' --tlsv1.2 --silent --output /dev/null --write-out '%{http_code}' -X OPTIONS -H 'Origin: https://cbcap.sozorockfoundation.org' -H 'Access-Control-Request-Method: POST' "https://$API_DOMAIN/api/cbcap")
@@ -293,6 +293,9 @@ disallowed_status=$(curl --proto '=https' --tlsv1.2 --silent --output /dev/null 
 test "$disallowed_status" = "403"
 host_status=$(curl --proto '=https' --tlsv1.2 --silent --output /dev/null --write-out '%{http_code}' -H 'Host: untrusted.example' "https://$API_DOMAIN/api/health")
 test "$host_status" = "503"
+
+identity_live=$(USER_POOL_ID="$USER_POOL_ID" API_DOMAIN="$API_DOMAIN" bash scripts/live-cognito-probe.sh)
+jq -e '.claimsVerified and .sameTenantAuthorized and .crossTenantDenied and .humanReviewAuthorityVerified and .livePlanAndReviewVerified and .unauthorizedAgentDenied' <<<"$identity_live" >/dev/null
 
 for attempt in $(seq 1 30); do
   audit_json=$(aws logs filter-log-events --log-group-name "$LOG_GROUP" --limit 100 --output json)
@@ -331,10 +334,11 @@ done
 PROOF_JSON=$(jq -cn \
   --arg release "$APPROVED_COMMIT" \
   --arg image "$image_digest" \
+  --argjson identity "$identity_live" \
   '{
     releaseSha:$release,
     imageDigest:$image,
-    identity:{claimsVerified:true,sameTenantAuthorized:true,crossTenantDenied:true,humanReviewAuthorityVerified:true},
+    identity:$identity,
     deployment:{
       oidcIdentityVerified:true,
       deploymentAccountVerified:true,
