@@ -4,7 +4,9 @@
 
 This document is the source of truth for the agent execution boundary. The runtime is a governed control plane for CB-CAP and related SozoRock Health workflows. It is not a second public-data warehouse and must not become one.
 
-Version 0.7 establishes resumable workflow state and a tenant-scoped persistence contract. Durable database storage and review continuation remain feature-gated until authenticated tenant identity, least-privilege database access, recovery, and production operations are installed.
+Version 0.8 places authoritative workspace identity and tenant resolution ahead of institutional runtime selection. The runtime now has Cognito-compatible identity contracts, explicit role permissions, actor-scoped runtime composition, resumable workflow state, and a tenant-scoped persistence contract.
+
+Production activation still requires the real identity-provider adapter, deployed PostgreSQL controls, recovery, monitoring, and end-to-end institutional tests.
 
 ## Product boundary
 
@@ -21,11 +23,49 @@ The products share governed evidence contracts but not product depth.
 | Experience | Primary role |
 | --- | --- |
 | Explore / Place Intelligence | Public, open-access evidence exploration |
-| CB-CAP | Institutional decision workspace for county, public-health, funder, and partner planning |
-| Agentic runtime | Server-side execution, policy, run state, orchestration, review gates, and audit |
+| CB-CAP | Authenticated institutional decision workspace for county, public-health, funder, and partner planning |
+| Agentic runtime | Server-side identity, tenant routing, execution, policy, run state, orchestration, review gates, and audit |
 | Governance console | Internal policy, trace, incident, approval, and model/tool controls |
 
 CB-CAP must not be reduced to an expanded Explore interface. Its value comes from governed workflows, evidence relationships, scenarios, institutional memory, funding intelligence, collaboration, review history, and monitoring.
+
+## Identity and tenant authority
+
+Institutional CB-CAP execution must not begin until the caller has an authoritative workspace identity.
+
+The runtime reuses the collaboration identity taxonomy already defined in `drolu-cmyk/sozorock-health`:
+
+- roles: `foundation_reviewer`, `county_planner`, `community_partner`, `research_funder_viewer`, `evidence_agent`;
+- access: `owner`, `contributor`, `viewer`;
+- tenant claim: `custom:tenant_id`;
+- role claim: `custom:workspace_role`;
+- access claim: `custom:workspace_access`.
+
+The Cognito-compatible resolver accepts an opaque bearer access token and an injected `getUser(accessToken)` provider. It maps provider attributes into the shared workspace actor contract. The token is not returned in actor state.
+
+### Actor policy
+
+| Role | Actor type | Create planning run | Approve saved run |
+| --- | --- | --- | --- |
+| Foundation reviewer | Human | Owner/contributor | Owner/contributor |
+| County planner | Human | Owner/contributor | Owner/contributor |
+| Community partner | Human | Owner/contributor | No |
+| Research/funder viewer | Human | No | No |
+| Evidence agent | Agent | No | No |
+
+Viewer access remains read-only. An agent actor can never satisfy a human-review gate.
+
+Authentication and authorization occur before the tenant runtime factory receives an actor. A denied request therefore cannot choose a tenant runtime or load institutional run state.
+
+### Tenant runtime selection
+
+The runtime uses actor-scoped composition instead of a singleton institutional engine.
+
+`createTenantCBCAPRuntimeFactory()` receives the validated actor and constructs a planning runtime using memory scoped to `actor.tenantId`. A later review request for that actor is composed against the same tenant memory. Another tenant cannot see the run through its own memory adapter.
+
+A production memory factory should create `SqlRunMemory` with the authenticated tenant ID and execute its queries under the same PostgreSQL `app.tenant_id` context.
+
+The institutional gateway never falls back to an unauthenticated runtime if a tenant runtime or review capability is unavailable.
 
 ## Evidence authority
 
@@ -47,11 +87,11 @@ A geography mismatch, unsupported contract, release-identity mismatch, missing r
 
 ## Runtime stack
 
-The execution model is:
+The institutional execution model is:
 
-`Agent role -> Graph -> Harness -> Run memory -> Approved tools -> Governed evidence`
+`Identity -> Permission -> Tenant runtime -> Agent role -> Graph -> Harness -> Run memory -> Approved tools -> Governed evidence`
 
-Models are replaceable. The durable product value is the graph, policy harness, evidence contracts, review state, memory, tools, evaluation history, and institutional workflow.
+Models are replaceable. The durable product value is the identity and authorization contract, graph, policy harness, evidence contracts, review state, memory, tools, evaluation history, and institutional workflow.
 
 ### Graph
 
@@ -65,7 +105,7 @@ The review halt creates a checkpoint. When a reviewed publish capability exists,
 
 Completed runs are not resumable. A new `run()` call cannot overwrite an existing run ID. A stale or mismatched approval is rejected before the run receives a `run_resumed` event.
 
-Subagents become bounded graph nodes or approved tools rather than unconstrained peers. Future nodes may include local-plan review, funding-opportunity matching, partner mapping, monitoring, evaluation, and portfolio comparison. Each must have a typed input/output contract, evidence boundary, evaluation set, and policy gate before production use.
+Subagents become bounded graph nodes or approved tools rather than unconstrained peers. Future nodes may include local-plan review, funding-opportunity matching, partner mapping, monitoring, evaluation, and portfolio comparison. Each must have a typed input/output contract, evidence boundary, evaluation set, permission requirement, and policy gate before production use.
 
 ### Harness
 
@@ -110,7 +150,7 @@ The SQL adapter rejects run metadata whose tenant ID conflicts with its configur
 
 The injected database query layer must execute with an authenticated tenant context that matches the adapter tenant. Production activation also requires a least-privilege application role, managed credentials, transaction-level tenant context, backups, restoration tests, retention rules, observability, and incident procedures.
 
-The SQL adapter is not automatically activated by importing it. The default public runtime remains on development memory until these operating controls exist.
+The SQL adapter is not automatically activated by importing it. The default server does not expose institutional CB-CAP unless an authenticated gateway is explicitly installed.
 
 ## Memory layers
 
@@ -121,26 +161,40 @@ The platform separates four kinds of memory:
 3. **Institutional memory** stores reviewed reusable facts such as approved local definitions, partner roles, planning conventions, prior approved decisions, and monitoring commitments.
 4. **Learning memory** stores evaluated outcomes and patterns only after review. Model output or ordinary user interaction does not automatically become institutional truth.
 
-Run memory is the current implementation focus. Workspace, institutional, and learning memory must remain separate data domains with separate authorization and retention rules.
+Run memory is the current implementation focus. Workspace, institutional, and learning memory remain separate data domains with separate authorization and retention rules.
 
 ## Human review and authority
 
 An initial planning request produces a draft. It cannot carry an approval for a draft that does not yet exist.
 
-Approval continuation must target the saved run rather than recomputing it. The approval record must bind:
+Approval continuation targets the saved run rather than recomputing it. The approval record binds:
 
 - authenticated reviewer subject;
+- authenticated tenant;
 - decision;
 - `county_plan` scope;
 - server-generated review time;
 - exact run ID;
 - exact Evidence Gateway release ID.
 
-The client supplies only the review decision. Reviewer identity, tenant, run identity, and evidence-release identity come from authenticated context and the saved checkpoint.
+The client supplies only the review decision. Reviewer identity and tenant come from the authenticated workspace actor. Run identity and evidence-release identity come from the saved checkpoint.
 
-The review service authorizes the actor before loading checkpoint details. Tenant mismatch is denied without exposing institutional state. The optional review route is not mounted by the default server and must not be enabled until an authenticated authorizer and tenant-scoped durable memory are configured.
+The gateway enforces review permission before a tenant runtime is selected. The review service authorizes the actor before loading checkpoint details. Tenant mismatch is denied without exposing institutional state.
 
 An agent cannot approve its own work. Human approval remains required before publication and before any future external write that could affect a partner, funding workflow, public record, or operational plan.
+
+## Server exposure policy
+
+Institutional CB-CAP is closed by default.
+
+Without an authenticated institutional gateway:
+
+- `POST /api/cbcap` returns 404;
+- `POST /api/cbcap/runs/:runId/review` returns 404.
+
+The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables a development-only planning route. It is not a production identity mode, does not enable review, and is excluded from the production OpenAPI contract.
+
+Public audit access remains disabled. Legacy unauthenticated session endpoints remain disabled by default.
 
 ## Barrier intelligence
 
@@ -156,7 +210,7 @@ Scenarios are bounded planning calculations, not predictions.
 
 A scenario may run only when:
 
-- a reviewed scenario capability is installed;
+- a reviewed scenario capability is installed for the actor/tenant;
 - the user supplied explicit assumptions;
 - assumptions are stored separately from published evidence;
 - the denominator and baseline come from governed evidence when required;
@@ -187,7 +241,7 @@ Every production tool has:
 
 - an allowlisted purpose;
 - a typed request and response;
-- authorization checks;
+- actor and tenant authorization checks;
 - tenant and geography scope;
 - evidence/release provenance where applicable;
 - timeout and retry policy;
@@ -201,12 +255,13 @@ Unrestricted live-web retrieval is not permitted inside a public evidence answer
 - No individual medical records in CB-CAP evidence workflows.
 - Data minimization by default.
 - No area-level evidence may be used to infer an individual's condition or risk.
-- Secrets remain server-side.
+- Bearer tokens and secrets remain server-side and are not stored in actor state.
+- Tenant identity comes from the authenticated workspace assignment, not a request parameter or client header.
 - Tenant authorization is required before institutional run or workspace data is read or changed.
 - Public audit access remains disabled.
 - Legacy unauthenticated session endpoints remain disabled by default.
 - Every consequential graph action produces an audit event.
-- Models, prompts, tools, and policies are versioned independently.
+- Models, prompts, tools, identities, permissions, and policies are versioned independently.
 - Runtime execution can be disabled without removing the evidence layer.
 
 ## Repository migration rule
@@ -220,16 +275,18 @@ Completed foundation steps:
 3. remove synthetic browser and planning fallbacks;
 4. add exact county resolution and hardened HTTP boundaries;
 5. bind approval semantics to exact run and evidence release;
-6. establish resumable checkpoints and a tenant-scoped PostgreSQL persistence contract.
+6. establish resumable checkpoints and a tenant-scoped PostgreSQL persistence contract;
+7. establish shared workspace identity, explicit permissions, and actor-scoped tenant runtime selection.
 
 Next activation gates:
 
-1. integrate organization identity and authoritative tenant resolution;
+1. wire the actual Cognito `GetUser` provider using the existing SozoRock Health user pool and custom claims;
 2. deploy the PostgreSQL run store with least-privilege credentials, transaction tenant context, backup and recovery controls;
-3. mount and end-to-end test authenticated same-run review continuation against durable storage;
-4. implement authenticated workspace memory separately from the immutable run log;
-5. add verified local CHA, CHIP, and CHNA evidence with page-level citations to the shared Evidence Gateway;
-6. add evaluated specialist nodes for CHA/CHIP, funding intelligence, monitoring, and briefs;
-7. wire the production institutional CB-CAP surface only after those controls are proven.
+3. compose the institutional gateway with the real Cognito resolver and SQL-backed tenant runtime factory;
+4. end-to-end test plan creation and same-run review across real identity, tenant, and database services;
+5. implement authenticated workspace memory separately from the immutable run log;
+6. add verified local CHA, CHIP, and CHNA evidence with page-level citations to the shared Evidence Gateway;
+7. add evaluated specialist nodes for CHA/CHIP, funding intelligence, monitoring, and briefs;
+8. wire the production institutional CB-CAP surface only after those controls are proven.
 
-No migration step may weaken provenance, evidence semantics, non-clinical boundaries, tenant isolation, or human authority.
+No migration step may weaken provenance, evidence semantics, non-clinical boundaries, identity integrity, tenant isolation, or human authority.
