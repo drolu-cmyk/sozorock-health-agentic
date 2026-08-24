@@ -123,20 +123,22 @@ function changedFields(definition, snapshot) {
   return fields;
 }
 
-function findingKey(definition, snapshot, status, reasonCodes, asOf) {
+function findingKey(definition, snapshot, status, reasonCodes) {
   return sha256(JSON.stringify({
     contract: MONITORING_CONTRACT,
     monitorId: definition.id,
     subjectId: definition.subjectId,
     kind: definition.kind,
     baselineFingerprint: definition.baseline.fingerprint,
+    baselineState: definition.baseline.state,
+    baselineDeadline: definition.baseline.deadline,
+    baselineValidThrough: definition.baseline.validThrough,
     currentFingerprint: snapshot?.fingerprint || null,
     currentState: snapshot?.state || null,
     currentDeadline: snapshot?.deadline || null,
     currentValidThrough: snapshot?.validThrough || null,
     status,
     reasonCodes: [...reasonCodes].sort(),
-    asOf,
   }));
 }
 
@@ -245,7 +247,7 @@ function evaluateMonitoring(definitionInput, snapshotInput, options = {}) {
     asOf,
     baseline: definition.baseline,
     current: snapshot || null,
-    findingKey: findingKey(definition, snapshot, status, sortedReasons, asOf),
+    findingKey: findingKey(definition, snapshot, status, sortedReasons),
     shouldRecordFinding: actionable || blocked,
     notificationRecommended: actionable,
     humanReviewRequired: actionable || blocked,
