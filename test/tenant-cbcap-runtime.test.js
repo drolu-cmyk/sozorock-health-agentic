@@ -175,3 +175,28 @@ test('tenant runtime without publish handler creates no review API', async () =>
   const runtime = await runtimeForActor(actor('tenant-a'));
   assert.equal(runtime.reviewApi, null);
 });
+
+test('tenant runtime exposes workforce analysis through the same actor-scoped governed evidence client', async () => {
+  const seen = [];
+  const runtimeForActor = createTenantCBCAPRuntimeFactory({
+    memoryForActor: () => new InMemoryRunMemory(),
+    evidenceClientForActor(resolvedActor) {
+      assert.equal(resolvedActor.tenantId, 'tenant-a');
+      return {
+        async getCountyPackage(fips) {
+          seen.push(fips);
+          return structuredClone(evidencePackage());
+        },
+      };
+    },
+  });
+
+  const tenantActor = actor('tenant-a');
+  const runtime = await runtimeForActor(tenantActor);
+  assert.equal(runtime.workforceCapacityEnabled, true);
+  const result = await runtime.workforceApi.handle({ countyFips: '36001' }, { workspaceActor: tenantActor });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.contract, 'cbcap.workforce-capacity.v1');
+  assert.equal(result.body.evidenceState, 'no_verified_data');
+  assert.deepEqual(seen, ['36001']);
+});
