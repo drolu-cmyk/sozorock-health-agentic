@@ -1,7 +1,7 @@
 const { GovernedGraph } = require('./graph');
 const { GovernedHarness } = require('./harness');
 const { InMemoryRunMemory } = require('./memory');
-const { hasUserAssumptions } = require('./contracts');
+const { hasUserAssumptions, isApprovedHumanRecord } = require('./contracts');
 
 const NODE_IDS = [
   'resolve_place',
@@ -65,7 +65,7 @@ function createCBCAPGraph(options = {}) {
     },
     await_review: {
       async run(state) {
-        if (state.approval?.status === 'approved' && publish) return { next: 'publish' };
+        if (isApprovedHumanRecord(state.approval) && publish) return { next: 'publish' };
         return {
           patch: { approval: { ...(state.approval || {}), status: 'required' } },
           halt: {
