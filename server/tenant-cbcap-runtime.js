@@ -2,6 +2,7 @@ const { CBCAPPlanningEngine } = require('../packages/cbcap/planning-engine');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
 const { createCBCAPApi } = require('./cbcap-api');
 const { createCBCAPFundingApi } = require('./cbcap-funding-api');
+const { createCBCAPMemoryApi } = require('./cbcap-memory-api');
 const { createCBCAPReviewApi } = require('./cbcap-review-api');
 const { createCBCAPVisualizationApi } = require('./cbcap-visualization-api');
 const { workspaceActorReviewAuthorizer } = require('./institutional-cbcap-gateway');
@@ -62,6 +63,23 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
 
     const visualizationApi = createCBCAPVisualizationApi({ auditSink: options.auditSink });
 
+    let memoryApi = null;
+    if (typeof options.workspaceMemoryForActor === 'function' && typeof options.institutionalMemoryForActor === 'function') {
+      const [workspaceMemory, institutionalMemory] = await Promise.all([
+        options.workspaceMemoryForActor(actor),
+        options.institutionalMemoryForActor(actor),
+      ]);
+      const evidenceValidator = typeof options.institutionalEvidenceValidatorForActor === 'function'
+        ? await options.institutionalEvidenceValidatorForActor(actor)
+        : null;
+      memoryApi = createCBCAPMemoryApi({
+        workspaceMemory,
+        institutionalMemory,
+        evidenceValidator,
+        auditSink: options.auditSink,
+      });
+    }
+
     return {
       tenantId: actor.tenantId,
       actor,
@@ -70,6 +88,7 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       reviewApi,
       fundingApi,
       visualizationApi,
+      memoryApi,
     };
   };
 }

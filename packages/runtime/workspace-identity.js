@@ -78,7 +78,7 @@ function permissionDecision(actorInput, action) {
     return { ok: false, code: 'invalid_actor' };
   }
 
-  if (action === 'cbcap.plan.view' || action === 'cbcap.visualization.plan') {
+  if (['cbcap.plan.view', 'cbcap.visualization.plan', 'cbcap.workspace.read', 'cbcap.memory.read'].includes(action)) {
     return { ok: true, actor };
   }
   if (action === 'cbcap.funding.evaluate') {
@@ -86,13 +86,13 @@ function permissionDecision(actorInput, action) {
     if (!FUNDING_EVALUATE_ROLES.has(actor.role)) return { ok: false, code: 'role_not_allowed', actor };
     return { ok: true, actor };
   }
-  if (action === 'cbcap.plan.create') {
+  if (action === 'cbcap.plan.create' || action === 'cbcap.workspace.write' || action === 'cbcap.memory.propose') {
     if (actor.actorType !== 'human') return { ok: false, code: 'human_required', actor };
     if (!WRITE_ACCESS.has(actor.access)) return { ok: false, code: 'write_access_required', actor };
     if (!PLAN_CREATE_ROLES.has(actor.role)) return { ok: false, code: 'role_not_allowed', actor };
     return { ok: true, actor };
   }
-  if (action === 'cbcap.plan.review') {
+  if (action === 'cbcap.plan.review' || action === 'cbcap.memory.review') {
     if (actor.actorType !== 'human') return { ok: false, code: 'human_required', actor };
     if (!WRITE_ACCESS.has(actor.access)) return { ok: false, code: 'write_access_required', actor };
     if (!PLAN_REVIEW_ROLES.has(actor.role)) return { ok: false, code: 'role_not_allowed', actor };

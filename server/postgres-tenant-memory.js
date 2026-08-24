@@ -1,4 +1,6 @@
+const { SqlInstitutionalMemory } = require('../packages/runtime/sql-institutional-memory');
 const { SqlRunMemory } = require('../packages/runtime/sql-run-memory');
+const { SqlWorkspaceMemory } = require('../packages/runtime/sql-workspace-memory');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
 
 function requiredString(value, label, maxLength = 200) {
@@ -53,21 +55,31 @@ function createPostgresTenantQuery(options = {}) {
   };
 }
 
-function createPostgresRunMemoryFactory(options = {}) {
+function queryForActorFactory(options = {}) {
   const pool = options.pool;
   if (!pool || typeof pool.connect !== 'function') {
-    throw new Error('PostgreSQL run-memory factory requires a pool with connect().');
+    throw new Error('PostgreSQL tenant-memory factory requires a pool with connect().');
   }
-
-  return function memoryForActor(actorInput) {
+  return function queryForActor(actorInput) {
     const actor = validateWorkspaceActor(actorInput);
-    return new SqlRunMemory({
-      tenantId: actor.tenantId,
+    return {
+      actor,
       query: createPostgresTenantQuery({
         pool,
         tenantId: actor.tenantId,
         statementTimeoutMs: options.statementTimeoutMs,
       }),
+    };
+  };
+}
+
+function createPostgresRunMemoryFactory(options = {}) {
+  const queryForActor = queryForActorFactory(options);
+  return function memoryForActor(actorInput) {
+    const { actor, query } = queryForActor(actorInput);
+    return new SqlRunMemory({
+      tenantId: actor.tenantId,
+      query,
       clock: options.clock,
       runsTable: options.runsTable,
       eventsTable: options.eventsTable,
@@ -75,7 +87,25 @@ function createPostgresRunMemoryFactory(options = {}) {
   };
 }
 
+function createPostgresWorkspaceMemoryFactory(options = {}) {
+  const queryForActor = queryForActorFactory(options);
+  return function workspaceMemoryForActor(actorInput) {
+    const { actor, query } = queryForActor(actorInput);
+    return new SqlWorkspaceMemory({ tenantId: actor.tenantId, query, clock: options.clock });
+  };
+}
+
+function createPostgresInstitutionalMemoryFactory(options = {}) {
+  const queryForActor = queryForActorFactory(options);
+  return function institutionalMemoryForActor(actorInput) {
+    const { actor, query } = queryForActor(actorInput);
+    return new SqlInstitutionalMemory({ tenantId: actor.tenantId, query, clock: options.clock });
+  };
+}
+
 module.exports = {
+  createPostgresInstitutionalMemoryFactory,
   createPostgresRunMemoryFactory,
   createPostgresTenantQuery,
+  createPostgresWorkspaceMemoryFactory,
 };
