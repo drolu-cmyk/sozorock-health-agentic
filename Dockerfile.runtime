@@ -25,7 +25,6 @@ COPY server /app/server
 COPY packages /app/packages
 COPY scripts /app/scripts
 COPY infrastructure/postgres /app/infrastructure/postgres
-COPY frontend /app/frontend
 
 RUN chown -R 10001:10001 /app
 USER 10001:10001
