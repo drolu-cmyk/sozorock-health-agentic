@@ -126,6 +126,62 @@ CREATE TABLE IF NOT EXISTS cbcap_learning_candidates (
 CREATE INDEX IF NOT EXISTS cbcap_learning_candidates_target_idx
   ON cbcap_learning_candidates (tenant_id, target_type, target_id, proposed_at DESC, id);
 
+CREATE OR REPLACE FUNCTION validate_cbcap_learning_candidate_refs()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements_text(NEW.evaluation_ids) AS ref(value)
+     WHERE NOT EXISTS (
+       SELECT 1
+         FROM cbcap_learning_evaluations evaluation
+        WHERE evaluation.tenant_id = NEW.tenant_id
+          AND evaluation.id::text = ref.value
+     )
+  ) THEN
+    RAISE EXCEPTION 'learning candidate references an unknown or cross-tenant evaluation';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements_text(NEW.correction_ids) AS ref(value)
+     WHERE NOT EXISTS (
+       SELECT 1
+         FROM cbcap_learning_corrections correction
+        WHERE correction.tenant_id = NEW.tenant_id
+          AND correction.id::text = ref.value
+     )
+  ) THEN
+    RAISE EXCEPTION 'learning candidate references an unknown or cross-tenant correction';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM jsonb_array_elements_text(NEW.evaluation_ids)
+  ) <> (
+    SELECT count(DISTINCT value) FROM jsonb_array_elements_text(NEW.evaluation_ids) AS ref(value)
+  ) THEN
+    RAISE EXCEPTION 'learning candidate evaluation references must be unique';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM jsonb_array_elements_text(NEW.correction_ids)
+  ) <> (
+    SELECT count(DISTINCT value) FROM jsonb_array_elements_text(NEW.correction_ids) AS ref(value)
+  ) THEN
+    RAISE EXCEPTION 'learning candidate correction references must be unique';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS cbcap_learning_candidate_reference_guard ON cbcap_learning_candidates;
+CREATE TRIGGER cbcap_learning_candidate_reference_guard
+BEFORE INSERT ON cbcap_learning_candidates
+FOR EACH ROW EXECUTE FUNCTION validate_cbcap_learning_candidate_refs();
+
 CREATE TABLE IF NOT EXISTS cbcap_learning_candidate_reviews (
   id uuid NOT NULL,
   tenant_id text NOT NULL CHECK (length(btrim(tenant_id)) > 0),
@@ -218,7 +274,7 @@ COMMENT ON TABLE cbcap_learning_evaluations IS
 COMMENT ON TABLE cbcap_learning_corrections IS
   'Append-only human corrections that may become governed regression evidence.';
 COMMENT ON TABLE cbcap_learning_candidates IS
-  'Proposed improvement references only. Executable patches and autonomous application are not permitted.';
+  'Proposed improvement references only. Database validation enforces same-tenant evaluation/correction provenance; executable patches and autonomous application are not permitted.';
 COMMENT ON TABLE cbcap_learning_candidate_reviews IS
   'Append-only human review of learning candidates. Approval does not apply a production change automatically.';
 
