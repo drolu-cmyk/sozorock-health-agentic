@@ -58,10 +58,20 @@ function hasUserAssumptions(assumptions) {
   });
 }
 
+function isApprovedHumanRecord(approval) {
+  if (!approval || typeof approval !== 'object' || Array.isArray(approval)) return false;
+  if (approval.status !== 'approved') return false;
+  if (typeof approval.by !== 'string' || !approval.by.trim()) return false;
+  if (approval.scope !== 'county_plan') return false;
+  if (typeof approval.reviewedAt !== 'string' || !Number.isFinite(Date.parse(approval.reviewedAt))) return false;
+  return true;
+}
+
 module.exports = {
   COUNTY_FIPS,
   EVIDENCE_CONTRACT,
   RELEASE_HASH,
   hasUserAssumptions,
+  isApprovedHumanRecord,
   validateEvidenceEnvelope,
 };
