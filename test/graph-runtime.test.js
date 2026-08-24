@@ -7,9 +7,12 @@ const { InMemoryRunMemory } = require('../packages/runtime/memory');
 const HASH = `sha256:${'a'.repeat(64)}`;
 const APPROVAL = {
   status: 'approved',
+  decision: 'approve',
   by: 'reviewer-1',
   scope: 'county_plan',
   reviewedAt: '2026-08-24T00:00:00.000Z',
+  objectId: 'run-1',
+  evidenceReleaseId: 'release-2026-08-23',
 };
 
 function handlers(calls) {
@@ -71,12 +74,12 @@ test('CB-CAP graph runs scenarios only from explicit user assumptions', async ()
   assert.equal(result.scenario.status, 'scenario_output');
 });
 
-test('CB-CAP graph publishes only with a complete human approval record', async () => {
+test('CB-CAP graph publishes only when approval matches the exact run and evidence release', async () => {
   const calls = { scenario: 0, publish: 0 };
   const graph = createCBCAPGraph({ handlers: handlers(calls) });
   const result = await graph.run(
     { type: 'county_plan', location: '36001' },
-    { approval: APPROVAL },
+    { runId: 'run-1', approval: APPROVAL },
   );
 
   assert.equal(result.status, 'approved_output');
@@ -85,17 +88,29 @@ test('CB-CAP graph publishes only with a complete human approval record', async 
   assert.ok(result.trace.some((entry) => entry.nodeId === 'publish'));
 });
 
-test('publishing is blocked when approval lacks review provenance', () => {
+test('publishing is blocked when approval is for a different run or release', () => {
   const harness = new GovernedHarness({ allowedNodes: ['publish'] });
-  const blocked = harness.authorize({
+  const state = {
+    runId: 'run-1',
+    evidence: { releaseId: 'release-2026-08-23' },
+    approval: { ...APPROVAL, objectId: 'run-other' },
+  };
+  const blockedRun = harness.authorize({ nodeId: 'publish', state, step: 1 });
+  assert.equal(blockedRun.ok, false);
+  assert.equal(blockedRun.code, 'human_approval_required');
+
+  const blockedRelease = harness.authorize({
     nodeId: 'publish',
-    state: { approval: { status: 'approved', by: 'reviewer', scope: 'county_plan' } },
+    state: { ...state, approval: { ...APPROVAL, evidenceReleaseId: 'release-other' } },
     step: 1,
   });
-  assert.equal(blocked.ok, false);
-  assert.equal(blocked.code, 'human_approval_required');
+  assert.equal(blockedRelease.ok, false);
 
-  const allowed = harness.authorize({ nodeId: 'publish', state: { approval: APPROVAL }, step: 1 });
+  const allowed = harness.authorize({
+    nodeId: 'publish',
+    state: { ...state, approval: APPROVAL },
+    step: 1,
+  });
   assert.equal(allowed.ok, true);
 });
 
