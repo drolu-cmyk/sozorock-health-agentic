@@ -2,13 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createCBCAPApi } = require('../server/cbcap-api');
 
-const COMPLETE_APPROVAL = {
-  status: 'approved',
-  by: 'reviewer-1',
-  scope: 'county_plan',
-  reviewedAt: '2026-08-24T00:00:00.000Z',
-};
-
 function apiWith({ resolve, build } = {}) {
   const calls = { engine: 0, requests: [] };
   const geographyAgent = {
@@ -113,31 +106,38 @@ test('invalid assumptions are rejected before the planning engine', async () => 
   assert.equal(calls.engine, 0);
 });
 
-test('incomplete approval is rejected before the planning engine', async () => {
+test('initial planning request cannot carry approval', async () => {
   const { api, calls } = apiWith();
   const result = await api.handle({
     location: '36001',
-    approval: { status: 'approved', by: 'reviewer-1', scope: 'county_plan' },
+    approval: {
+      status: 'approved',
+      decision: 'approve',
+      by: 'reviewer-1',
+      scope: 'county_plan',
+      reviewedAt: '2026-08-24T00:00:00.000Z',
+      objectId: 'run-1',
+      evidenceReleaseId: 'release-1',
+    },
   });
   assert.equal(result.statusCode, 400);
-  assert.match(result.body.error, /reviewedAt/);
+  assert.equal(result.body.code, 'review_continuation_required');
+  assert.match(result.body.error, /exact saved run/i);
   assert.equal(calls.engine, 0);
 });
 
-test('complete approval and user assumptions are passed through unchanged', async () => {
-  const { api, calls } = apiWith({
-    build: async () => ({ type: 'cbcap_county_plan', status: 'approved_output', runId: 'run-2' }),
-  });
+test('valid user assumptions are passed through without creating approval state', async () => {
+  const { api, calls } = apiWith();
   const assumptions = {
     uptakeRate: { source: 'user', value: 0.1 },
     note: { source: 'user', value: 'planning sensitivity' },
   };
-  const result = await api.handle({ location: '36001', assumptions, approval: COMPLETE_APPROVAL });
+  const result = await api.handle({ location: '36001', assumptions });
 
-  assert.equal(result.statusCode, 200);
+  assert.equal(result.statusCode, 202);
   assert.equal(calls.engine, 1);
   assert.deepEqual(calls.requests[0].assumptions, assumptions);
-  assert.deepEqual(calls.requests[0].approval, COMPLETE_APPROVAL);
+  assert.equal(Object.prototype.hasOwnProperty.call(calls.requests[0], 'approval'), false);
 });
 
 test('governed evidence failure is sanitized at the HTTP boundary', async () => {
