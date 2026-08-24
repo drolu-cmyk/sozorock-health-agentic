@@ -63,6 +63,12 @@ function createApp(options = {}) {
   const workforceCapacityRouteEnabled = Boolean(
     institutionalGateway && typeof institutionalGateway.handleWorkforce === 'function',
   );
+  const privateEvidenceRouteEnabled = Boolean(
+    institutionalGateway
+    && typeof institutionalGateway.handlePrivateEvidenceSubmit === 'function'
+    && typeof institutionalGateway.handlePrivateEvidenceReview === 'function'
+    && typeof institutionalGateway.handlePrivateEvidenceQuery === 'function',
+  );
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '200kb' }));
@@ -101,6 +107,7 @@ function createApp(options = {}) {
       visualizationIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleVisualization === 'function'),
       monitoringIntelligenceRouteEnabled,
       workforceCapacityRouteEnabled,
+      privateEvidenceRouteEnabled,
       workspaceMemoryRouteEnabled,
       institutionalMemoryRouteEnabled,
       unauthenticatedDevCBCAPEnabled: Boolean(devCbcapAPI),
@@ -183,6 +190,39 @@ function createApp(options = {}) {
     try {
       if (!monitoringIntelligenceRouteEnabled) return res.sendStatus(404);
       const result = await institutionalGateway.handleMonitoring(req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/private-evidence/submissions', async (req, res) => {
+    try {
+      if (!privateEvidenceRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handlePrivateEvidenceSubmit(req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/private-evidence/:documentId/review', async (req, res) => {
+    try {
+      if (!privateEvidenceRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handlePrivateEvidenceReview(req.params.documentId, req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/private-evidence/query', async (req, res) => {
+    try {
+      if (!privateEvidenceRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handlePrivateEvidenceQuery(req.body || {}, { request: req });
       return res.status(result.statusCode).json(result.body);
     } catch (error) {
       console.error(error);
