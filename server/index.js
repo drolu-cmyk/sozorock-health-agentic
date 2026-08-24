@@ -13,8 +13,8 @@ const PORT = process.env.PORT || 3000;
 const app = createApp();
 
 app.listen(PORT, () => {
-  console.log(`SozoRock Health Agentic v0.6.0 on http://localhost:${PORT}`);
-  console.log('  runtime: governed CB-CAP graph');
+  console.log(`SozoRock Health Agentic v0.7.0 on http://localhost:${PORT}`);
+  console.log('  runtime: governed resumable CB-CAP graph');
   console.log(`  geography: ${countyMeta().count} counties (${countyMeta().source})`);
   console.log(`  zip crosswalk: ${zipMeta().count} ZIPs (${zipMeta().source})`);
 });
