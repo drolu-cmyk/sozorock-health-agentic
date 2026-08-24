@@ -1,7 +1,7 @@
 const { GovernedGraph } = require('./graph');
 const { GovernedHarness } = require('./harness');
 const { InMemoryRunMemory } = require('./memory');
-const { hasUserAssumptions } = require('./contracts');
+const { approvalMatchesState, hasUserAssumptions } = require('./contracts');
 
 const NODE_IDS = [
   'resolve_place',
@@ -65,12 +65,12 @@ function createCBCAPGraph(options = {}) {
     },
     await_review: {
       async run(state) {
-        if (state.approval?.status === 'approved' && publish) return { next: 'publish' };
+        if (approvalMatchesState(state.approval, state) && publish) return { next: 'publish' };
         return {
           patch: { approval: { ...(state.approval || {}), status: 'required' } },
           halt: {
             code: 'human_review_required',
-            reason: 'CB-CAP generated a draft. Human review and explicit approval are required before publication.',
+            reason: 'CB-CAP generated a draft. A human must review this exact run and evidence release before approved output.',
             status: 'awaiting_human_review',
           },
         };
