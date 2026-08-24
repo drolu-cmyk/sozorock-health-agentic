@@ -25,6 +25,7 @@ exports.createReadinessOptions = async function createReadinessOptions() {
   const pool = createProductionPool(process.env);
   return {
     pool,
+    cleanup: async () => pool.end(),
     tenantA: String(process.env.CB_CAP_PREFLIGHT_TENANT_A || 'cbcap-preflight-tenant-a'),
     tenantB: String(process.env.CB_CAP_PREFLIGHT_TENANT_B || 'cbcap-preflight-tenant-b'),
     evidenceClient: new EvidenceGatewayClient({ baseUrl: evidenceOrigin }),
