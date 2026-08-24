@@ -35,6 +35,15 @@ test('deployment script binds the live probe to the stack client and fails close
   assert.match(script, /productionAppClientVerified/);
 });
 
+test('production workflow deploys only the exact triggering commit', () => {
+  const workflow = readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'deploy-production-runtime.yml'), 'utf8');
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(workflow, /ref: main/);
+  assert.match(workflow, /RELEASE_SHA: \$\{\{ github\.sha \}\}/);
+  assert.match(workflow, /test "\$approved_commit" = "\$RELEASE_SHA"/);
+  assert.match(workflow, /test "\$origin_main" = "\$approved_commit"/);
+});
+
 test('production template composes private evidence without the obsolete SSM placeholder', () => {
   const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
   assert.doesNotMatch(template, /CommonContainerEnvironment/);
