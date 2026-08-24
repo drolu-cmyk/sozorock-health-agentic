@@ -27,6 +27,15 @@ test('live proof exercises tenant-private evidence metadata resolution', () => {
   assert.match(script, /privateEvidenceMetadataLookupVerified:true/);
 });
 
+test('live proof rejects legacy frontend and unauthenticated place routes', () => {
+  const script = readFileSync(path.join(__dirname, '..', 'scripts', 'live-cognito-probe.sh'), 'utf8');
+  assert.match(script, /legacy_root_status/);
+  assert.match(script, /legacy_place_status/);
+  assert.match(script, /legacy_health_status/);
+  assert.match(script, /institutionalApiBoundaryVerified:true/);
+  assert.match(script, /legacyPlaceApiDenied:true/);
+});
+
 test('deployment script binds the live probe to the stack client and fails closed to zero tasks', () => {
   const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
   assert.match(script, /USER_POOL_CLIENT_ID=\$\(stack_output UserPoolClientId\)/);
