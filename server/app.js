@@ -78,6 +78,7 @@ function createApp(options = {}) {
       institutionalAccessEnabled: Boolean(institutionalGateway),
       reviewContinuationEnabled: Boolean(institutionalGateway),
       fundingIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleFunding === 'function'),
+      visualizationIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleVisualization === 'function'),
       unauthenticatedDevCBCAPEnabled: Boolean(devCbcapAPI),
       legacySessionsEnabled: enableLegacySessions,
     });
@@ -125,6 +126,17 @@ function createApp(options = {}) {
     try {
       if (!institutionalGateway || typeof institutionalGateway.handleFunding !== 'function') return res.sendStatus(404);
       const result = await institutionalGateway.handleFunding(req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/visualizations/spec', async (req, res) => {
+    try {
+      if (!institutionalGateway || typeof institutionalGateway.handleVisualization !== 'function') return res.sendStatus(404);
+      const result = await institutionalGateway.handleVisualization(req.body || {}, { request: req });
       return res.status(result.statusCode).json(result.body);
     } catch (error) {
       console.error(error);
