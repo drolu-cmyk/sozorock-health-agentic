@@ -3,6 +3,7 @@ const { validateWorkspaceActor } = require('../packages/runtime/workspace-identi
 const { createCBCAPApi } = require('./cbcap-api');
 const { createCBCAPFundingApi } = require('./cbcap-funding-api');
 const { createCBCAPReviewApi } = require('./cbcap-review-api');
+const { createCBCAPVisualizationApi } = require('./cbcap-visualization-api');
 const { workspaceActorReviewAuthorizer } = require('./institutional-cbcap-gateway');
 
 function createTenantCBCAPRuntimeFactory(options = {}) {
@@ -59,6 +60,8 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
         })
       : null;
 
+    const visualizationApi = createCBCAPVisualizationApi({ auditSink: options.auditSink });
+
     return {
       tenantId: actor.tenantId,
       actor,
@@ -66,6 +69,7 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       planningApi,
       reviewApi,
       fundingApi,
+      visualizationApi,
     };
   };
 }
