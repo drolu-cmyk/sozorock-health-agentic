@@ -1,6 +1,7 @@
 const { createCognitoWorkspaceResolver } = require('./cognito-get-user-provider');
 const {
   createPostgresInstitutionalMemoryFactory,
+  createPostgresLearningMemoryFactory,
   createPostgresRunMemoryFactory,
   createPostgresWorkspaceMemoryFactory,
 } = require('./postgres-tenant-memory');
@@ -35,11 +36,16 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
     });
     const workspaceMemoryForActor = options.workspaceMemoryForActor || createPostgresWorkspaceMemoryFactory(sharedPoolOptions);
     const institutionalMemoryForActor = options.institutionalMemoryForActor || createPostgresInstitutionalMemoryFactory(sharedPoolOptions);
+    const learningMemoryForActor = options.learningMemoryForActor
+      || (options.pool && typeof options.pool.connect === 'function'
+        ? createPostgresLearningMemoryFactory(sharedPoolOptions)
+        : null);
 
     runtimeForActor = createTenantCBCAPRuntimeFactory({
       memoryForActor,
       workspaceMemoryForActor,
       institutionalMemoryForActor,
+      learningMemoryForActor,
       institutionalEvidenceValidatorForActor: options.institutionalEvidenceValidatorForActor,
       evidenceClientForActor: options.evidenceClientForActor,
       evidenceOrigin: options.evidenceOrigin,

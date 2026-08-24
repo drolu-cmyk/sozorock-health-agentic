@@ -18,6 +18,7 @@ The control plane now includes:
 - governed deterministic scenario intelligence with explicit user ranges, reviewed model registrations, verified baselines, source lineage, horizon controls, and no prediction claim;
 - tenant-scoped workspace collaboration state with optimistic concurrency and immutable change events;
 - append-only institutional memory with explicit proposal, human review, evidence revalidation, expiry, and supersession;
+- append-only learning and evaluation memory for trajectories, evaluations, corrections, and reviewed improvement candidates, with no automatic production mutation;
 - no public audit endpoint and no legacy unauthenticated sessions by default.
 
 **AI drafts. People decide.**
@@ -114,23 +115,23 @@ The platform deliberately separates:
 1. **Run memory** for immutable execution events, checkpoints, approvals, traces, and evidence releases.
 2. **Workspace memory** for authenticated drafts, comments, tasks, saved views, review questions, and collaboration state. Writes use optimistic version checks and immutable event history.
 3. **Institutional memory** for reviewed reusable decisions and operating knowledge. Records are proposed first, revalidated against governed evidence, promoted only by authorized human review, and retained through expiry or supersession.
-4. **Learning memory** for evaluated outcomes and regression evidence that may improve future behavior only after governance review.
+4. **Learning memory** for structured trajectories, evaluation labels, authorized corrections, regression evidence, and proposed improvements for future reviewed releases.
 
-Run, workspace, and institutional memory now have distinct runtime contracts. Learning memory remains intentionally separate so ordinary user interactions, agent output, and approvals cannot autonomously modify production prompts, code, policy, tools, or model routing.
+All four domains now have distinct runtime/storage contracts. Learning memory is internal to the tenant runtime rather than a public client-write API. An evidence agent may propose an improvement candidate from existing evaluation evidence, but only a human `foundation_reviewer` with write authority may approve it. Even an approved candidate remains `not_applied`: learning memory has no method that changes production prompts, code, policy, tools, model routing, or institutional truth.
 
-See `docs/MEMORY_GOVERNANCE.md` and `docs/MEMORY_API.md`.
+See `docs/MEMORY_GOVERNANCE.md`, `docs/MEMORY_API.md`, and `docs/LEARNING_MEMORY.md`.
 
 ## PostgreSQL memory contract
 
-`SqlRunMemory`, `SqlWorkspaceMemory`, `SqlInstitutionalMemory`, and the PostgreSQL migrations under `infrastructure/postgres/` provide tenant-scoped identity, append-only execution and decision records, optimistic workspace versions, composite tenant integrity, forced RLS, and `app.tenant_id` policies.
+`SqlRunMemory`, `SqlWorkspaceMemory`, `SqlInstitutionalMemory`, `SqlLearningMemory`, and the PostgreSQL migrations under `infrastructure/postgres/` provide tenant-scoped identity, append-only execution and decision records, optimistic workspace versions, learning provenance, composite tenant integrity, forced RLS, and `app.tenant_id` policies.
 
-Production application roles must not own the protected tables and must not hold `BYPASSRLS`. Tenant context is transaction-local so pooled connections cannot leak identity between requests.
+Production application roles must not own the protected tables and must not hold `BYPASSRLS`. Tenant context is transaction-local so pooled connections cannot leak identity between requests. Learning-candidate evaluation and correction references are also validated in PostgreSQL against the active tenant rather than relying only on application logic.
 
 ## Server exposure
 
 Institutional planning, review, funding, visualization, workspace, and institutional-memory routes fail closed without an authenticated institutional gateway. Unknown `/api/...` paths also terminate with 404 and cannot fall through to the frontend SPA.
 
-The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, visualization, workspace, or institutional-memory endpoints and is not a production authentication mode.
+The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, visualization, workspace, institutional memory, or learning-memory access and is not a production authentication mode.
 
 ## Verification
 
@@ -144,11 +145,11 @@ Node 24 or later is required.
 
 ## Outstanding activation work
 
-1. add controlled trajectory evaluation and learning-memory promotion so the runtime can improve without autonomous self-modification;
-2. add governed workforce/capacity and relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
-3. add monitoring for evidence releases, local-plan changes, funding opportunity changes, and workflow commitments;
+1. add governed workforce/capacity and relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
+2. add monitoring for evidence releases, local-plan changes, funding opportunity changes, and workflow commitments;
+3. add tenant-private evidence with review, rights, retention, and strict no-PHI boundaries;
 4. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
-5. run the production preflight against real Cognito, PostgreSQL, workspace/institutional-memory migrations, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime.
+5. extend production preflight to all memory/private-evidence tables, then run it against real Cognito, PostgreSQL, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime.
 
 See `ARCHITECTURE.md` for the full control-plane boundary.
 

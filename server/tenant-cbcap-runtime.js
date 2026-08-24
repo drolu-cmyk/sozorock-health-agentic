@@ -92,6 +92,18 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       });
     }
 
+    const learningMemory = typeof options.learningMemoryForActor === 'function'
+      ? await options.learningMemoryForActor(actor)
+      : null;
+    if (learningMemory && (
+      typeof learningMemory.recordTrajectory !== 'function'
+      || typeof learningMemory.evaluate !== 'function'
+      || typeof learningMemory.proposeCandidate !== 'function'
+      || typeof learningMemory.reviewCandidate !== 'function'
+    )) {
+      throw new Error('Tenant learning memory does not expose the governed learning-memory contract.');
+    }
+
     return {
       tenantId: actor.tenantId,
       actor,
@@ -101,7 +113,9 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       fundingApi,
       visualizationApi,
       memoryApi,
+      learningMemory,
       scenarioCapabilityEnabled: typeof scenarioHandler === 'function',
+      learningEvaluationEnabled: Boolean(learningMemory),
     };
   };
 }
