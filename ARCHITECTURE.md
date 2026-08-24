@@ -8,14 +8,16 @@ Current runtime: **0.10**.
 
 **AI drafts. People decide.**
 
+The earlier Python/FastAPI/ECS foundation in draft PR #2 is closed as superseded and was never merged into the production line. Reusable product, governance, data, memory, monitoring, workforce, private-evidence, and deployment-hardening rules were selectively migrated into the Node control plane. The old branch is historical source material only.
+
 ## Product separation
 
 | Surface | Role |
 | --- | --- |
 | Explore / Place Intelligence | Open public evidence exploration |
 | CB-CAP | Authenticated institutional planning and decision workspace |
-| Agentic runtime | Identity, tenant routing, graph execution, specialist capabilities, run state, policy, review, memory, monitoring, and private-evidence controls |
-| Governance controls | Evidence contracts, permissions, approvals, evaluations, incidents, promotion, kill switches, and activation gates |
+| Agentic runtime | Identity, tenant routing, graph execution, specialist capabilities, state, policy, review, memory, monitoring, and private-evidence controls |
+| Governance controls | Evidence contracts, permissions, approvals, evaluations, incidents, promotion, kill switches, deployment proof, and activation gates |
 
 CB-CAP earns institutional value through governed workflows, reviewed local-plan evidence, scenario testing, funding evidence matching, workforce context, visualization, collaboration, memory, monitoring, and reviewed tenant-private organizational evidence. It is not an expanded Explore dashboard.
 
@@ -85,10 +87,10 @@ resolve_place
   -> load_evidence
   -> synthesize_barriers
   -> organize_plan
-  -> scenario?            # only with reviewed capability + explicit assumptions
+  -> scenario?            # reviewed capability + explicit assumptions only
   -> draft_brief
   -> await_review
-  -> publish?             # only through exact-run human approval
+  -> publish?             # exact-run human approval only
 ```
 
 A review checkpoint records the saved state and, when a reviewed publish capability exists, the only legal resume node. Approval continuation reuses the exact saved run and Evidence Gateway release. It does not repeat geography resolution, evidence retrieval, barrier organization, or drafting.
@@ -97,20 +99,13 @@ A review checkpoint records the saved state and, when a reviewed publish capabil
 
 ### CHA/CHIP evidence workbench
 
-The workbench admits only:
+The workbench admits only verified county-specific planning documents, exact one-county scope, verified source versions, human-reviewed claims, verified page or section citation locators, and `verified_current` documents for current-plan evidence.
 
-- verified county-specific planning documents;
-- exact one-county scope;
-- verified source versions;
-- human-reviewed claims;
-- verified page or section citation locators;
-- `verified_current` documents for current-plan evidence.
-
-Missing claim categories are reported as evidence-record gaps, not proof that the official plan omits them. Multiple `verified_current` plans are a governance conflict requiring human resolution.
+Missing claim categories are reported as evidence-record gaps, not proof that an official plan omits them. Multiple `verified_current` plans are a governance conflict requiring human resolution.
 
 ### Funding Intelligence
 
-Funding Intelligence is read-only evidence matching. Reviewed opportunity criteria and the tenant applicant profile are server-derived. The client cannot post its own criteria/profile and manufacture a favorable result.
+Funding Intelligence is read-only evidence matching. Reviewed opportunity criteria and the tenant applicant profile are server-derived. The client cannot post its own criteria or profile and manufacture a favorable result.
 
 The evaluator reports requirement match, incompleteness, conflict, unknown state, evidence fit, missing evidence or partners, official-source lineage, deadline state, and caveats. It does not determine final eligibility, predict an award, recommend allocation, or turn evidence fit into a single opportunity score.
 
@@ -118,18 +113,7 @@ The evaluator reports requirement match, incompleteness, conflict, unknown state
 
 Visualization is an analytical contract, not a chart gallery. `cbcap.visualization.v1` chooses the simplest truthful artifact from purpose, data shape, and reviewed semantic metadata.
 
-Primary routes include:
-
-- choropleth only when geography matters and normalization is defensible;
-- dot / interval-dot comparison;
-- forest-style uncertainty views;
-- line or small-multiple trends only across comparable vintages;
-- real-distribution views only when distribution data exists;
-- scatterplots for association without causal inference;
-- barrier matrices with missingness separated from magnitude;
-- CHA/CHIP evidence-alignment matrices;
-- funding criterion-status matrices;
-- node-link graphs only when governed relationship edges exist.
+Primary routes include choropleths only when geography matters and normalization is defensible, dot and interval-dot comparisons, uncertainty views, comparable-vintage trends, real distributions only when distribution data exists, scatterplots without causal inference, barrier matrices with missingness separate from magnitude, CHA/CHIP evidence-alignment matrices, funding criterion-status matrices, and node-link graphs only when governed relationship edges exist.
 
 Blocked visual claims return a simpler fallback rather than a misleading chart. Raw institutional rows and arbitrary renderer code are not accepted by the visualization-spec endpoint. See `docs/VISUALIZATION_INTELLIGENCE.md`.
 
@@ -137,17 +121,7 @@ Blocked visual claims return a simpler fallback rather than a misleading chart. 
 
 Governed scenarios use `cbcap.scenario.v1`. They are planning calculations, not predictions.
 
-A scenario requires:
-
-- explicit user assumptions stored separately from published evidence;
-- explicit ranges and units;
-- a reviewed server-owned model registration;
-- one verified forecastable exact-county baseline where required;
-- model and method versions;
-- evidence release provenance;
-- an allowed horizon;
-- bounded deterministic arithmetic;
-- human review before consequential use.
+A scenario requires explicit user assumptions stored separately from published evidence, explicit ranges and units, a reviewed server-owned model registration, one verified forecastable exact-county baseline where required, model and method versions, evidence release provenance, an allowed horizon, bounded deterministic arithmetic, and human review before consequential use.
 
 The client cannot submit executable formulas, model implementations, evidence sources, baselines, or probabilities. Blocked scenarios emit no partial usable output. Successful output is labeled `scenario_output`, not a published estimate or statistical prediction. See `docs/SCENARIO_GOVERNANCE.md`.
 
@@ -163,13 +137,7 @@ The capability never produces a composite workforce score, county rank, provider
 
 ### Monitoring Intelligence
 
-Monitoring evaluates server-owned governed definitions and snapshots for:
-
-- Evidence Gateway release changes;
-- reviewed planning-document changes;
-- funding-opportunity changes and deadlines;
-- workflow commitments;
-- evidence expiry.
+Monitoring evaluates server-owned governed definitions and snapshots for Evidence Gateway release changes, reviewed planning-document changes, funding-opportunity changes and deadlines, workflow commitments, and evidence expiry.
 
 It reports `no_change`, `change_detected`, `attention_required`, or `blocked`. Only actionable or blocked findings persist. Stable finding keys avoid daily duplication of the same unchanged condition.
 
@@ -201,7 +169,7 @@ Memory is separated by authority and retention purpose:
 
 1. **Run memory**: immutable graph events, checkpoints, approvals, traces, failures, and evidence releases.
 2. **Workspace memory**: authenticated drafts, comments, tasks, saved views, review questions, and collaboration state with optimistic versions plus immutable change events.
-3. **Institutional memory**: human-reviewed reusable decisions and operating knowledge, represented through append-only proposal/review/supersession records with evidence revalidation and expiry.
+3. **Institutional memory**: human-reviewed reusable decisions and operating knowledge represented through append-only proposal, review, expiry, and supersession records with evidence revalidation.
 4. **Learning memory**: structured trajectories, evaluation labels, authorized corrections, and proposed improvement candidates.
 
 Learning candidates cannot self-apply. Even an approved candidate remains `not_applied`; no learning-memory method can rewrite production prompts, code, policy, tools, model routing, or institutional truth.
@@ -223,17 +191,7 @@ The production application role must not own protected tables, be superuser, or 
 
 ## Server exposure
 
-Institutional routes fail closed without an authenticated gateway:
-
-- planning;
-- exact-run review;
-- Funding Intelligence;
-- visualization specifications;
-- workforce/capacity;
-- monitoring;
-- tenant-private evidence;
-- workspace memory;
-- institutional memory.
+Institutional routes fail closed without an authenticated gateway: planning, exact-run review, Funding Intelligence, visualization specifications, workforce/capacity, monitoring, tenant-private evidence, workspace memory, and institutional memory.
 
 Unknown `/api/...` routes return 404 and cannot fall through to the frontend SPA.
 
@@ -243,14 +201,7 @@ Public audit access and legacy unauthenticated sessions remain disabled by defau
 
 ## Tool and retrieval boundary
 
-Every production tool requires:
-
-- typed purpose and request/response;
-- actor and tenant authorization;
-- evidence/release provenance where relevant;
-- timeout/retry rules;
-- auditable invocation metadata;
-- capability or kill-switch control when consequential.
+Every production tool requires typed purpose and request/response, actor and tenant authorization, evidence/release provenance where relevant, timeout and retry rules, auditable invocation metadata, and capability or kill-switch control when consequential.
 
 Unrestricted live-web retrieval does not become public or institutional truth directly. Time-sensitive sources such as funding opportunities must enter through a governed source/retrieval contract with official URL, retrieval time, review status, and criterion lineage.
 
@@ -281,15 +232,22 @@ npm run preflight:production
 The gate verifies:
 
 - production-safe configuration with development and legacy bypasses disabled;
+- explicit HTTPS origin and production host allowlists;
 - live TLS PostgreSQL connection;
 - non-superuser, non-`BYPASSRLS`, non-owner runtime role;
 - every protected table present with forced RLS, expected tenant policy, reviewed privileges, and required append-only trigger;
 - rollback-only same-tenant read plus cross-tenant read/write denial and tenant-context cleanup;
 - the locked five-county Evidence Gateway proof set on one release with the planning contract;
 - real identity/claim, same-tenant, cross-tenant, and human-review authority probes;
-- backup and restore proof;
+- short-lived OIDC deployment identity and approved account/region;
+- exact protected-main SHA and immutable release artifact identity;
+- release-blocking vulnerability scan result;
+- managed secrets, private database networking, and governed private-evidence storage;
+- migrations completed before institutional user traffic;
+- TLS certificate, edge protection, security headers, CORS, and unauthenticated protected-route denial on the live endpoint;
+- backup and completed restore proof;
 - logs, audit events, alerts, and incident routing;
-- ability to disable the institutional runtime while public Explore and the Evidence Gateway remain unaffected.
+- ability to disable or roll back the institutional runtime while public Explore and the Evidence Gateway remain unaffected.
 
 A missing probe blocks activation. See `docs/PRODUCTION_ACTIVATION.md`.
 
@@ -311,13 +269,17 @@ A missing probe blocks activation. See `docs/PRODUCTION_ACTIVATION.md`.
 14. governed learning/evaluation memory without autonomous self-modification;
 15. governed monitoring evaluator and finding store;
 16. governed tenant-private evidence;
-17. fail-closed production readiness gate.
+17. fail-closed production-readiness gate;
+18. deployment supply-chain, storage, edge, live-security, and rollback proof contract;
+19. selective migration of reusable rules from draft PR #2 and closure of that competing architecture as superseded.
 
 ## Remaining environment activation dependencies
 
-1. reviewed relationship feeds may be added only when they exist in the shared Evidence Gateway; absence is not synthesized;
-2. the superseded Python/FastAPI draft must remain unmerged and can be closed after the final reusable deployment rules are preserved;
-3. the target AWS environment must supply real Cognito, PostgreSQL, backup/restore, observability, rollback, managed-secret, and network adapters and pass production preflight;
-4. a production monitoring scheduler/event source may be connected only after its credentials, retry behavior, destination, and incident handling are verified.
+The repository implementation is complete for the currently defined governed capabilities. Remaining dependencies are target-environment proofs or future evidence inputs, not unfinished application logic:
 
-No activation step may weaken evidence provenance, identity integrity, tenant isolation, non-clinical boundaries, or human authority.
+1. the real AWS environment must provide Cognito, PostgreSQL, storage, network, backup/restore, observability, deployment, edge, and rollback adapters and pass `npm run preflight:production`;
+2. institutional traffic must remain disabled until that target environment returns `eligible_for_controlled_activation`;
+3. a production monitoring scheduler or event source may be connected only after its credentials, retry behavior, destination, and incident handling are verified;
+4. future relationship or other evidence feeds may be added only when reviewed sources exist in the shared Evidence Gateway; absence is never synthesized.
+
+Draft PR #2 is already closed and remains historical only. No activation step may weaken evidence provenance, identity integrity, tenant isolation, non-clinical boundaries, or human authority.
