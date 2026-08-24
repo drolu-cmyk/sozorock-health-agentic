@@ -57,7 +57,7 @@ jobs:
           set -euo pipefail
           npm install --package-lock=false --ignore-scripts
           npm test
-          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
           git diff --exit-code
           test -z "$(git status --porcelain --untracked-files=no)"
           approved_commit=$(git rev-parse HEAD)
