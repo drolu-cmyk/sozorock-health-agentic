@@ -1,5 +1,6 @@
 const { buildAnalyticalWorkspace } = require('../packages/cbcap/analytical-workspace');
 const { selectVisualization } = require('../packages/cbcap/visualization-intelligence');
+const { renderWorkspacePackage } = require('../packages/cbcap/workspace-renderers');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
 
 const ALLOWED_FIELDS = new Set([
@@ -69,6 +70,7 @@ function createCBCAPVisualizationApi(options = {}) {
         let workspace;
         try {
           workspace = buildAnalyticalWorkspace(input);
+          workspace.renderPackage = renderWorkspacePackage(workspace);
         } catch (error) {
           return { statusCode: 400, body: { error: error.message } };
         }
@@ -79,6 +81,7 @@ function createCBCAPVisualizationApi(options = {}) {
           requestId: workspace.request.requestId,
           question: workspace.request.question,
           artifactFamily: workspace.plan.artifactFamily,
+          renderer: workspace.renderPackage.renderer,
           scope: workspace.request.scope,
           dataFingerprint: workspace.plan.dataFingerprint,
         });
