@@ -27,7 +27,7 @@ function response(overrides = {}) {
         package: {
           contract_version: 'sozorock.evidence-gateway.v1',
           release_id: releaseId,
-          geographies: [{ kind: 'county', county_fips: countyFips }],
+          geographies: overrides.geographies || [{ kind: 'county', county_fips: countyFips }],
           source_versions: [{ id: 'places-2025' }],
           metric_semantics: [{ id: 'diabetes' }],
           measures: [{ id: 'diabetes', value: 9.4 }],
@@ -56,6 +56,27 @@ test('Evidence Gateway client fails closed on county mismatch', async () => {
     fetchImpl: async () => response({ countyFips: '36093' }),
   });
   await assert.rejects(() => client.getCountyPackage('36001'), /does not match requested county/);
+});
+
+test('Evidence Gateway client fails closed on multiple geographies', async () => {
+  const client = new EvidenceGatewayClient({
+    baseUrl: 'https://health.sozorockfoundation.org',
+    fetchImpl: async () => response({
+      geographies: [
+        { kind: 'county', county_fips: '36001' },
+        { kind: 'county', county_fips: '36093' },
+      ],
+    }),
+  });
+  await assert.rejects(() => client.getCountyPackage('36001'), /exactly one geography/);
+});
+
+test('Evidence Gateway client fails closed on non-county geography', async () => {
+  const client = new EvidenceGatewayClient({
+    baseUrl: 'https://health.sozorockfoundation.org',
+    fetchImpl: async () => response({ geographies: [{ kind: 'zcta', county_fips: '36001' }] }),
+  });
+  await assert.rejects(() => client.getCountyPackage('36001'), /must contain a county geography/);
 });
 
 test('Evidence Gateway client fails closed on release-header mismatch', async () => {
