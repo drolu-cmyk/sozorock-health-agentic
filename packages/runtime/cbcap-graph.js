@@ -1,7 +1,11 @@
 const { GovernedGraph } = require('./graph');
 const { GovernedHarness } = require('./harness');
 const { InMemoryRunMemory } = require('./memory');
-const { hasUserAssumptions } = require('./contracts');
+const {
+  COUNTY_FIPS,
+  hasUserAssumptions,
+  isApprovedHumanRecord,
+} = require('./contracts');
 
 const NODE_IDS = [
   'resolve_place',
@@ -32,7 +36,38 @@ function createCBCAPGraph(options = {}) {
   const nodes = {
     resolve_place: {
       async run(state) {
-        return { patch: { place: await resolvePlace(state.task) }, next: 'load_evidence' };
+        const place = await resolvePlace(state.task);
+        if (!place || place.status === 'unresolved') {
+          return {
+            patch: { place: place || { status: 'unresolved', query: state.task?.location || null } },
+            halt: {
+              code: 'place_not_resolved',
+              reason: 'The requested geography could not be resolved to one verified U.S. county.',
+              status: 'needs_place_selection',
+            },
+          };
+        }
+        if (place.status === 'ambiguous') {
+          return {
+            patch: { place },
+            halt: {
+              code: 'place_selection_required',
+              reason: place.message || 'The requested geography maps to more than one county. Select one county explicitly.',
+              status: 'needs_place_selection',
+            },
+          };
+        }
+        if (!COUNTY_FIPS.test(String(place.countyFips || ''))) {
+          return {
+            patch: { place },
+            halt: {
+              code: 'county_fips_required',
+              reason: 'CB-CAP county planning requires one verified five-digit county FIPS.',
+              status: 'needs_place_selection',
+            },
+          };
+        }
+        return { patch: { place }, next: 'load_evidence' };
       },
     },
     load_evidence: {
@@ -65,12 +100,12 @@ function createCBCAPGraph(options = {}) {
     },
     await_review: {
       async run(state) {
-        if (state.approval?.status === 'approved' && publish) return { next: 'publish' };
+        if (isApprovedHumanRecord(state.approval) && publish) return { next: 'publish' };
         return {
           patch: { approval: { ...(state.approval || {}), status: 'required' } },
           halt: {
             code: 'human_review_required',
-            reason: 'CB-CAP generated a draft. Human review and explicit approval are required before publication.',
+            reason: 'CB-CAP generated a draft. Human review and explicit approval are required before approved output.',
             status: 'awaiting_human_review',
           },
         };
