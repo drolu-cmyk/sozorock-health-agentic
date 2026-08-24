@@ -1,6 +1,7 @@
 const { CBCAPPlanningEngine } = require('../packages/cbcap/planning-engine');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
 const { createCBCAPApi } = require('./cbcap-api');
+const { createCBCAPFundingApi } = require('./cbcap-funding-api');
 const { createCBCAPReviewApi } = require('./cbcap-review-api');
 const { workspaceActorReviewAuthorizer } = require('./institutional-cbcap-gateway');
 
@@ -49,12 +50,22 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
         })
       : null;
 
+    const fundingApi = typeof options.fundingOpportunityForActor === 'function'
+      && typeof options.fundingApplicantProfileForActor === 'function'
+      ? createCBCAPFundingApi({
+          opportunityForActor: options.fundingOpportunityForActor,
+          applicantProfileForActor: options.fundingApplicantProfileForActor,
+          auditSink: options.auditSink,
+        })
+      : null;
+
     return {
       tenantId: actor.tenantId,
       actor,
       engine,
       planningApi,
       reviewApi,
+      fundingApi,
     };
   };
 }

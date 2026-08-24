@@ -1,7 +1,7 @@
 {
   "name": "sozorock-health-agentic",
-  "version": "0.8.0",
-  "description": "SozoRock Health Agentic Infrastructure — identity-gated, tenant-scoped, resumable CB-CAP control plane",
+  "version": "0.9.0",
+  "description": "SozoRock Health Agentic Infrastructure — identity-gated, tenant-scoped CB-CAP decision control plane",
   "private": true,
   "main": "server/index.js",
   "scripts": {

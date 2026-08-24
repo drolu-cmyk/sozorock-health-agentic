@@ -20,7 +20,7 @@ async function withServer(options, fn) {
   }
 }
 
-test('institutional CB-CAP and review endpoints fail closed by default', async () => {
+test('institutional CB-CAP, review, and funding endpoints fail closed by default', async () => {
   await withServer({}, async (base) => {
     const plan = await fetch(`${base}/api/cbcap`, {
       method: 'POST',
@@ -36,10 +36,17 @@ test('institutional CB-CAP and review endpoints fail closed by default', async (
       body: JSON.stringify({ decision: 'approve' }),
     });
     assert.equal(review.status, 404);
+
+    const funding = await fetch(`${base}/api/cbcap/funding/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ opportunityId: 'opp-1', countyId: 'county:36001' }),
+    });
+    assert.equal(funding.status, 404);
   });
 });
 
-test('unauthenticated CB-CAP is available only through explicit development override', async () => {
+test('unauthenticated CB-CAP is available only through explicit development override and does not enable funding', async () => {
   await withServer({ allowUnauthenticatedDevCBCAP: true }, async (base) => {
     const response = await fetch(`${base}/api/cbcap`, {
       method: 'POST',
@@ -53,14 +60,22 @@ test('unauthenticated CB-CAP is available only through explicit development over
     const body = await response.json();
     assert.equal(body.status, 'awaiting_human_review');
 
+    const funding = await fetch(`${base}/api/cbcap/funding/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ opportunityId: 'opp-1', countyId: 'county:36001' }),
+    });
+    assert.equal(funding.status, 404);
+
     const health = await fetch(`${base}/api/health`).then((item) => item.json());
     assert.equal(health.unauthenticatedDevCBCAPEnabled, true);
     assert.equal(health.institutionalAccessEnabled, false);
+    assert.equal(health.fundingIntelligenceRouteEnabled, false);
   });
 });
 
-test('institutional gateway owns both planning and review routes', async () => {
-  const calls = { plan: 0, review: 0, requestContexts: 0 };
+test('institutional gateway owns planning, review, and funding routes', async () => {
+  const calls = { plan: 0, review: 0, funding: 0, requestContexts: 0 };
   const institutionalCBCAPGateway = {
     async handlePlan(body, context) {
       calls.plan += 1;
@@ -74,6 +89,12 @@ test('institutional gateway owns both planning and review routes', async () => {
       assert.equal(runId, 'run-1');
       assert.deepEqual(body, { decision: 'approve' });
       return { statusCode: 200, body: { status: 'approved_output', runId } };
+    },
+    async handleFunding(body, context) {
+      calls.funding += 1;
+      if (context?.request) calls.requestContexts += 1;
+      assert.deepEqual(body, { opportunityId: 'opp-1', countyId: 'county:36001' });
+      return { statusCode: 200, body: { status: 'provisional_review_required', opportunityId: 'opp-1' } };
     },
   };
 
@@ -91,14 +112,40 @@ test('institutional gateway owns both planning and review routes', async () => {
       body: JSON.stringify({ decision: 'approve' }),
     });
     assert.equal(review.status, 200);
+
+    const funding = await fetch(`${base}/api/cbcap/funding/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+      body: JSON.stringify({ opportunityId: 'opp-1', countyId: 'county:36001' }),
+    });
+    assert.equal(funding.status, 200);
     assert.equal(calls.plan, 1);
     assert.equal(calls.review, 1);
-    assert.equal(calls.requestContexts, 2);
+    assert.equal(calls.funding, 1);
+    assert.equal(calls.requestContexts, 3);
 
     const health = await fetch(`${base}/api/health`).then((item) => item.json());
     assert.equal(health.institutionalAccessEnabled, true);
     assert.equal(health.reviewContinuationEnabled, true);
+    assert.equal(health.fundingIntelligenceRouteEnabled, true);
     assert.equal(health.unauthenticatedDevCBCAPEnabled, false);
+  });
+});
+
+test('institutional gateway without funding handler keeps funding route hidden', async () => {
+  const institutionalCBCAPGateway = {
+    async handlePlan() { return { statusCode: 202, body: { status: 'awaiting_human_review' } }; },
+    async handleReview() { return { statusCode: 200, body: { status: 'approved_output' } }; },
+  };
+  await withServer({ institutionalCBCAPGateway }, async (base) => {
+    const funding = await fetch(`${base}/api/cbcap/funding/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+      body: JSON.stringify({ opportunityId: 'opp-1', countyId: 'county:36001' }),
+    });
+    assert.equal(funding.status, 404);
+    const health = await fetch(`${base}/api/health`).then((item) => item.json());
+    assert.equal(health.fundingIntelligenceRouteEnabled, false);
   });
 });
 
@@ -173,10 +220,11 @@ test('health endpoint identifies identity-gated runtime and disabled optional bo
   await withServer({}, async (base) => {
     const response = await fetch(`${base}/api/health`);
     const body = await response.json();
-    assert.equal(body.version, '0.8.0');
+    assert.equal(body.version, '0.9.0');
     assert.equal(body.runtime, 'governed-graph');
     assert.equal(body.institutionalAccessEnabled, false);
     assert.equal(body.reviewContinuationEnabled, false);
+    assert.equal(body.fundingIntelligenceRouteEnabled, false);
     assert.equal(body.unauthenticatedDevCBCAPEnabled, false);
     assert.equal(body.legacySessionsEnabled, false);
   });

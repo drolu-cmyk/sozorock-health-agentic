@@ -70,13 +70,14 @@ function createApp(options = {}) {
     res.json({
       status: 'ok',
       service: 'sozorock-health-agentic',
-      version: '0.8.0',
+      version: '0.9.0',
       runtime: 'governed-graph',
       time: new Date().toISOString(),
       geography: countyMeta(),
       zipCrosswalk: zipMeta(),
       institutionalAccessEnabled: Boolean(institutionalGateway),
       reviewContinuationEnabled: Boolean(institutionalGateway),
+      fundingIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleFunding === 'function'),
       unauthenticatedDevCBCAPEnabled: Boolean(devCbcapAPI),
       legacySessionsEnabled: enableLegacySessions,
     });
@@ -113,6 +114,17 @@ function createApp(options = {}) {
     try {
       if (!institutionalGateway) return res.sendStatus(404);
       const result = await institutionalGateway.handleReview(req.params.runId, req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/funding/evaluate', async (req, res) => {
+    try {
+      if (!institutionalGateway || typeof institutionalGateway.handleFunding !== 'function') return res.sendStatus(404);
+      const result = await institutionalGateway.handleFunding(req.body || {}, { request: req });
       return res.status(result.statusCode).json(result.body);
     } catch (error) {
       console.error(error);

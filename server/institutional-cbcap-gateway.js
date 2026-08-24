@@ -91,6 +91,27 @@ function createInstitutionalCBCAPGateway(options = {}) {
       });
       return result;
     },
+
+    async handleFunding(input, context = {}) {
+      const auth = await actorFor(context.request, 'cbcap.funding.evaluate');
+      if (auth.error) return auth.error;
+      const selected = await runtime(auth.actor);
+      if (!selected?.fundingApi || typeof selected.fundingApi.handle !== 'function') return unavailable();
+
+      const result = await selected.fundingApi.handle(input || {}, {
+        ...context,
+        workspaceActor: auth.actor,
+      });
+      auditSink({
+        action: 'cbcap_funding_request_completed',
+        tenantId: auth.actor.tenantId,
+        principalId: auth.actor.principalId,
+        role: auth.actor.role,
+        opportunityId: result.body?.opportunityId || null,
+        statusCode: result.statusCode,
+      });
+      return result;
+    },
   };
 }
 

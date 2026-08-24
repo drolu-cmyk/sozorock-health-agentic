@@ -1,17 +1,18 @@
 openapi: 3.1.0
 info:
   title: SozoRock Health Agentic API
-  version: 0.8.0
+  version: 0.9.0
   description: |
     Non-clinical place intelligence and identity-gated CB-CAP execution.
     Institutional CB-CAP uses authenticated workspace identity, authoritative
     tenant assignment, governed Evidence Gateway packages, resumable run state,
-    and human review. It does not diagnose, determine funding, rank people,
-    or replace county judgment.
+    human review, and feature-gated funding evidence matching. It does not
+    diagnose, determine final funding eligibility, predict awards, allocate
+    funding, rank people, or replace county or funder judgment.
 
-    The institutional endpoints fail closed unless an authenticated gateway is
-    configured. An unauthenticated CB-CAP mode exists only as an explicit local
-    development override and is not part of this production API contract.
+    Institutional endpoints fail closed unless an authenticated gateway is
+    configured. The unauthenticated CB-CAP mode is an explicit local development
+    override and is not part of this production API contract.
   license:
     name: MIT
 servers:
@@ -45,6 +46,8 @@ paths:
                   institutionalAccessEnabled:
                     type: boolean
                   reviewContinuationEnabled:
+                    type: boolean
+                  fundingIntelligenceRouteEnabled:
                     type: boolean
                   unauthenticatedDevCBCAPEnabled:
                     type: boolean
@@ -177,6 +180,45 @@ paths:
           description: Continued run did not reach approved output
         "503":
           description: Tenant review runtime is not configured
+  /api/cbcap/funding/evaluate:
+    post:
+      summary: Evaluate reviewed funding requirements against governed institutional evidence
+      operationId: evaluateCbcapFundingFit
+      security:
+        - bearerAuth: []
+      description: |
+        Performs read-only evidence matching for one governed funding opportunity.
+        The client supplies only the opportunity ID, county context, optional state
+        context, and optional as-of date. Opportunity criteria and the institutional
+        applicant profile are loaded from server-side governed providers.
+
+        The result never determines final eligibility, predicts an award, allocates
+        funding, or recommends a funding decision. It reports requirement matching,
+        evidence fit, missing evidence, missing partners, source lineage, deadline
+        state, and caveats for human review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FundingEvaluationRequest"
+      responses:
+        "200":
+          description: Provisional evidence-matching result or closed-opportunity state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FundingFitResult"
+        "400":
+          description: Invalid request. Client-supplied opportunity criteria or applicant profiles are rejected.
+        "403":
+          description: Authentication, workspace authorization, or tenant profile authorization failed
+        "404":
+          description: Reviewed opportunity was not found
+        "422":
+          description: Funding reasoning was blocked by an unverified source, missing criterion lineage, or invalid governed record
+        "503":
+          description: Governed funding opportunity or tenant profile provider is not configured or unavailable
 components:
   securitySchemes:
     bearerAuth:
@@ -259,7 +301,7 @@ components:
           additionalProperties: true
         planning:
           type: object
-          description: Draft evidence organization. Funding allocation, county priorities, and official CHA/CHIP decisions remain human authority.
+          description: Draft evidence organization including the governed CHA/CHIP workbench. Funding allocation, county priorities, and official CHA/CHIP decisions remain human authority.
           additionalProperties: true
         scenario:
           type: object
@@ -273,3 +315,80 @@ components:
           type: object
           description: Approved output generated only through exact-run authenticated review continuation.
           additionalProperties: true
+    FundingEvaluationRequest:
+      type: object
+      additionalProperties: false
+      required: [opportunityId, countyId]
+      properties:
+        opportunityId:
+          type: string
+          minLength: 1
+          maxLength: 240
+        countyId:
+          type: string
+          minLength: 1
+          maxLength: 240
+        stateId:
+          type: string
+          minLength: 1
+          maxLength: 240
+        asOf:
+          type: string
+          format: date
+    FundingCriterionResult:
+      type: object
+      additionalProperties: true
+      properties:
+        criterionId:
+          type: string
+        type:
+          type: string
+          enum: [applicant_type, geography, designation, partner, evidence, plan_priority, barrier]
+        status:
+          type: string
+          enum: [matched, incomplete, conflict, not_applicable]
+        explanation:
+          type: string
+    FundingFitResult:
+      type: object
+      additionalProperties: true
+      required: [kind, opportunityId, status, deadlineStatus, requirementsStatus, fitStatus, humanReviewRequired, finalEligibilityAuthority, awardPredictionProduced, fundingAllocationProduced]
+      properties:
+        kind:
+          const: cbcap_funding_fit_v1
+        opportunityId:
+          type: string
+        opportunityTitle:
+          type: string
+        status:
+          type: string
+          enum: [provisional_review_required, blocked, closed_opportunity]
+        deadlineStatus:
+          type: string
+          enum: [open, closed, not_yet_open, unknown]
+        requirementsStatus:
+          type: string
+          enum: [matched, incomplete, conflict, unknown]
+        fitStatus:
+          type: string
+          enum: [strong_evidence_fit, partial_evidence_fit, weak_evidence_fit, not_evaluated]
+        criteria:
+          type: array
+          items:
+            $ref: "#/components/schemas/FundingCriterionResult"
+        missingEvidenceIds:
+          type: array
+          items:
+            type: string
+        missingPartnerIds:
+          type: array
+          items:
+            type: string
+        humanReviewRequired:
+          const: true
+        finalEligibilityAuthority:
+          const: funder_and_authorized_humans
+        awardPredictionProduced:
+          const: false
+        fundingAllocationProduced:
+          const: false

@@ -29,7 +29,7 @@ test('workspace actor contract preserves the existing collaboration taxonomy', (
   });
 });
 
-test('evidence agents are machine actors and cannot create or review plans', () => {
+test('evidence agents are machine actors and cannot create, review, or evaluate institutional funding fit', () => {
   const evidenceAgent = actor({
     principalId: 'agent-1',
     role: 'evidence_agent',
@@ -39,6 +39,7 @@ test('evidence agents are machine actors and cannot create or review plans', () 
   assert.equal(permissionDecision(evidenceAgent, 'cbcap.plan.view').ok, true);
   assert.equal(permissionDecision(evidenceAgent, 'cbcap.plan.create').ok, false);
   assert.equal(permissionDecision(evidenceAgent, 'cbcap.plan.review').ok, false);
+  assert.equal(permissionDecision(evidenceAgent, 'cbcap.funding.evaluate').ok, false);
 });
 
 test('county planners and foundation reviewers with write access may review', () => {
@@ -52,15 +53,24 @@ test('community partners may contribute planning work but cannot approve it', ()
   assert.equal(permissionDecision(partner, 'cbcap.plan.review').ok, false);
 });
 
-test('research funder viewers and viewer access remain read-only', () => {
+test('human tenant members may run read-only funding evidence matching even with viewer access', () => {
+  for (const role of ['foundation_reviewer', 'county_planner', 'community_partner', 'research_funder_viewer']) {
+    const decision = permissionDecision(actor({ role, access: 'viewer' }), 'cbcap.funding.evaluate');
+    assert.equal(decision.ok, true, `${role} should be able to evaluate read-only funding fit`);
+  }
+});
+
+test('research funder viewers and viewer access remain unable to change planning state', () => {
   const funder = actor({ role: 'research_funder_viewer', access: 'viewer' });
   assert.equal(permissionDecision(funder, 'cbcap.plan.view').ok, true);
   assert.equal(permissionDecision(funder, 'cbcap.plan.create').ok, false);
   assert.equal(permissionDecision(funder, 'cbcap.plan.review').ok, false);
+  assert.equal(permissionDecision(funder, 'cbcap.funding.evaluate').ok, true);
 
   const viewerPlanner = actor({ access: 'viewer' });
   assert.equal(permissionDecision(viewerPlanner, 'cbcap.plan.create').ok, false);
   assert.equal(permissionDecision(viewerPlanner, 'cbcap.plan.review').ok, false);
+  assert.equal(permissionDecision(viewerPlanner, 'cbcap.funding.evaluate').ok, true);
 });
 
 test('incomplete or mismatched actor assignments fail closed', () => {
