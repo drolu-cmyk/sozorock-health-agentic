@@ -26,6 +26,13 @@ const PLAN_REVIEW_ROLES = new Set([
   'county_planner',
 ]);
 
+const FUNDING_EVALUATE_ROLES = new Set([
+  'foundation_reviewer',
+  'county_planner',
+  'community_partner',
+  'research_funder_viewer',
+]);
+
 const WRITE_ACCESS = new Set(['owner', 'contributor']);
 
 function requiredString(value, label, maxLength = 240) {
@@ -74,6 +81,11 @@ function permissionDecision(actorInput, action) {
   if (action === 'cbcap.plan.view') {
     return { ok: true, actor };
   }
+  if (action === 'cbcap.funding.evaluate') {
+    if (actor.actorType !== 'human') return { ok: false, code: 'human_required', actor };
+    if (!FUNDING_EVALUATE_ROLES.has(actor.role)) return { ok: false, code: 'role_not_allowed', actor };
+    return { ok: true, actor };
+  }
   if (action === 'cbcap.plan.create') {
     if (actor.actorType !== 'human') return { ok: false, code: 'human_required', actor };
     if (!WRITE_ACCESS.has(actor.access)) return { ok: false, code: 'write_access_required', actor };
@@ -91,6 +103,7 @@ function permissionDecision(actorInput, action) {
 }
 
 module.exports = {
+  FUNDING_EVALUATE_ROLES,
   HUMAN_ROLES,
   PLAN_CREATE_ROLES,
   PLAN_REVIEW_ROLES,
