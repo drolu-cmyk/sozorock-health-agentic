@@ -102,7 +102,7 @@ function evidence(countyFips = '36001') {
   };
 }
 
-test('workspace API fetches governed evidence itself and never accepts caller-supplied values', async () => {
+test('workspace API fetches governed evidence itself, renders it, and never accepts caller-supplied values', async () => {
   const fetched = [];
   const api = createCBCAPVisualizationWorkspaceApi({
     evidenceClient: {
@@ -122,6 +122,13 @@ test('workspace API fetches governed evidence itself and never accepts caller-su
   assert.deepEqual(fetched, ['36001', '36093']);
   assert.equal(result.body.plan.artifactFamily, 'interval_dot_plot');
   assert.equal(result.body.linkedState.selectedCountyFips, '36093');
+  assert.equal(result.body.renderPackage.contract, 'cbcap.visualization-render-package.v1');
+  assert.equal(result.body.renderPackage.renderer, 'SVG');
+  assert.equal(result.body.renderPackage.claimId, result.body.claimId);
+  assert.equal(result.body.renderPackage.staticAndInteractiveClaimMatch, true);
+  assert.match(result.body.renderPackage.svg, /role="img"/);
+  assert.match(result.body.renderPackage.svg, /County 36001/);
+  assert.match(result.body.renderPackage.accessibleHtml, /Sources and vintages/);
 
   const injected = await api.handle({
     question: 'compare_places',
