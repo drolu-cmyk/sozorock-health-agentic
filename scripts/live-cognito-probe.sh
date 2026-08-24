@@ -101,6 +101,26 @@ run_id=$(jq -r '.runId // ""' /tmp/cbcap-planner-plan.json)
 test -n "$run_id"
 test "$(jq -r '.status // ""' /tmp/cbcap-planner-plan.json)" = "awaiting_human_review"
 
+visualization_workspace_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+  --output /tmp/cbcap-visualization-workspace.json --write-out '%{http_code}' \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $planner_token" \
+  --data '{"question":"compare_places","countyFips":["36001","36093","36057","42029","48029"],"sourceMeasureIds":["LACKTRPT:Crude"],"selectedCountyFips":"36001"}' \
+  "https://$API_DOMAIN/api/cbcap/visualizations/workspace")
+test "$visualization_workspace_status" = "200"
+test "$(jq -r '.contract // ""' /tmp/cbcap-visualization-workspace.json)" = "cbcap.visualization-workspace.v1"
+test "$(jq -r '.releaseId // ""' /tmp/cbcap-visualization-workspace.json)" != ""
+test "$(jq -r '.countyFips | length' /tmp/cbcap-visualization-workspace.json)" = "5"
+test "$(jq -r '.data | length' /tmp/cbcap-visualization-workspace.json)" = "5"
+test "$(jq -r '.renderPackage.contract // ""' /tmp/cbcap-visualization-workspace.json)" = "cbcap.visualization-render-package.v1"
+test "$(jq -r '.renderPackage.claimId // ""' /tmp/cbcap-visualization-workspace.json)" = "$(jq -r '.claimId // ""' /tmp/cbcap-visualization-workspace.json)"
+test "$(jq -r '.renderPackage.staticAndInteractiveClaimMatch // false' /tmp/cbcap-visualization-workspace.json)" = "true"
+test "$(jq -r '.compositeScore == null' /tmp/cbcap-visualization-workspace.json)" = "true"
+test "$(jq -r '.causalInference // true' /tmp/cbcap-visualization-workspace.json)" = "false"
+visualization_workspace_release=$(jq -r '.releaseId' /tmp/cbcap-visualization-workspace.json)
+visualization_workspace_claim=$(jq -r '.claimId' /tmp/cbcap-visualization-workspace.json)
+
 missing_upload_id="preflight-missing-${probe_id}"
 private_evidence_payload=$(jq -cn \
   --arg uploadId "$missing_upload_id" \
@@ -178,6 +198,8 @@ jq -cn \
   --arg runId "$run_id" \
   --arg crossTenantStatus "$cross_tenant_review_status" \
   --arg clientId "$USER_POOL_CLIENT_ID" \
+  --arg visualizationRelease "$visualization_workspace_release" \
+  --arg visualizationClaim "$visualization_workspace_claim" \
   '{
     claimsVerified:true,
     sameTenantAuthorized:true,
@@ -191,6 +213,11 @@ jq -cn \
     legacyFrontendDenied:true,
     legacyPlaceApiDenied:true,
     legacyHealthApiDenied:true,
+    visualizationWorkspaceVerified:true,
+    visualizationWorkspaceFiveCountyEvidenceVerified:true,
+    visualizationWorkspaceRenderClaimVerified:true,
+    visualizationRelease:$visualizationRelease,
+    visualizationClaim:$visualizationClaim,
     crossTenantReviewStatus:$crossTenantStatus,
     appClientId:$clientId,
     runId:$runId
