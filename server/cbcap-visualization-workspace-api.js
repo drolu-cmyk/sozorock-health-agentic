@@ -1,4 +1,8 @@
-const { buildVisualizationWorkspace, MAX_COUNTIES } = require('../packages/cbcap/visualization-workspace');
+const {
+  buildVisualizationWorkspace,
+  MAX_COUNTIES,
+  SUPPORTED_QUESTIONS,
+} = require('../packages/cbcap/visualization-workspace');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
 
 const ALLOWED_FIELDS = new Set([
@@ -13,6 +17,8 @@ function validateRequest(input) {
   for (const key of Object.keys(input)) {
     if (!ALLOWED_FIELDS.has(key)) throw new Error(`Unsupported visualization workspace field ${key}.`);
   }
+  const question = String(input.question || '').trim();
+  if (!SUPPORTED_QUESTIONS.includes(question)) throw new Error(`Unsupported visualization workspace question ${question || 'missing'}.`);
   if (!Array.isArray(input.countyFips) || input.countyFips.length === 0) throw new Error('countyFips must be a non-empty array.');
   if (input.countyFips.length > MAX_COUNTIES) throw new Error('countyFips exceeds the workspace limit.');
   const countyFips = input.countyFips.map((value) => String(value || '').trim());
@@ -31,7 +37,7 @@ function validateRequest(input) {
     throw new Error('selectedCountyFips must be one of countyFips.');
   }
   return {
-    question: String(input.question || '').trim(),
+    question,
     countyFips,
     sourceMeasureIds,
     selectedCountyFips,
