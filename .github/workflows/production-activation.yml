@@ -1,0 +1,693 @@
+name: CB-CAP agentic production activation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "release/production-activation.request"
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact protected main commit to activate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  statuses: write
+
+concurrency:
+  group: cbcap-agentic-production-activation
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    name: Build, migrate, prove, activate, rollback-test, and re-prove
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: production
+    env:
+      AWS_REGION: us-east-1
+      AWS_PAGER: ""
+      EXPECTED_AWS_ACCOUNT_ID: "791860731989"
+      DEPLOY_ROLE_ARN: arn:aws:iam::791860731989:role/cbcap-agentic-github-deploy
+      CLOUDFORMATION_ROLE_ARN: arn:aws:iam::791860731989:role/cbcap-agentic-cloudformation
+      REGISTRY_STACK: cbcap-agentic-registry
+      RUNTIME_STACK: cbcap-agentic-runtime
+      PREFLIGHT_INGRESS_STACK: cbcap-agentic-preflight-ingress
+      ECR_REPOSITORY: sozorock/cbcap-agentic-runtime
+      DOMAIN_NAME: api.cbcap.sozorockfoundation.org
+      EVIDENCE_ORIGIN: https://health.sozorockfoundation.org
+      PUBLIC_EXPLORE_URL: https://health.sozorockfoundation.org/explore
+      STATUS_CONTEXT: cbcap-agentic/production-activation
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Publish pending activation status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_sha=$(git rev-parse HEAD)
+          echo "RELEASE_SHA=$release_sha" >> "$GITHUB_ENV"
+          payload=$(jq -cn --arg state pending --arg target_url "$RUN_URL" --arg description 'CB-CAP governed production activation is running' --arg context "$STATUS_CONTEXT" '{state:$state,target_url:$target_url,description:$description,context:$context}')
+          curl --fail-with-body --silent --show-error --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/statuses/$release_sha" \
+            --data "$payload" >/dev/null
+
+      - name: Verify protected source and repository gates
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24.19.0"
+
+      - name: Test exact release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          origin_main=$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')
+          test "$origin_main" = "$RELEASE_SHA"
+          npm install --ignore-scripts
+          npm test
+          npm audit --omit=dev --audit-level=high
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Assume repo-scoped production OIDC role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          role-session-name: cbcap-agentic-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove OIDC and account boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          caller=$(aws sts get-caller-identity --output json)
+          account=$(jq -r '.Account' <<<"$caller")
+          arn=$(jq -r '.Arn' <<<"$caller")
+          test "$account" = "$EXPECTED_AWS_ACCOUNT_ID"
+          [[ "$arn" == arn:aws:sts::$EXPECTED_AWS_ACCOUNT_ID:assumed-role/cbcap-agentic-github-deploy/* ]]
+          echo "OIDC_IDENTITY_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "DEPLOYMENT_ACCOUNT_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "PROTECTED_MAIN_SHA_VERIFIED=true" >> "$GITHUB_ENV"
+
+      - name: Create or verify immutable runtime registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$REGISTRY_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-agentic-registry.yml \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --no-fail-on-empty-changeset
+          repository_uri=$(aws cloudformation describe-stacks --stack-name "$REGISTRY_STACK" --query "Stacks[0].Outputs[?OutputKey=='RepositoryUri'].OutputValue" --output text)
+          test -n "$repository_uri"
+          mutability=$(aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --query 'repositories[0].imageTagMutability' --output text)
+          test "$mutability" = "IMMUTABLE"
+          echo "REPOSITORY_URI=$repository_uri" >> "$GITHUB_ENV"
+
+      - name: Build and publish exact immutable image
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry="${REPOSITORY_URI%%/*}"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
+          docker build --pull=false --provenance=false -f Dockerfile.runtime -t "$REPOSITORY_URI:$RELEASE_SHA" .
+          docker push "$REPOSITORY_URI:$RELEASE_SHA"
+          digest=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$RELEASE_SHA" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "IMMUTABLE_IMAGE_URI=$REPOSITORY_URI@$digest" >> "$GITHUB_ENV"
+
+      - name: Require a clean release-blocking ECR scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          scan_json=''
+          for attempt in $(seq 1 60); do
+            if scan_json=$(aws ecr describe-image-scan-findings \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-id imageDigest="$IMAGE_DIGEST" \
+              --output json 2>/dev/null); then
+              status=$(jq -r '.imageScanStatus.status // ""' <<<"$scan_json")
+              case "$status" in
+                COMPLETE) break ;;
+                FAILED|UNSUPPORTED_IMAGE)
+                  echo "ECR scan ended with $status."
+                  exit 1
+                  ;;
+              esac
+            fi
+            if [[ "$attempt" -eq 60 ]]; then
+              echo "ECR scan did not complete within 10 minutes."
+              exit 1
+            fi
+            sleep 10
+          done
+          critical=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<<"$scan_json")
+          high=$(jq -r '.imageScanFindings.findingSeverityCounts.HIGH // 0' <<<"$scan_json")
+          test "$critical" = "0"
+          test "$high" = "0"
+          echo "VULNERABILITY_SCAN_CLEAN=true" >> "$GITHUB_ENV"
+
+      - name: Stage infrastructure with zero runtime traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$RUNTIME_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-agentic-runtime.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              RuntimeImageUri="$IMMUTABLE_IMAGE_URI" \
+              DesiredCount=0 \
+              ActivationEnabled=false \
+            --no-fail-on-empty-changeset
+
+          stack=$(aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" --output json)
+          out() { jq -r --arg key "$1" '.Stacks[0].Outputs[] | select(.OutputKey==$key) | .OutputValue' <<<"$stack"; }
+          echo "CLUSTER_NAME=$(out ClusterName)" >> "$GITHUB_ENV"
+          echo "RUNTIME_SERVICE_NAME=$(out RuntimeServiceName)" >> "$GITHUB_ENV"
+          echo "RUNTIME_TASK_DEFINITION=$(out RuntimeTaskDefinitionArn)" >> "$GITHUB_ENV"
+          echo "MIGRATION_TASK_DEFINITION=$(out MigrationTaskDefinitionArn)" >> "$GITHUB_ENV"
+          echo "PREFLIGHT_TASK_DEFINITION=$(out PreflightTaskDefinitionArn)" >> "$GITHUB_ENV"
+          echo "RUNTIME_SECURITY_GROUP=$(out RuntimeSecurityGroupId)" >> "$GITHUB_ENV"
+          echo "PUBLIC_SUBNET_IDS=$(out PublicSubnetIds)" >> "$GITHUB_ENV"
+          echo "DATABASE_IDENTIFIER=$(out DatabaseIdentifier)" >> "$GITHUB_ENV"
+          echo "DATABASE_SECURITY_GROUP=$(out DatabaseSecurityGroupId)" >> "$GITHUB_ENV"
+          echo "DATABASE_SUBNET_GROUP=$(out DatabaseSubnetGroupName)" >> "$GITHUB_ENV"
+          echo "RUNTIME_PASSWORD_SECRET=$(out RuntimeDatabasePasswordArn)" >> "$GITHUB_ENV"
+          echo "USER_POOL_ID=$(out UserPoolId)" >> "$GITHUB_ENV"
+          echo "PRIVATE_EVIDENCE_BUCKET=$(out PrivateEvidenceBucketName)" >> "$GITHUB_ENV"
+          echo "PRIVATE_EVIDENCE_KMS_KEY=$(out PrivateEvidenceKmsKeyArn)" >> "$GITHUB_ENV"
+          echo "RUNTIME_LOG_GROUP=$(out RuntimeLogGroupName)" >> "$GITHUB_ENV"
+          echo "INCIDENT_TOPIC=$(out IncidentTopicArn)" >> "$GITHUB_ENV"
+          echo "CERTIFICATE_ARN=$(out CertificateArn)" >> "$GITHUB_ENV"
+          echo "LOAD_BALANCER_ARN=$(out LoadBalancerArn)" >> "$GITHUB_ENV"
+          echo "TARGET_GROUP_ARN=$(out TargetGroupArn)" >> "$GITHUB_ENV"
+          echo "WEB_ACL_ARN=$(out WebAclArn)" >> "$GITHUB_ENV"
+
+          desired=$(aws ecs describe-services --cluster "$(out ClusterName)" --services "$(out RuntimeServiceName)" --query 'services[0].desiredCount' --output text)
+          test "$desired" = "0"
+          rules=$(aws elbv2 describe-rules --listener-arn "$(aws elbv2 describe-listeners --load-balancer-arn "$(out LoadBalancerArn)" --query 'Listeners[?Port==`443`].ListenerArn | [0]' --output text)" --output json)
+          test "$(jq '[.Rules[] | select(.Priority == "1")] | length' <<<"$rules")" = "0"
+
+      - name: Run governed migrations before any runtime task
+        shell: bash
+        run: |
+          set -euo pipefail
+          network="awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$RUNTIME_SECURITY_GROUP],assignPublicIp=ENABLED}"
+          task_arn=$(aws ecs run-task \
+            --cluster "$CLUSTER_NAME" \
+            --task-definition "$MIGRATION_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "$network" \
+            --started-by "cbcap-migrate-${GITHUB_RUN_ID}" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+          test -n "$task_arn"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER_NAME" --tasks "$task_arn"
+          task=$(aws ecs describe-tasks --cluster "$CLUSTER_NAME" --tasks "$task_arn" --output json)
+          exit_code=$(jq -r '.tasks[0].containers[] | select(.name=="migration") | .exitCode // -1' <<<"$task")
+          if [[ "$exit_code" != "0" ]]; then
+            jq -r '.tasks[0] | {stopCode,stoppedReason,containers:[.containers[]|{name,exitCode,reason}]}' <<<"$task"
+            exit 1
+          fi
+          echo "MIGRATIONS_COMPLETED_BEFORE_TRAFFIC=true" >> "$GITHUB_ENV"
+
+      - name: Start runtime while institutional forwarding remains disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$RUNTIME_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-agentic-runtime.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              RuntimeImageUri="$IMMUTABLE_IMAGE_URI" \
+              DesiredCount=1 \
+              ActivationEnabled=false \
+            --no-fail-on-empty-changeset
+          aws ecs wait services-stable --cluster "$CLUSTER_NAME" --services "$RUNTIME_SERVICE_NAME"
+          running=$(aws ecs describe-services --cluster "$CLUSTER_NAME" --services "$RUNTIME_SERVICE_NAME" --query 'services[0].runningCount' --output text)
+          desired=$(aws ecs describe-services --cluster "$CLUSTER_NAME" --services "$RUNTIME_SERVICE_NAME" --query 'services[0].desiredCount' --output text)
+          test "$running" = "1"
+          test "$desired" = "1"
+          echo "RUNTIME_ENABLED_AFTER_MIGRATIONS=true" >> "$GITHUB_ENV"
+
+      - name: Prove storage, database, secrets, image, edge, and observability configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          taskdef=$(aws ecs describe-task-definition --task-definition "$RUNTIME_TASK_DEFINITION" --output json)
+          runtime_image=$(jq -r '.taskDefinition.containerDefinitions[] | select(.name=="runtime") | .image' <<<"$taskdef")
+          test "$runtime_image" = "$IMMUTABLE_IMAGE_URI"
+          secret_count=$(jq --arg arn "$RUNTIME_PASSWORD_SECRET" '[.taskDefinition.containerDefinitions[] | select(.name=="runtime") | .secrets[]? | select(.name=="CB_CAP_DATABASE_PASSWORD" and .valueFrom==$arn)] | length' <<<"$taskdef")
+          test "$secret_count" = "1"
+          plaintext_password=$(jq '[.taskDefinition.containerDefinitions[] | select(.name=="runtime") | .environment[]? | select(.name=="CB_CAP_DATABASE_PASSWORD")] | length' <<<"$taskdef")
+          test "$plaintext_password" = "0"
+
+          versioning=$(aws s3api get-bucket-versioning --bucket "$PRIVATE_EVIDENCE_BUCKET" --query Status --output text)
+          test "$versioning" = "Enabled"
+          encryption=$(aws s3api get-bucket-encryption --bucket "$PRIVATE_EVIDENCE_BUCKET" --output json)
+          test "$(jq -r '.ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm' <<<"$encryption")" = "aws:kms"
+          kms=$(jq -r '.ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID' <<<"$encryption")
+          test "$kms" = "$PRIVATE_EVIDENCE_KMS_KEY"
+          pab=$(aws s3api get-public-access-block --bucket "$PRIVATE_EVIDENCE_BUCKET" --output json)
+          jq -e '.PublicAccessBlockConfiguration | .BlockPublicAcls and .IgnorePublicAcls and .BlockPublicPolicy and .RestrictPublicBuckets' <<<"$pab" >/dev/null
+          lifecycle=$(aws s3api get-bucket-lifecycle-configuration --bucket "$PRIVATE_EVIDENCE_BUCKET" --output json)
+          test "$(jq '.Rules | length' <<<"$lifecycle")" -ge 1
+
+          db=$(aws rds describe-db-instances --db-instance-identifier "$DATABASE_IDENTIFIER" --output json)
+          jq -e '.DBInstances[0] | (.PubliclyAccessible == false) and (.StorageEncrypted == true) and (.DeletionProtection == true) and (.BackupRetentionPeriod >= 7)' <<<"$db" >/dev/null
+          master_secret=$(jq -r '.DBInstances[0].MasterUserSecret.SecretArn // ""' <<<"$db")
+          test -n "$master_secret"
+          aws secretsmanager describe-secret --secret-id "$RUNTIME_PASSWORD_SECRET" >/dev/null
+          aws secretsmanager describe-secret --secret-id "$master_secret" >/dev/null
+
+          sg=$(aws ec2 describe-security-groups --group-ids "$DATABASE_SECURITY_GROUP" --output json)
+          jq -e --arg runtime "$RUNTIME_SECURITY_GROUP" '
+            .SecurityGroups[0].IpPermissions as $p
+            | ($p | length) == 1
+            and $p[0].FromPort == 5432
+            and $p[0].ToPort == 5432
+            and ($p[0].IpRanges | length) == 0
+            and ($p[0].Ipv6Ranges | length) == 0
+            and ([ $p[0].UserIdGroupPairs[]?.GroupId ] | index($runtime)) != null
+          ' <<<"$sg" >/dev/null
+
+          cert_status=$(aws acm describe-certificate --certificate-arn "$CERTIFICATE_ARN" --query 'Certificate.Status' --output text)
+          test "$cert_status" = "ISSUED"
+          attached_waf=$(aws wafv2 get-web-acl-for-resource --resource-arn "$LOAD_BALANCER_ARN" --query 'WebACL.ARN' --output text)
+          test "$attached_waf" = "$WEB_ACL_ARN"
+
+          alarm=$(aws cloudwatch describe-alarms --alarm-names cbcap-agentic-unhealthy-targets --output json)
+          jq -e --arg topic "$INCIDENT_TOPIC" '.MetricAlarms[0] | .ActionsEnabled == true and (.AlarmActions | index($topic)) != null' <<<"$alarm" >/dev/null
+          aws sns get-topic-attributes --topic-arn "$INCIDENT_TOPIC" >/dev/null
+          aws logs describe-log-groups --log-group-name-prefix "$RUNTIME_LOG_GROUP" --query "logGroups[?logGroupName=='$RUNTIME_LOG_GROUP'] | length(@)" --output text | grep -qx '1'
+
+          echo "IMMUTABLE_IMAGE_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "MANAGED_SECRETS_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "PRIVATE_EVIDENCE_STORAGE_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "DATABASE_NETWORK_ISOLATION_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "TLS_CERTIFICATE_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "EDGE_PROTECTION_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "ALERTS_CONFIGURED=true" >> "$GITHUB_ENV"
+          echo "INCIDENT_ROUTE_CONFIGURED=true" >> "$GITHUB_ENV"
+
+      - name: Create guarded preactivation ingress
+        shell: bash
+        run: |
+          set -euo pipefail
+          header=$(openssl rand -hex 32)
+          [[ "$header" =~ ^[0-9a-f]{64}$ ]]
+          listener=$(aws elbv2 describe-listeners --load-balancer-arn "$LOAD_BALANCER_ARN" --query 'Listeners[?Port==`443`].ListenerArn | [0]' --output text)
+          test -n "$listener"
+          echo "PREFLIGHT_HEADER=$header" >> "$GITHUB_ENV"
+          echo "HTTPS_LISTENER_ARN=$listener" >> "$GITHUB_ENV"
+          aws cloudformation deploy \
+            --stack-name "$PREFLIGHT_INGRESS_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-agentic-preflight-ingress.yml \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              ListenerArn="$listener" \
+              TargetGroupArn="$TARGET_GROUP_ARN" \
+              DomainName="$DOMAIN_NAME" \
+              PreflightHeaderValue="$header" \
+              Enabled=true \
+            --no-fail-on-empty-changeset
+
+      - name: Prove TLS, security headers, CORS, and unauthenticated denial before activation
+        shell: bash
+        run: |
+          set -euo pipefail
+          root_status=''
+          for attempt in $(seq 1 60); do
+            if root_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /tmp/root.json --write-out '%{http_code}' "https://$DOMAIN_NAME/"); then
+              if [[ "$root_status" == "503" ]]; then break; fi
+            fi
+            if [[ "$attempt" -eq 60 ]]; then
+              echo "Production DNS/TLS did not reach the fail-closed listener within 10 minutes."
+              exit 1
+            fi
+            sleep 10
+          done
+
+          status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+            --header "X-CB-CAP-Preflight: $PREFLIGHT_HEADER" \
+            --dump-header /tmp/health.headers \
+            --output /tmp/health.json \
+            --write-out '%{http_code}' \
+            "https://$DOMAIN_NAME/api/health")
+          test "$status" = "200"
+          jq -e '.status == "ok" and .institutionalAccessEnabled == true and .unauthenticatedDevCBCAPEnabled == false and .legacySessionsEnabled == false' /tmp/health.json >/dev/null
+          grep -Eqi '^strict-transport-security:[[:space:]]*max-age=31536000; includeSubDomains\r?$' /tmp/health.headers
+          grep -Eqi '^x-content-type-options:[[:space:]]*nosniff\r?$' /tmp/health.headers
+          grep -Eqi '^x-frame-options:[[:space:]]*DENY\r?$' /tmp/health.headers
+          grep -Eqi '^referrer-policy:[[:space:]]*no-referrer\r?$' /tmp/health.headers
+          grep -Eqi '^permissions-policy:' /tmp/health.headers
+          grep -Eqi '^content-security-policy:' /tmp/health.headers
+          grep -Eqi '^cache-control:[[:space:]]*no-store\r?$' /tmp/health.headers
+          grep -Eqi '^x-request-id:' /tmp/health.headers
+
+          allowed=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+            --request OPTIONS \
+            --header "X-CB-CAP-Preflight: $PREFLIGHT_HEADER" \
+            --header 'Origin: https://cbcap.sozorockfoundation.org' \
+            --header 'Access-Control-Request-Method: POST' \
+            --dump-header /tmp/cors-allowed.headers \
+            --output /tmp/cors-allowed.body \
+            --write-out '%{http_code}' \
+            "https://$DOMAIN_NAME/api/cbcap")
+          test "$allowed" = "204"
+          grep -Eqi '^access-control-allow-origin:[[:space:]]*https://cbcap\.sozorockfoundation\.org\r?$' /tmp/cors-allowed.headers
+
+          denied=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+            --request OPTIONS \
+            --header "X-CB-CAP-Preflight: $PREFLIGHT_HEADER" \
+            --header 'Origin: https://untrusted.example' \
+            --header 'Access-Control-Request-Method: POST' \
+            --output /tmp/cors-denied.body \
+            --write-out '%{http_code}' \
+            "https://$DOMAIN_NAME/api/cbcap")
+          test "$denied" = "403"
+
+          unauth=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+            --request POST \
+            --header "X-CB-CAP-Preflight: $PREFLIGHT_HEADER" \
+            --header 'Content-Type: application/json' \
+            --data '{"countyFips":"36001"}' \
+            --output /tmp/unauth.body \
+            --write-out '%{http_code}' \
+            "https://$DOMAIN_NAME/api/cbcap")
+          test "$unauth" = "403"
+
+          echo "SECURITY_HEADERS_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "CORS_BOUNDARY_VERIFIED=true" >> "$GITHUB_ENV"
+          echo "UNAUTHENTICATED_PROTECTED_ROUTE_DENIED=true" >> "$GITHUB_ENV"
+
+      - name: Prove live Cognito claims and reviewed authorization model
+        shell: bash
+        run: |
+          set -euo pipefail
+          suffix="${RELEASE_SHA:0:12}"
+          planner="cbcap-preflight-planner-$suffix@example.invalid"
+          agent="cbcap-preflight-agent-$suffix@example.invalid"
+          other="cbcap-preflight-other-$suffix@example.invalid"
+          echo "PREFLIGHT_PLANNER=$planner" >> "$GITHUB_ENV"
+          echo "PREFLIGHT_AGENT=$agent" >> "$GITHUB_ENV"
+          echo "PREFLIGHT_OTHER=$other" >> "$GITHUB_ENV"
+
+          for username in "$planner" "$agent" "$other"; do
+            aws cognito-idp admin-delete-user --user-pool-id "$USER_POOL_ID" --username "$username" >/dev/null 2>&1 || true
+          done
+
+          aws cognito-idp admin-create-user --user-pool-id "$USER_POOL_ID" --username "$planner" --message-action SUPPRESS \
+            --user-attributes \
+              Name=email,Value="$planner" \
+              Name=custom:tenant_id,Value=cbcap-preflight-tenant-a \
+              Name=custom:workspace_role,Value=county_planner \
+              Name=custom:workspace_access,Value=owner >/dev/null
+          aws cognito-idp admin-create-user --user-pool-id "$USER_POOL_ID" --username "$agent" --message-action SUPPRESS \
+            --user-attributes \
+              Name=email,Value="$agent" \
+              Name=custom:tenant_id,Value=cbcap-preflight-tenant-a \
+              Name=custom:workspace_role,Value=evidence_agent \
+              Name=custom:workspace_access,Value=contributor >/dev/null
+          aws cognito-idp admin-create-user --user-pool-id "$USER_POOL_ID" --username "$other" --message-action SUPPRESS \
+            --user-attributes \
+              Name=email,Value="$other" \
+              Name=custom:tenant_id,Value=cbcap-preflight-tenant-b \
+              Name=custom:workspace_role,Value=county_planner \
+              Name=custom:workspace_access,Value=owner >/dev/null
+
+          aws cognito-idp admin-get-user --user-pool-id "$USER_POOL_ID" --username "$planner" > /tmp/planner.json
+          aws cognito-idp admin-get-user --user-pool-id "$USER_POOL_ID" --username "$agent" > /tmp/agent.json
+          aws cognito-idp admin-get-user --user-pool-id "$USER_POOL_ID" --username "$other" > /tmp/other.json
+          identity=$(node scripts/live-cognito-identity-proof.js /tmp/planner.json /tmp/agent.json /tmp/other.json)
+          jq -e '.claimsVerified and .sameTenantAuthorized and .crossTenantDenied and .humanReviewAuthorityVerified' <<<"$identity" >/dev/null
+          echo "IDENTITY_PROOF_JSON=$identity" >> "$GITHUB_ENV"
+
+      - name: Prove backup and completed restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_id="${GITHUB_RUN_ID}"
+          snapshot="cbcap-agentic-proof-$proof_id"
+          restored="cbcap-agentic-restore-$proof_id"
+          aws rds create-db-snapshot \
+            --db-snapshot-identifier "$snapshot" \
+            --db-instance-identifier "$DATABASE_IDENTIFIER" >/dev/null
+          aws rds wait db-snapshot-completed --db-snapshot-identifier "$snapshot"
+          snap=$(aws rds describe-db-snapshots --db-snapshot-identifier "$snapshot" --output json)
+          jq -e '.DBSnapshots[0] | .Status == "available" and .Encrypted == true' <<<"$snap" >/dev/null
+
+          aws rds restore-db-instance-from-db-snapshot \
+            --db-instance-identifier "$restored" \
+            --db-snapshot-identifier "$snapshot" \
+            --db-instance-class db.t4g.micro \
+            --db-subnet-group-name "$DATABASE_SUBNET_GROUP" \
+            --vpc-security-group-ids "$DATABASE_SECURITY_GROUP" \
+            --no-publicly-accessible \
+            --no-deletion-protection >/dev/null
+          aws rds wait db-instance-available --db-instance-identifier "$restored"
+          restored_json=$(aws rds describe-db-instances --db-instance-identifier "$restored" --output json)
+          jq -e '.DBInstances[0] | .DBInstanceStatus == "available" and .PubliclyAccessible == false and .StorageEncrypted == true' <<<"$restored_json" >/dev/null
+          aws rds delete-db-instance --db-instance-identifier "$restored" --skip-final-snapshot --delete-automated-backups >/dev/null
+          aws rds wait db-instance-deleted --db-instance-identifier "$restored"
+          echo "RECOVERY_PROOF_JSON={\"backupVerified\":true,\"restoreVerified\":true}" >> "$GITHUB_ENV"
+
+      - name: Prove logs, audit events, alarms, and incident route
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=false
+          for attempt in $(seq 1 30); do
+            events=$(aws logs filter-log-events --log-group-name "$RUNTIME_LOG_GROUP" --filter-pattern 'production_runtime_started' --limit 20 --output json)
+            if [[ "$(jq '.events | length' <<<"$events")" -gt 0 ]]; then
+              found=true
+              break
+            fi
+            sleep 10
+          done
+          test "$found" = "true"
+          alarm=$(aws cloudwatch describe-alarms --alarm-names cbcap-agentic-unhealthy-targets --output json)
+          jq -e --arg topic "$INCIDENT_TOPIC" '.MetricAlarms[0] | .ActionsEnabled == true and (.AlarmActions | index($topic)) != null' <<<"$alarm" >/dev/null
+          aws sns get-topic-attributes --topic-arn "$INCIDENT_TOPIC" >/dev/null
+          echo "OBSERVABILITY_PROOF_JSON={\"logsReachable\":true,\"auditEventsReachable\":true,\"alertsConfigured\":true,\"incidentRouteConfigured\":true}" >> "$GITHUB_ENV"
+
+      - name: Enable institutional host only after preactivation proofs
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$RUNTIME_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-agentic-runtime.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              RuntimeImageUri="$IMMUTABLE_IMAGE_URI" \
+              DesiredCount=1 \
+              ActivationEnabled=true \
+            --no-fail-on-empty-changeset
+          aws ecs wait services-stable --cluster "$CLUSTER_NAME" --services "$RUNTIME_SERVICE_NAME"
+
+          health=$(curl --proto '=https' --tlsv1.2 --silent --show-error --output /tmp/live-health.json --write-out '%{http_code}' "https://$DOMAIN_NAME/api/health")
+          test "$health" = "200"
+          unauth=$(curl --proto '=https' --tlsv1.2 --silent --show-error --request POST --header 'Content-Type: application/json' --data '{"countyFips":"36001"}' --output /tmp/live-unauth.json --write-out '%{http_code}' "https://$DOMAIN_NAME/api/cbcap")
+          test "$unauth" = "403"
+
+      - name: Remove guarded preactivation ingress
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$PREFLIGHT_INGRESS_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-agentic-preflight-ingress.yml \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              ListenerArn="$HTTPS_LISTENER_ARN" \
+              TargetGroupArn="$TARGET_GROUP_ARN" \
+              DomainName="$DOMAIN_NAME" \
+              PreflightHeaderValue="$PREFLIGHT_HEADER" \
+              Enabled=false \
+            --no-fail-on-empty-changeset
+
+      - name: Prove deterministic institutional disable without public impact
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name "$RUNTIME_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-agentic-runtime.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              RuntimeImageUri="$IMMUTABLE_IMAGE_URI" \
+              DesiredCount=1 \
+              ActivationEnabled=false \
+            --no-fail-on-empty-changeset
+
+          disabled=$(curl --proto '=https' --tlsv1.2 --silent --show-error --request POST --header 'Content-Type: application/json' --data '{"countyFips":"36001"}' --output /tmp/disabled.json --write-out '%{http_code}' "https://$DOMAIN_NAME/api/cbcap")
+          test "$disabled" = "503"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location "$PUBLIC_EXPLORE_URL" >/tmp/explore.html
+          gateway=$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error --dump-header /tmp/gateway.headers --output /tmp/gateway.json --write-out '%{http_code}' "$EVIDENCE_ORIGIN/api/evidence/v1/gateway?geoid=36001")
+          test "$gateway" = "200"
+          grep -Eqi '^x-evidence-contract:[[:space:]]*sozorock\.evidence-gateway\.v1\r?$' /tmp/gateway.headers
+          jq -e '.package.geographies[0].county_fips == "36001"' /tmp/gateway.json >/dev/null
+
+          aws cloudformation deploy \
+            --stack-name "$RUNTIME_STACK" \
+            --template-file infrastructure/cloudformation/cbcap-agentic-runtime.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --role-arn "$CLOUDFORMATION_ROLE_ARN" \
+            --parameter-overrides \
+              RuntimeImageUri="$IMMUTABLE_IMAGE_URI" \
+              DesiredCount=1 \
+              ActivationEnabled=true \
+            --no-fail-on-empty-changeset
+          aws ecs wait services-stable --cluster "$CLUSTER_NAME" --services "$RUNTIME_SERVICE_NAME"
+          restored_auth=$(curl --proto '=https' --tlsv1.2 --silent --show-error --request POST --header 'Content-Type: application/json' --data '{"countyFips":"36001"}' --output /tmp/restored-auth.json --write-out '%{http_code}' "https://$DOMAIN_NAME/api/cbcap")
+          test "$restored_auth" = "403"
+          echo "ROLLBACK_PROOF_JSON={\"institutionalDisableVerified\":true,\"publicExploreUnaffected\":true,\"evidenceGatewayUnaffected\":true}" >> "$GITHUB_ENV"
+
+      - name: Run the coded production readiness gate in the target VPC
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployment=$(jq -cn \
+            --argjson oidc "$OIDC_IDENTITY_VERIFIED" \
+            --argjson account "$DEPLOYMENT_ACCOUNT_VERIFIED" \
+            --argjson main "$PROTECTED_MAIN_SHA_VERIFIED" \
+            --argjson immutable true \
+            --argjson scan true \
+            --argjson secrets true \
+            --argjson storage true \
+            --argjson network true \
+            --argjson migrations true \
+            --argjson runtime true \
+            --argjson tls true \
+            --argjson edge true \
+            --argjson headers true \
+            --argjson cors true \
+            --argjson unauth true \
+            '{oidcIdentityVerified:$oidc,deploymentAccountVerified:$account,protectedMainShaVerified:$main,immutableImageVerified:$immutable,vulnerabilityScanClean:$scan,managedSecretsVerified:$secrets,privateEvidenceStorageVerified:$storage,databaseNetworkIsolationVerified:$network,migrationsCompletedBeforeTraffic:$migrations,runtimeEnabledAfterMigrations:$runtime,tlsCertificateVerified:$tls,edgeProtectionVerified:$edge,securityHeadersVerified:$headers,corsBoundaryVerified:$cors,unauthenticatedProtectedRouteDenied:$unauth}')
+          proof=$(jq -cn \
+            --argjson identity "$IDENTITY_PROOF_JSON" \
+            --argjson deployment "$deployment" \
+            --argjson recovery "$RECOVERY_PROOF_JSON" \
+            --argjson observability "$OBSERVABILITY_PROOF_JSON" \
+            --argjson rollback "$ROLLBACK_PROOF_JSON" \
+            '{identity:$identity,deployment:$deployment,recovery:$recovery,observability:$observability,rollback:$rollback}')
+          jq -e '.identity.claimsVerified and .deployment.vulnerabilityScanClean and .recovery.restoreVerified and .observability.auditEventsReachable and .rollback.institutionalDisableVerified' <<<"$proof" >/dev/null
+
+          network="awsvpcConfiguration={subnets=[$PUBLIC_SUBNET_IDS],securityGroups=[$RUNTIME_SECURITY_GROUP],assignPublicIp=ENABLED}"
+          overrides=$(jq -cn --arg proof "$proof" '{containerOverrides:[{name:"preflight",environment:[{name:"CB_CAP_LIVE_PROOF_JSON",value:$proof}]}]}')
+          task_arn=$(aws ecs run-task \
+            --cluster "$CLUSTER_NAME" \
+            --task-definition "$PREFLIGHT_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "$network" \
+            --overrides "$overrides" \
+            --started-by "cbcap-preflight-${GITHUB_RUN_ID}" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+          test -n "$task_arn"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER_NAME" --tasks "$task_arn"
+          task=$(aws ecs describe-tasks --cluster "$CLUSTER_NAME" --tasks "$task_arn" --output json)
+          exit_code=$(jq -r '.tasks[0].containers[] | select(.name=="preflight") | .exitCode // -1' <<<"$task")
+          if [[ "$exit_code" != "0" ]]; then
+            jq -r '.tasks[0] | {stopCode,stoppedReason,containers:[.containers[]|{name,exitCode,reason}]}' <<<"$task"
+            exit 1
+          fi
+
+          ready=false
+          for attempt in $(seq 1 30); do
+            report=$(aws logs filter-log-events --log-group-name "$RUNTIME_LOG_GROUP" --filter-pattern 'eligible_for_controlled_activation' --limit 20 --output json)
+            if [[ "$(jq '.events | length' <<<"$report")" -gt 0 ]]; then ready=true; break; fi
+            sleep 5
+          done
+          test "$ready" = "true"
+          echo "$proof" > /tmp/production-proof.json
+          {
+            echo "## CB-CAP production activation"
+            echo "- Release: \`$RELEASE_SHA\`"
+            echo "- Image: \`$IMMUTABLE_IMAGE_URI\`"
+            echo "- Production readiness: \`eligible_for_controlled_activation\`"
+            echo "- Restore test: completed"
+            echo "- Rollback disable/re-enable: completed"
+            echo "- Public Explore and Evidence Gateway remained available during institutional disable"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Confirm protected main did not move
+        shell: bash
+        run: |
+          set -euo pipefail
+          origin_main=$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')
+          test "$origin_main" = "$RELEASE_SHA"
+
+      - name: Remove temporary Cognito preflight users
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          for username in "${PREFLIGHT_PLANNER:-}" "${PREFLIGHT_AGENT:-}" "${PREFLIGHT_OTHER:-}"; do
+            if [[ -n "$username" && -n "${USER_POOL_ID:-}" ]]; then
+              aws cognito-idp admin-delete-user --user-pool-id "$USER_POOL_ID" --username "$username" >/dev/null 2>&1 || true
+            fi
+          done
+
+      - name: Publish successful activation status
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload=$(jq -cn --arg state success --arg target_url "$RUN_URL" --arg description 'CB-CAP production activation and coded preflight passed' --arg context "$STATUS_CONTEXT" '{state:$state,target_url:$target_url,description:$description,context:$context}')
+          curl --fail-with-body --silent --show-error --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/statuses/$RELEASE_SHA" \
+            --data "$payload" >/dev/null
+
+      - name: Publish failed activation status
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_sha="${RELEASE_SHA:-$(git rev-parse HEAD)}"
+          payload=$(jq -cn --arg state failure --arg target_url "$RUN_URL" --arg description 'CB-CAP production activation failed closed' --arg context "$STATUS_CONTEXT" '{state:$state,target_url:$target_url,description:$description,context:$context}')
+          curl --fail-with-body --silent --show-error --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/statuses/$release_sha" \
+            --data "$payload" >/dev/null
