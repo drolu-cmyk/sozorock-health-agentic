@@ -51,6 +51,11 @@ class SqlInstitutionalMemory {
     return mapRow(result.rows[0]);
   }
 
+  async get(recordId) {
+    const result = await this.query('SELECT * FROM cbcap_institutional_memory WHERE tenant_id=$1 AND id=$2::uuid', [this.tenantId, requiredString(recordId,'recordId',128)]);
+    return result?.rows?.length ? mapRow(result.rows[0]) : null;
+  }
+
   async review(proposalId, decision, actor, options = {}) {
     if (!['approve','reject'].includes(decision)) throw new Error('review decision must be approve or reject.');
     const now = this.clock();
