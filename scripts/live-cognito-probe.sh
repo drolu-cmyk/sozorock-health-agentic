@@ -83,6 +83,35 @@ run_id=$(jq -r '.runId // ""' /tmp/cbcap-planner-plan.json)
 test -n "$run_id"
 test "$(jq -r '.status // ""' /tmp/cbcap-planner-plan.json)" = "awaiting_human_review"
 
+missing_upload_id="preflight-missing-${probe_id}"
+private_evidence_payload=$(jq -cn \
+  --arg uploadId "$missing_upload_id" \
+  --arg runId "$run_id" \
+  '{
+    uploadId:$uploadId,
+    geographyIds:["county:36001"],
+    submittedInRunId:$runId,
+    documentType:"preflight_probe",
+    sourceLabel:"Production private evidence composition probe",
+    sensitivity:"internal",
+    rightsBasis:"organization_owned",
+    usageRightsConfirmed:true,
+    aggregationLevel:"organizational",
+    containsPhi:false,
+    containsIndividualHealthRecords:false,
+    containsCredentialsOrSecrets:false,
+    retentionUntil:"2099-12-31"
+  }')
+private_evidence_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+  --output /tmp/cbcap-private-evidence-probe.json --write-out '%{http_code}' \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $planner_token" \
+  --data "$private_evidence_payload" \
+  "https://$API_DOMAIN/api/cbcap/private-evidence/submissions")
+test "$private_evidence_status" = "404"
+test "$(jq -r '.error // ""' /tmp/cbcap-private-evidence-probe.json)" = "Tenant-private evidence upload was not found."
+
 agent_plan_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
   --output /tmp/cbcap-agent-plan.json --write-out '%{http_code}' \
   --request POST \
@@ -139,6 +168,7 @@ jq -cn \
     livePlanAndReviewVerified:true,
     unauthorizedAgentDenied:true,
     productionAppClientVerified:true,
+    privateEvidenceMetadataLookupVerified:true,
     crossTenantReviewStatus:$crossTenantStatus,
     appClientId:$clientId,
     runId:$runId
