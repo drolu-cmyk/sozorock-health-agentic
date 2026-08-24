@@ -48,7 +48,9 @@ FOR EACH ROW
 EXECUTE FUNCTION deny_agent_run_event_mutation();
 
 ALTER TABLE agent_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_runs FORCE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_run_events FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS agent_runs_tenant_scope ON agent_runs;
 CREATE POLICY agent_runs_tenant_scope ON agent_runs
@@ -61,9 +63,9 @@ CREATE POLICY agent_run_events_tenant_scope ON agent_run_events
   WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), ''));
 
 COMMENT ON TABLE agent_runs IS
-  'Tenant-scoped CB-CAP and agent workflow run registry. Application connections must set app.tenant_id before access.';
+  'Tenant-scoped CB-CAP and agent workflow run registry. Application connections must set app.tenant_id before access. Production application roles must not own this table or hold BYPASSRLS.';
 
 COMMENT ON TABLE agent_run_events IS
-  'Append-only workflow event and checkpoint log. Updates and deletes are rejected by trigger.';
+  'Append-only workflow event and checkpoint log. Updates and deletes are rejected by trigger. Production application roles must not own this table or hold BYPASSRLS.';
 
 COMMIT;
