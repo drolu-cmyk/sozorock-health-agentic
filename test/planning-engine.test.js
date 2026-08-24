@@ -157,11 +157,18 @@ test('governed planning uses reviewed Evidence Gateway barriers without syntheti
   assert.equal(result.planning.fundingIntelligence.status, 'not_evaluated');
   assert.equal(result.draft.status, 'draft_requires_human_review');
 
-  const serialized = JSON.stringify(result);
+  const derived = JSON.stringify({
+    barriers: result.barriers,
+    planning: result.planning,
+    draft: result.draft,
+    scenario: result.scenario,
+    output: result.output,
+  });
   for (const prohibited of ['heatPoints', 'planningAttention', 'recommendedHubMix', 'projectedReach', 'barrierReduction', 'costIndex']) {
-    assert.equal(serialized.includes(prohibited), false, `${prohibited} must not be produced`);
+    assert.equal(derived.includes(prohibited), false, `${prohibited} must not be produced`);
   }
-  assert.equal(serialized.includes('UNREVIEWED:Crude'), false, 'unreviewed metrics must not become planning barriers');
+  assert.equal(derived.includes('UNREVIEWED:Crude'), false, 'unreviewed metrics must not become derived planning evidence');
+  assert.equal(JSON.stringify(result.evidence).includes('UNREVIEWED:Crude'), true, 'raw governed evidence remains available for audit');
 });
 
 test('provisional barrier evidence remains no verified data', async () => {
