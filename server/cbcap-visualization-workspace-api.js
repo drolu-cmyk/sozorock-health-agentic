@@ -3,6 +3,7 @@ const {
   MAX_COUNTIES,
   SUPPORTED_QUESTIONS,
 } = require('../packages/cbcap/visualization-workspace');
+const { renderVisualizationWorkspace } = require('../packages/cbcap/workspace-renderers');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
 
 const ALLOWED_FIELDS = new Set([
@@ -83,6 +84,7 @@ function createCBCAPVisualizationWorkspaceApi(options = {}) {
           selectedCountyFips: request.selectedCountyFips,
           evidencePackages,
         });
+        workspace.renderPackage = renderVisualizationWorkspace(workspace);
         auditSink({
           action: 'cbcap_visualization_workspace_created',
           tenantId: actor.tenantId,
@@ -91,6 +93,7 @@ function createCBCAPVisualizationWorkspaceApi(options = {}) {
           countyCount: workspace.countyFips.length,
           sourceMeasureIds: workspace.sourceMeasureIds,
           artifactFamily: workspace.plan.artifactFamily,
+          renderer: workspace.renderPackage.renderer,
           claimId: workspace.claimId,
         });
         return { statusCode: 200, body: workspace };
