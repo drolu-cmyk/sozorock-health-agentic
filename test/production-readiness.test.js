@@ -34,7 +34,7 @@ function inspectionPool(overrides = {}) {
       calls.push(sql);
       if (/FROM pg_roles/i.test(sql)) return { rows: [{ role_name: 'cbcap_runtime', is_superuser: false, bypass_rls: false }] };
       if (/FROM pg_stat_ssl/i.test(sql)) return { rows: [{ ssl: true }] };
-      if (/FROM pg_class c[\s\S]*has_table_privilege/i.test(sql)) {
+      if (/FROM pg_class c/i.test(sql) && /has_table_privilege/i.test(sql)) {
         const rows = PROTECTED_TABLES.map(privilegeRow);
         if (overrides.table) Object.assign(rows.find((row) => row.table_name === overrides.table.name), overrides.table.patch);
         return { rows };
