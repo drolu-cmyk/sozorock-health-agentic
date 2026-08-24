@@ -12,7 +12,6 @@ window.SozoRockCBCAP = (function () {
     var payload = { location: String(location || '').trim() };
     if (!payload.location) throw new Error('A county or geography is required.');
     if (request.assumptions) payload.assumptions = request.assumptions;
-    if (request.approval) payload.approval = request.approval;
 
     var response = await fetch('/api/cbcap', {
       method: 'POST',
