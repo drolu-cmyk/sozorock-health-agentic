@@ -82,6 +82,16 @@ function createInstitutionalCBCAPGateway(options = {}) {
       return result;
     },
 
+    async handleWorkforce(input, context = {}) {
+      const auth = await actorFor(context.request, 'cbcap.workforce.view');
+      if (auth.error) return auth.error;
+      const selected = await runtime(auth.actor);
+      if (!selected?.workforceApi || typeof selected.workforceApi.handle !== 'function') return unavailable();
+      const result = await selected.workforceApi.handle(input || {}, { ...context, workspaceActor: auth.actor });
+      auditSink({ action: 'cbcap_workforce_request_completed', tenantId: auth.actor.tenantId, principalId: auth.actor.principalId, role: auth.actor.role, countyFips: result.body?.countyFips || null, evidenceState: result.body?.evidenceState || null, statusCode: result.statusCode });
+      return result;
+    },
+
     async handleMonitoring(input, context = {}) {
       const auth = await actorFor(context.request, 'cbcap.monitoring.evaluate');
       if (auth.error) return auth.error;
