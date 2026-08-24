@@ -26,25 +26,29 @@ function handlers(calls) {
       return { status: 'scenario_output', assumptions };
     },
     draftBrief: async () => ({ title: 'Draft county planning brief' }),
-    publish: async () => ({ status: 'published' }),
+    publish: async () => {
+      calls.publish += 1;
+      return { status: 'published' };
+    },
   };
 }
 
 test('CB-CAP graph stops at human review and does not invent a scenario without user assumptions', async () => {
-  const calls = { scenario: 0 };
+  const calls = { scenario: 0, publish: 0 };
   const graph = createCBCAPGraph({ handlers: handlers(calls) });
   const result = await graph.run({ type: 'county_plan', location: '36001' });
 
   assert.equal(result.status, 'awaiting_human_review');
   assert.equal(result.error.code, 'human_review_required');
   assert.equal(calls.scenario, 0);
+  assert.equal(calls.publish, 0);
   assert.equal(result.scenario, undefined);
   assert.equal(result.evidence.releaseId, 'release-2026-08-23');
   assert.ok(result.trace.some((entry) => entry.nodeId === 'draft_brief'));
 });
 
 test('CB-CAP graph runs scenarios only from explicit user assumptions', async () => {
-  const calls = { scenario: 0 };
+  const calls = { scenario: 0, publish: 0 };
   const graph = createCBCAPGraph({ handlers: handlers(calls) });
   const result = await graph.run({
     type: 'county_plan',
@@ -57,7 +61,22 @@ test('CB-CAP graph runs scenarios only from explicit user assumptions', async ()
 
   assert.equal(result.status, 'awaiting_human_review');
   assert.equal(calls.scenario, 1);
+  assert.equal(calls.publish, 0);
   assert.equal(result.scenario.status, 'scenario_output');
+});
+
+test('CB-CAP graph publishes only with an explicit approval record', async () => {
+  const calls = { scenario: 0, publish: 0 };
+  const graph = createCBCAPGraph({ handlers: handlers(calls) });
+  const result = await graph.run(
+    { type: 'county_plan', location: '36001' },
+    { approval: { status: 'approved', by: 'reviewer-1', scope: 'county_plan' } },
+  );
+
+  assert.equal(result.status, 'approved_output');
+  assert.equal(calls.publish, 1);
+  assert.equal(result.output.status, 'published');
+  assert.ok(result.trace.some((entry) => entry.nodeId === 'publish'));
 });
 
 test('publishing is blocked by the harness without explicit human approval', () => {
