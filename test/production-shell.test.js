@@ -53,9 +53,9 @@ test('deployment script binds the live probe to the stack client and fails close
   const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
   assert.match(script, /USER_POOL_CLIENT_ID=\$\(stack_output UserPoolClientId\)/);
   assert.match(script, /USER_POOL_CLIENT_ID="\$USER_POOL_CLIENT_ID" API_DOMAIN/);
+  assert.match(script, /bash scripts\/live-cognito-probe\.sh/);
   assert.match(script, /DesiredCount=0 ActivationEnabled=false/);
   assert.match(script, /productionAppClientVerified/);
-  assert.match(script, /visualizationWorkspaceVerified/);
 });
 
 test('production workflow deploys only the exact triggering commit', () => {
