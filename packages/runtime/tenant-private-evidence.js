@@ -33,6 +33,12 @@ function dateOnly(value, label, allowNull = true) {
   return normalized;
 }
 
+function isoInstant(value, label) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) throw new Error(`${label} must be a valid timestamp.`);
+  return parsed.toISOString();
+}
+
 function tenantEvidencePartition(tenantId) {
   return crypto.createHash('sha256').update(requiredString(tenantId, 'tenantId', 200)).digest('hex').slice(0, 32);
 }
@@ -102,7 +108,7 @@ function normalizeSubmission(input, actorInput, storedObjectInput, now = new Dat
     if (typeof input[flag] !== 'boolean') throw new Error(`${flag} must be boolean.`);
   }
   const retentionUntil = dateOnly(input.retentionUntil, 'retentionUntil');
-  const submittedAt = new Date(now).toISOString();
+  const submittedAt = isoInstant(now, 'submission time');
   if (retentionUntil && retentionUntil < submittedAt.slice(0, 10)) throw new Error('retentionUntil is already expired.');
 
   const reasonCodes = [];
@@ -180,7 +186,7 @@ function normalizeReview(document, input, actorInput, now = new Date().toISOStri
   }
   const reasonCodes = [...new Set(input.reasonCodes.map((item, index) => requiredString(item, `reasonCodes[${index}]`, 200)))].sort();
   const rationale = requiredString(input.rationale, 'rationale', 4000);
-  const reviewedAt = new Date(now).toISOString();
+  const reviewedAt = isoInstant(now, 'review time');
   if (decision === 'accepted' && document.admissionState !== 'eligible_for_review') {
     throw new Error('Only eligible tenant evidence can be accepted.');
   }
@@ -293,9 +299,13 @@ class InMemoryTenantPrivateEvidenceStore {
     if (review.tenantId !== this.tenantId) throw new Error('Tenant evidence review tenant mismatch.');
     const existingDocument = this.documents.get(review.documentId);
     if (!existingDocument) throw new Error('Tenant evidence document was not found.');
-    if (this.reviews.some((item) => item.id === review.id)) return structuredClone(this.reviews.find((item) => item.id === review.id));
+    const sameId = this.reviews.find((item) => item.id === review.id);
+    if (sameId) return structuredClone(sameId);
     if (this.reviews.some((item) => item.documentId === review.documentId && item.reviewedAt === review.reviewedAt)) {
       throw new Error('Tenant evidence review timestamp conflict.');
+    }
+    if (review.decision === 'accepted' && this.reviews.some((item) => item.documentId === review.documentId && item.decision === 'accepted')) {
+      throw new Error('Tenant evidence document already has an accepted review.');
     }
     this.reviews.push(structuredClone(review));
     return structuredClone(review);
