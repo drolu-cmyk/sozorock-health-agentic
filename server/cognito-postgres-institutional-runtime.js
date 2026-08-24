@@ -44,6 +44,7 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
       evidenceClientForActor: options.evidenceClientForActor,
       evidenceOrigin: options.evidenceOrigin,
       fetchImpl: options.evidenceFetchImpl,
+      scenarioRegistrationsForActor: options.scenarioRegistrationsForActor,
       scenarioHandlerForActor: options.scenarioHandlerForActor,
       publishHandlerForActor: options.publishHandlerForActor,
       fundingOpportunityForActor: options.fundingOpportunityForActor,
