@@ -1,18 +1,17 @@
 openapi: 3.1.0
 info:
   title: SozoRock Health Agentic API
-  version: 0.7.0
+  version: 0.8.0
   description: |
-    Non-clinical place intelligence and governed CB-CAP execution.
-    CB-CAP resolves one county, consumes reviewed Evidence Gateway packages,
-    checkpoints the resulting graph state, and stops generated planning work
-    for human review. It does not diagnose, determine funding, rank people,
+    Non-clinical place intelligence and identity-gated CB-CAP execution.
+    Institutional CB-CAP uses authenticated workspace identity, authoritative
+    tenant assignment, governed Evidence Gateway packages, resumable run state,
+    and human review. It does not diagnose, determine funding, rank people,
     or replace county judgment.
 
-    Version 0.7 introduces resumable run-state contracts. The authenticated
-    review-continuation route remains disabled and is not part of this public
-    contract unless an authorized review service and tenant-scoped durable
-    persistence are explicitly installed.
+    The institutional endpoints fail closed unless an authenticated gateway is
+    configured. An unauthenticated CB-CAP mode exists only as an explicit local
+    development override and is not part of this production API contract.
   license:
     name: MIT
 servers:
@@ -43,15 +42,19 @@ paths:
                   time:
                     type: string
                     format: date-time
-                  legacySessionsEnabled:
+                  institutionalAccessEnabled:
                     type: boolean
                   reviewContinuationEnabled:
+                    type: boolean
+                  unauthenticatedDevCBCAPEnabled:
+                    type: boolean
+                  legacySessionsEnabled:
                     type: boolean
   /api/place:
     post:
       summary: Run the legacy place-intelligence entry point
       operationId: postPlace
-      description: This endpoint remains during migration. Institutional CB-CAP planning uses /api/cbcap.
+      description: This endpoint remains during migration. Institutional CB-CAP planning uses the authenticated /api/cbcap route.
       requestBody:
         required: true
         content:
@@ -80,17 +83,21 @@ paths:
           description: Unresolved or policy-blocked request
   /api/cbcap:
     post:
-      summary: Start a governed CB-CAP county planning run
+      summary: Start an authenticated CB-CAP county planning run
       operationId: postCbcap
+      security:
+        - bearerAuth: []
       description: |
-        Resolves the request to exactly one county FIPS before the planning engine
-        may access evidence. Multi-county ZIP inputs and ambiguous county names stop
-        for explicit selection. The planning engine uses the reviewed Evidence Gateway,
-        checkpoints the run, and produces a source-backed draft that requires human review.
+        Resolves the authenticated workspace actor and tenant before selecting a
+        tenant-scoped runtime. The request is then resolved to exactly one county
+        FIPS before evidence access. Multi-county ZIP inputs and ambiguous county
+        names stop for explicit selection. The planning engine uses the reviewed
+        Evidence Gateway, checkpoints the run, and produces a source-backed draft
+        that requires human review.
 
-        Approval is intentionally not accepted on this initial request. Approval may
-        later continue the exact saved run and exact Evidence Gateway release only when
-        an authenticated tenant-scoped review service is explicitly installed.
+        Foundation reviewers, county planners, and community partners with owner
+        or contributor access may start planning work. Viewers and agent actors
+        cannot start institutional plans.
       requestBody:
         required: true
         content:
@@ -105,7 +112,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/CbcapRun"
         "400":
-          description: Invalid request or assumptions, including approval submitted on the initial request
+          description: Invalid request or assumptions
+        "403":
+          description: Authentication or workspace authorization failed
         "409":
           description: Geography requires explicit county selection
           content:
@@ -116,7 +125,64 @@ paths:
           description: Governed runtime blocked the request
         "502":
           description: Governed evidence source unavailable
+        "503":
+          description: Tenant runtime is not configured
+  /api/cbcap/runs/{runId}/review:
+    post:
+      summary: Continue an authenticated saved CB-CAP review run
+      operationId: reviewCbcapRun
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      description: |
+        Continues the exact saved review checkpoint. Only foundation reviewers
+        and county planners with owner or contributor access may approve. The
+        client supplies only the decision. Reviewer identity and tenant come from
+        the authenticated workspace session; run identity and Evidence Gateway
+        release identity come from the saved checkpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision]
+              properties:
+                decision:
+                  const: approve
+      responses:
+        "200":
+          description: Saved run continued to approved output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CbcapRun"
+        "400":
+          description: Invalid review request
+        "403":
+          description: Authentication, role, access, or tenant authorization failed
+        "404":
+          description: Saved run not found in the authenticated tenant
+        "409":
+          description: Run is not resumable or continuation failed
+        "422":
+          description: Continued run did not reach approved output
+        "503":
+          description: Tenant review runtime is not configured
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Cognito access token
   schemas:
     UserAssumption:
       type: object
@@ -176,9 +242,11 @@ components:
           const: cbcap_county_plan
         runId:
           type: string
+        tenantId:
+          type: string
         status:
           type: string
-          enum: [awaiting_human_review, needs_place_selection, evidence_unavailable, blocked, error]
+          enum: [awaiting_human_review, approved_output, needs_place_selection, evidence_unavailable, blocked, error]
         placeResolution:
           $ref: "#/components/schemas/PlaceResolution"
         evidence:
@@ -200,4 +268,8 @@ components:
         draft:
           type: object
           description: Draft for human review.
+          additionalProperties: true
+        output:
+          type: object
+          description: Approved output generated only through exact-run authenticated review continuation.
           additionalProperties: true
