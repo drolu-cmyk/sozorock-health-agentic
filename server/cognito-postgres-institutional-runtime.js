@@ -10,26 +10,29 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
     timeoutMs: options.cognitoTimeoutMs,
   });
 
-  const memoryForActor = options.memoryForActor || createPostgresRunMemoryFactory({
-    pool: options.pool,
-    statementTimeoutMs: options.statementTimeoutMs,
-    clock: options.clock,
-    runsTable: options.runsTable,
-    eventsTable: options.eventsTable,
-  });
+  let runtimeForActor = options.runtimeForActor;
+  if (!runtimeForActor) {
+    const memoryForActor = options.memoryForActor || createPostgresRunMemoryFactory({
+      pool: options.pool,
+      statementTimeoutMs: options.statementTimeoutMs,
+      clock: options.clock,
+      runsTable: options.runsTable,
+      eventsTable: options.eventsTable,
+    });
 
-  const runtimeForActor = options.runtimeForActor || createTenantCBCAPRuntimeFactory({
-    memoryForActor,
-    evidenceClientForActor: options.evidenceClientForActor,
-    evidenceOrigin: options.evidenceOrigin,
-    fetchImpl: options.evidenceFetchImpl,
-    scenarioHandlerForActor: options.scenarioHandlerForActor,
-    publishHandlerForActor: options.publishHandlerForActor,
-    auditSink: options.auditSink,
-    harness: options.harness,
-    killSwitch: options.killSwitch,
-    clock: options.clock,
-  });
+    runtimeForActor = createTenantCBCAPRuntimeFactory({
+      memoryForActor,
+      evidenceClientForActor: options.evidenceClientForActor,
+      evidenceOrigin: options.evidenceOrigin,
+      fetchImpl: options.evidenceFetchImpl,
+      scenarioHandlerForActor: options.scenarioHandlerForActor,
+      publishHandlerForActor: options.publishHandlerForActor,
+      auditSink: options.auditSink,
+      harness: options.harness,
+      killSwitch: options.killSwitch,
+      clock: options.clock,
+    });
+  }
 
   return createInstitutionalCBCAPGateway({
     identityResolver,
