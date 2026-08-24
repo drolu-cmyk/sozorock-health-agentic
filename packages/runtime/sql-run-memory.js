@@ -36,6 +36,12 @@ class SqlRunMemory {
   }
 
   async createRun(metadata = {}, runId = crypto.randomUUID()) {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      throw new Error('Run metadata must be an object.');
+    }
+    if (metadata.tenantId !== undefined && requiredString(metadata.tenantId, 'metadata.tenantId') !== this.tenantId) {
+      throw new Error('Run metadata tenantId does not match the SQL memory tenant scope.');
+    }
     const now = this.clock();
     const product = requiredString(metadata.product || 'cbcap', 'metadata.product');
     const taskType = requiredString(metadata.taskType || 'decision_workflow', 'metadata.taskType');
