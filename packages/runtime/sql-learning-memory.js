@@ -14,6 +14,11 @@ function requiredString(value, label, max = 2000) {
   return normalized;
 }
 
+function objectInput(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object.`);
+  return value;
+}
+
 function stringList(value, label, { min = 0, max = 200 } = {}) {
   if (!Array.isArray(value) || value.length < min || value.length > max) {
     throw new Error(`${label} must contain between ${min} and ${max} items.`);
@@ -135,56 +140,60 @@ class SqlLearningMemory {
   }
 
   async getTrajectory(eventId) {
-    const result = await this.query('SELECT * FROM cbcap_learning_trajectory WHERE tenant_id=$1 AND id=$2::uuid', [this.tenantId,requiredString(eventId,'eventId',128)]);
+    const result = await this.query('SELECT * FROM cbcap_learning_trajectory WHERE tenant_id=$1 AND id::text=$2', [this.tenantId,requiredString(eventId,'eventId',128)]);
     return result?.rows?.length ? mapTrajectory(result.rows[0]) : null;
   }
 
   async evaluate(eventId, input, evaluator = {}) {
+    const body = objectInput(input, 'trajectory evaluation');
+    const evaluatorInput = objectInput(evaluator, 'evaluator');
     const id = crypto.randomUUID();
-    const label = requiredString(input?.label, 'label', 80);
+    const label = requiredString(body.label, 'label', 80);
     if (!EVALUATION_LABELS.includes(label)) throw new Error('evaluation label is unsupported.');
-    const reasonCodes = stringList(input.reasonCodes, 'reasonCodes', { min: 1, max: 50 });
-    const evaluatorType = requiredString(evaluator.type, 'evaluator.type', 40);
+    const reasonCodes = stringList(body.reasonCodes, 'reasonCodes', { min: 1, max: 50 });
+    const evaluatorType = requiredString(evaluatorInput.type, 'evaluator.type', 40);
     if (!['human','deterministic_eval','model_eval'].includes(evaluatorType)) throw new Error('evaluator.type is unsupported.');
     let evaluatorId;
     if (evaluatorType === 'human') {
-      const actor = sameTenant(evaluator.actor, this.tenantId);
+      const actor = sameTenant(evaluatorInput.actor, this.tenantId);
       if (actor.actorType !== 'human') throw new Error('Human evaluation requires a human workspace actor.');
       evaluatorId = actor.principalId;
     } else {
-      evaluatorId = requiredString(evaluator.id, 'evaluator.id', 240);
+      evaluatorId = requiredString(evaluatorInput.id, 'evaluator.id', 240);
     }
     const result = await this.query(`INSERT INTO cbcap_learning_evaluations
       (id,tenant_id,trajectory_event_id,label,reason_codes,evaluator_id,evaluator_type,evaluator_version,created_at)
       SELECT $1::uuid,$2,id,$4,$5::jsonb,$6,$7,$8,$9::timestamptz
-        FROM cbcap_learning_trajectory WHERE tenant_id=$2 AND id=$3::uuid
-      RETURNING *`, [id,this.tenantId,requiredString(eventId,'eventId',128),label,JSON.stringify(reasonCodes),evaluatorId,evaluatorType,requiredString(evaluator.version,'evaluator.version',120),this.clock()]);
+        FROM cbcap_learning_trajectory WHERE tenant_id=$2 AND id::text=$3
+      RETURNING *`, [id,this.tenantId,requiredString(eventId,'eventId',128),label,JSON.stringify(reasonCodes),evaluatorId,evaluatorType,requiredString(evaluatorInput.version,'evaluator.version',120),this.clock()]);
     return result?.rows?.length ? mapEvaluation(result.rows[0]) : null;
   }
 
   async correct(eventId, input, actorInput) {
+    const body = objectInput(input, 'trajectory correction');
     const actor = correctionActor(actorInput, this.tenantId);
-    const correctionType = requiredString(input?.correctionType, 'correctionType', 80);
+    const correctionType = requiredString(body.correctionType, 'correctionType', 80);
     if (!CORRECTION_TYPES.includes(correctionType)) throw new Error('correctionType is unsupported.');
     const id = crypto.randomUUID();
     const result = await this.query(`INSERT INTO cbcap_learning_corrections
       (id,tenant_id,trajectory_event_id,corrected_entity_id,correction_type,reason_codes,correction_summary,corrected_by,corrected_at)
       SELECT $1::uuid,$2,id,$4,$5,$6::jsonb,$7,$8,$9::timestamptz
-        FROM cbcap_learning_trajectory WHERE tenant_id=$2 AND id=$3::uuid
-      RETURNING *`, [id,this.tenantId,requiredString(eventId,'eventId',128),requiredString(input.correctedEntityId,'correctedEntityId',240),
-      correctionType,JSON.stringify(stringList(input.reasonCodes,'reasonCodes',{min:1,max:50})),requiredString(input.correctionSummary,'correctionSummary',5000),actor.principalId,this.clock()]);
+        FROM cbcap_learning_trajectory WHERE tenant_id=$2 AND id::text=$3
+      RETURNING *`, [id,this.tenantId,requiredString(eventId,'eventId',128),requiredString(body.correctedEntityId,'correctedEntityId',240),
+      correctionType,JSON.stringify(stringList(body.reasonCodes,'reasonCodes',{min:1,max:50})),requiredString(body.correctionSummary,'correctionSummary',5000),actor.principalId,this.clock()]);
     return result?.rows?.length ? mapCorrection(result.rows[0]) : null;
   }
 
   async proposeCandidate(input, actorInput) {
+    const body = objectInput(input, 'learning candidate');
     const actor = sameTenant(actorInput, this.tenantId);
-    const targetType = requiredString(input?.targetType, 'targetType', 80);
+    const targetType = requiredString(body.targetType, 'targetType', 80);
     if (!CANDIDATE_TARGETS.includes(targetType)) throw new Error('learning candidate targetType is unsupported.');
-    if (Object.prototype.hasOwnProperty.call(input,'executableContent') || Object.prototype.hasOwnProperty.call(input,'patch')) {
+    if (Object.prototype.hasOwnProperty.call(body,'executableContent') || Object.prototype.hasOwnProperty.call(body,'patch')) {
       throw new Error('learning candidates store reviewed references and rationale, not executable content or patches.');
     }
-    const evaluationIds = stringList(input.evaluationIds || [], 'evaluationIds', { max: 200 });
-    const correctionIds = stringList(input.correctionIds || [], 'correctionIds', { max: 200 });
+    const evaluationIds = stringList(body.evaluationIds || [], 'evaluationIds', { max: 200 });
+    const correctionIds = stringList(body.correctionIds || [], 'correctionIds', { max: 200 });
     if (!evaluationIds.length && !correctionIds.length) throw new Error('learning candidate requires at least one evaluation or correction record.');
     const id = crypto.randomUUID();
     const result = await this.query(`INSERT INTO cbcap_learning_candidates
@@ -192,16 +201,16 @@ class SqlLearningMemory {
        proposed_by,proposed_by_actor_type,proposed_at,automatic_application_allowed)
       SELECT $1::uuid,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,'proposed',$11,$12,$13::timestamptz,false
        WHERE NOT EXISTS (
-         SELECT 1 FROM jsonb_array_elements_text($8::jsonb) e
-          WHERE NOT EXISTS (SELECT 1 FROM cbcap_learning_evaluations x WHERE x.tenant_id=$2 AND x.id=e::uuid)
+         SELECT 1 FROM jsonb_array_elements_text($8::jsonb) e(value)
+          WHERE NOT EXISTS (SELECT 1 FROM cbcap_learning_evaluations x WHERE x.tenant_id=$2 AND x.id::text=e.value)
        )
        AND NOT EXISTS (
-         SELECT 1 FROM jsonb_array_elements_text($9::jsonb) c
-          WHERE NOT EXISTS (SELECT 1 FROM cbcap_learning_corrections x WHERE x.tenant_id=$2 AND x.id=c::uuid)
+         SELECT 1 FROM jsonb_array_elements_text($9::jsonb) c(value)
+          WHERE NOT EXISTS (SELECT 1 FROM cbcap_learning_corrections x WHERE x.tenant_id=$2 AND x.id::text=c.value)
        )
-      RETURNING *`, [id,this.tenantId,targetType,requiredString(input.targetId,'targetId',240),requiredString(input.summary,'summary',2000),
-      requiredString(input.rationale,'rationale',5000),requiredString(input.artifactRef,'artifactRef',1000),JSON.stringify(evaluationIds),JSON.stringify(correctionIds),
-      JSON.stringify(stringList(input.evidenceEntityIds || [],'evidenceEntityIds',{max:200})),actor.principalId,actor.actorType,this.clock()]);
+      RETURNING *`, [id,this.tenantId,targetType,requiredString(body.targetId,'targetId',240),requiredString(body.summary,'summary',2000),
+      requiredString(body.rationale,'rationale',5000),requiredString(body.artifactRef,'artifactRef',1000),JSON.stringify(evaluationIds),JSON.stringify(correctionIds),
+      JSON.stringify(stringList(body.evidenceEntityIds || [],'evidenceEntityIds',{max:200})),actor.principalId,actor.actorType,this.clock()]);
     if (!result?.rows?.length) throw new Error('learning candidate references evaluation or correction records outside the active tenant or unknown to the store.');
     return mapCandidate(result.rows[0]);
   }
@@ -215,7 +224,7 @@ class SqlLearningMemory {
         (id,tenant_id,candidate_id,decision,status,rationale,reviewed_by,reviewed_at,automatic_application_allowed,application_state)
         SELECT $1::uuid,$2,id,$4,CASE WHEN $4='approve' THEN 'approved_candidate' ELSE 'rejected_candidate' END,
                $5,$6,$7::timestamptz,false,'not_applied'
-          FROM cbcap_learning_candidates WHERE tenant_id=$2 AND id=$3::uuid
+          FROM cbcap_learning_candidates WHERE tenant_id=$2 AND id::text=$3
         RETURNING *`, [id,this.tenantId,requiredString(candidateId,'candidateId',128),decision,requiredString(options.rationale,'review rationale',5000),actor.principalId,this.clock()]);
       return result?.rows?.length ? mapCandidateReview(result.rows[0]) : null;
     } catch (error) {
@@ -229,8 +238,10 @@ class SqlLearningMemory {
   }
 
   async queryMemory(options = {}) {
-    const runId = options.runId ? requiredString(options.runId,'runId',240) : null;
-    const stage = options.stage ? requiredString(options.stage,'stage',80) : null;
+    const queryInput = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+    const runId = queryInput.runId ? requiredString(queryInput.runId,'runId',240) : null;
+    const stage = queryInput.stage ? requiredString(queryInput.stage,'stage',80) : null;
+    const candidateStatus = queryInput.candidateStatus ? requiredString(queryInput.candidateStatus,'candidateStatus',80) : null;
     const [trajectoryResult,evaluationResult,correctionResult,candidateResult,reviewResult] = await Promise.all([
       this.query(`SELECT * FROM cbcap_learning_trajectory WHERE tenant_id=$1 AND ($2::text IS NULL OR run_id=$2) AND ($3::text IS NULL OR stage=$3) ORDER BY occurred_at,id`,[this.tenantId,runId,stage]),
       this.query('SELECT * FROM cbcap_learning_evaluations WHERE tenant_id=$1 ORDER BY created_at,id',[this.tenantId]),
@@ -244,7 +255,7 @@ class SqlLearningMemory {
     const candidates = (candidateResult.rows || []).map(mapCandidate).map((candidate) => ({
       ...candidate,
       review: reviews.find((review) => review.candidateId === candidate.id) || null,
-    }));
+    })).filter((candidate) => !candidateStatus || (candidate.review?.status || candidate.status) === candidateStatus);
     return {
       tenantId: this.tenantId,
       trajectory,
