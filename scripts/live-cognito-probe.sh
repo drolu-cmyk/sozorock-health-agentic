@@ -22,6 +22,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+legacy_root_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+  --output /tmp/cbcap-legacy-root.txt --write-out '%{http_code}' \
+  "https://$API_DOMAIN/")
+test "$legacy_root_status" = "404"
+
+legacy_place_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+  --output /tmp/cbcap-legacy-place.json --write-out '%{http_code}' \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{"location":"36001"}' \
+  "https://$API_DOMAIN/api/place")
+test "$legacy_place_status" = "404"
+
+legacy_health_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+  --output /tmp/cbcap-legacy-health.json --write-out '%{http_code}' \
+  "https://$API_DOMAIN/api/health")
+test "$legacy_health_status" = "404"
+
 create_user() {
   local username="$1"
   local password="$2"
@@ -169,6 +187,10 @@ jq -cn \
     unauthorizedAgentDenied:true,
     productionAppClientVerified:true,
     privateEvidenceMetadataLookupVerified:true,
+    institutionalApiBoundaryVerified:true,
+    legacyFrontendDenied:true,
+    legacyPlaceApiDenied:true,
+    legacyHealthApiDenied:true,
     crossTenantReviewStatus:$crossTenantStatus,
     appClientId:$clientId,
     runId:$runId
