@@ -15,6 +15,7 @@ The control plane now includes:
 - a CHA/CHIP evidence workbench using reviewed current-plan claims and page/section locators;
 - feature-gated Funding Intelligence that matches reviewed requirements to governed institutional evidence without determining eligibility or award probability;
 - visualization intelligence that chooses evidence-preserving maps, charts, matrices, tables, and fallbacks from data-shape and semantic metadata;
+- governed deterministic scenario intelligence with explicit user ranges, reviewed model registrations, verified baselines, source lineage, horizon controls, and no prediction claim;
 - tenant-scoped workspace collaboration state with optimistic concurrency and immutable change events;
 - append-only institutional memory with explicit proposal, human review, evidence revalidation, expiry, and supersession;
 - no public audit endpoint and no legacy unauthenticated sessions by default.
@@ -96,6 +97,16 @@ The primary routes include:
 
 Every specification includes a simpler fallback, mobile behavior, accessibility, source/date disclosures, export expectations, and anti-distortion guardrails. See `docs/VISUALIZATION_INTELLIGENCE.md`.
 
+## Scenario Intelligence
+
+Governed scenarios use `cbcap.scenario.v1`. A scenario runs only when an authorized planning request supplies explicit user assumptions and explicit scenario context. The client can supply values, ranges, units, rationale, an as-of date, and a future horizon. It cannot supply executable formulas, model implementations, model versions, evidence sources, baselines, or probabilities.
+
+The tenant runtime selects a server-owned reviewed registration. The registration binds an assumption key to one reviewed source measure, one transparent method, model and method versions, allowed sources, and a maximum horizon. The first contract supports only absolute change, relative fraction, and relative percent arithmetic.
+
+The baseline must be one verified, forecastable exact-county measure from the governed Evidence Gateway. If evidence is missing, duplicated, unreviewed, outside the registered source policy, later than the as-of date, or outside the model horizon, the scenario is blocked and no partial result is exposed as usable output.
+
+Every successful result is labeled `scenario_output`, carries evidence release and baseline lineage, includes the user's range, and states that it is neither a published estimate nor a statistical prediction. It carries no probability of occurrence and remains subject to human review. See `docs/SCENARIO_GOVERNANCE.md`.
+
 ## Memory domains
 
 The platform deliberately separates:
@@ -133,12 +144,11 @@ Node 24 or later is required.
 
 ## Outstanding activation work
 
-1. add a governed scenario/forecast handler with explicit assumptions, formulas, ranges, comparability, model/method version, and evaluation status;
-2. add controlled trajectory evaluation and learning-memory promotion so the runtime can improve without autonomous self-modification;
-3. add governed workforce/capacity and relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
-4. add monitoring for evidence releases, local-plan changes, funding opportunity changes, and workflow commitments;
-5. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
-6. run the production preflight against real Cognito, PostgreSQL, workspace/institutional-memory migrations, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime.
+1. add controlled trajectory evaluation and learning-memory promotion so the runtime can improve without autonomous self-modification;
+2. add governed workforce/capacity and relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
+3. add monitoring for evidence releases, local-plan changes, funding opportunity changes, and workflow commitments;
+4. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
+5. run the production preflight against real Cognito, PostgreSQL, workspace/institutional-memory migrations, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime.
 
 See `ARCHITECTURE.md` for the full control-plane boundary.
 
