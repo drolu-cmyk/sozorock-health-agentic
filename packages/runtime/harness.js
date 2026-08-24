@@ -1,4 +1,8 @@
-const { hasUserAssumptions, validateEvidenceEnvelope } = require('./contracts');
+const {
+  hasUserAssumptions,
+  validateEvidenceEnvelope,
+  validateHumanApprovalRecord,
+} = require('./contracts');
 
 class GovernedHarness {
   constructor(options = {}) {
@@ -20,8 +24,9 @@ class GovernedHarness {
     if (nodeId === 'scenario' && !hasUserAssumptions(state.task?.assumptions)) {
       return { ok: false, code: 'assumptions_required', reason: 'Scenario execution requires explicit user assumptions.' };
     }
-    if (nodeId === 'publish' && state.approval?.status !== 'approved') {
-      return { ok: false, code: 'human_approval_required', reason: 'Publishing requires an explicit human approval record.' };
+    if (nodeId === 'publish') {
+      const approval = validateHumanApprovalRecord(state.approval, state);
+      if (!approval.ok) return approval;
     }
     return { ok: true };
   }
