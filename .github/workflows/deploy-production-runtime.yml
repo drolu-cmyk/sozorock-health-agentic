@@ -28,10 +28,10 @@ jobs:
       CLOUDFORMATION_ROLE_ARN: arn:aws:iam::791860731989:role/cbcap-agentic-cloudformation
       AWS_PAGER: ""
     steps:
-      - name: Check out exact approved main
+      - name: Check out exact release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Publish pending production status
@@ -52,6 +52,8 @@ jobs:
           node-version: '24.19.0'
 
       - name: Re-run exact-source release gates
+        env:
+          RELEASE_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -61,6 +63,7 @@ jobs:
           git diff --exit-code
           test -z "$(git status --porcelain --untracked-files=no)"
           approved_commit=$(git rev-parse HEAD)
+          test "$approved_commit" = "$RELEASE_SHA"
           origin_main=$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')
           test "$origin_main" = "$approved_commit"
           echo "APPROVED_COMMIT=$approved_commit" >> "$GITHUB_ENV"
