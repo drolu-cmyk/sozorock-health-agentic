@@ -1,75 +1,38 @@
 /**
- * Server-side Place Intelligence API
+ * Retired legacy Place Intelligence API.
  *
- * Single entry point for all experiences.
- * Uses Chief of Staff + sub-agents.
- * Emits server-side audit events with data minimization.
- *
- * Can be mounted under Express, API Gateway + Lambda, or any HTTP runtime.
+ * The original prototype produced an unauthenticated weighted composite barrier
+ * score. That behavior is intentionally retired. Governed institutional work
+ * now enters through /api/cbcap and Barrier Intelligence consumes reviewed
+ * Evidence Gateway semantics without a universal score.
  */
-
-const { ChiefOfStaff } = require("../packages/agents/chief-of-staff");
 
 function createPlaceIntelligenceAPI(options = {}) {
   const auditLog = [];
 
-  const chief = new ChiefOfStaff({
-    auditSink: (event) => {
-      // Data minimization: store only necessary fields
-      auditLog.push({
-        id: "aud_" + Date.now().toString(36),
-        action: event.action,
-        fips: event.fips || null,
-        purpose: event.purpose || null,
-        at: new Date().toISOString(),
-        durationMs: event.durationMs || null
-      });
-      if (options.onAudit) options.onAudit(event);
-    }
-  });
-
-  /**
-   * Handle a place intelligence request.
-   * @param {object} body
-   * @param {string} body.location
-   * @param {string} [body.purpose] - resident | planner | funder | cbcap
-   */
   async function handle(body) {
-    if (!body || !body.location) {
-      return {
-        statusCode: 400,
-        body: { error: "location is required" }
-      };
-    }
-
-    const purpose = body.purpose || "resident";
-    const result = await chief.runPlaceIntelligence({
-      locationQuery: body.location,
-      purpose
-    });
-
-    if (result.status === "error") {
-      return {
-        statusCode: 422,
-        body: result
-      };
-    }
-
+    const event = {
+      action: 'legacy_place_intelligence_retired',
+      purpose: body?.purpose || null,
+      at: new Date().toISOString(),
+    };
+    auditLog.push(event);
+    if (typeof options.onAudit === 'function') options.onAudit(event);
     return {
-      statusCode: 200,
-      body: result
+      statusCode: 410,
+      body: {
+        error: 'This legacy place-intelligence endpoint has been retired.',
+        replacement: '/api/cbcap',
+        compositeBarrierScoreAvailable: false,
+      },
     };
   }
 
   function getAuditLog() {
-    // Governance console only
-    return [...auditLog];
+    return auditLog.map((event) => ({ ...event }));
   }
 
-  return {
-    handle,
-    getAuditLog
-  };
+  return { handle, getAuditLog };
 }
 
 module.exports = { createPlaceIntelligenceAPI };
