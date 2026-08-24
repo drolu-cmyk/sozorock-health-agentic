@@ -35,9 +35,15 @@ async function main() {
     return;
   }
 
-  const report = await runProductionReadiness({ ...options, env: process.env });
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  process.exitCode = report.ready ? 0 : 1;
+  try {
+    const report = await runProductionReadiness({ ...options, env: process.env });
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.exitCode = report.ready ? 0 : 1;
+  } finally {
+    if (typeof options.cleanup === 'function') {
+      await options.cleanup();
+    }
+  }
 }
 
 main().catch(() => {
