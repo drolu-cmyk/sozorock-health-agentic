@@ -5,6 +5,7 @@ const { createCBCAPApi } = require('./cbcap-api');
 const { createCBCAPFundingApi } = require('./cbcap-funding-api');
 const { createCBCAPMemoryApi } = require('./cbcap-memory-api');
 const { createCBCAPMonitoringApi } = require('./cbcap-monitoring-api');
+const { createCBCAPPrivateEvidenceApi } = require('./cbcap-private-evidence-api');
 const { createCBCAPReviewApi } = require('./cbcap-review-api');
 const { createCBCAPVisualizationApi } = require('./cbcap-visualization-api');
 const { createCBCAPWorkforceApi } = require('./cbcap-workforce-api');
@@ -86,6 +87,16 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
         })
       : null;
 
+    const privateEvidenceApi = typeof options.privateEvidenceObjectForActor === 'function'
+      && typeof options.privateEvidenceStoreForActor === 'function'
+      ? createCBCAPPrivateEvidenceApi({
+          objectForActor: options.privateEvidenceObjectForActor,
+          storeForActor: options.privateEvidenceStoreForActor,
+          auditSink: options.auditSink,
+          clock: options.clock,
+        })
+      : null;
+
     let memoryApi = null;
     if (typeof options.workspaceMemoryForActor === 'function' && typeof options.institutionalMemoryForActor === 'function') {
       const [workspaceMemory, institutionalMemory] = await Promise.all([
@@ -125,11 +136,13 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       visualizationApi,
       workforceApi,
       monitoringApi,
+      privateEvidenceApi,
       memoryApi,
       learningMemory,
       scenarioCapabilityEnabled: typeof scenarioHandler === 'function',
       workforceCapacityEnabled: Boolean(workforceApi),
       monitoringIntelligenceEnabled: Boolean(monitoringApi),
+      privateEvidenceEnabled: Boolean(privateEvidenceApi),
       learningEvaluationEnabled: Boolean(learningMemory),
     };
   };

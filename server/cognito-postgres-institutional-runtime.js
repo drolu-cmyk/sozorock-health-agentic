@@ -4,6 +4,7 @@ const {
   createPostgresLearningMemoryFactory,
   createPostgresMonitoringFindingStoreFactory,
   createPostgresRunMemoryFactory,
+  createPostgresTenantPrivateEvidenceStoreFactory,
   createPostgresWorkspaceMemoryFactory,
 } = require('./postgres-tenant-memory');
 const { createInstitutionalCBCAPGateway } = require('./institutional-cbcap-gateway');
@@ -45,6 +46,10 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
       || (options.pool && typeof options.pool.connect === 'function'
         ? createPostgresMonitoringFindingStoreFactory(sharedPoolOptions)
         : null);
+    const privateEvidenceStoreForActor = options.privateEvidenceStoreForActor
+      || (options.pool && typeof options.pool.connect === 'function'
+        ? createPostgresTenantPrivateEvidenceStoreFactory(sharedPoolOptions)
+        : null);
 
     runtimeForActor = createTenantCBCAPRuntimeFactory({
       memoryForActor,
@@ -54,6 +59,8 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
       monitoringFindingStoreForActor,
       monitoringDefinitionForActor: options.monitoringDefinitionForActor,
       monitoringSnapshotForActor: options.monitoringSnapshotForActor,
+      privateEvidenceStoreForActor,
+      privateEvidenceObjectForActor: options.privateEvidenceObjectForActor,
       institutionalEvidenceValidatorForActor: options.institutionalEvidenceValidatorForActor,
       evidenceClientForActor: options.evidenceClientForActor,
       evidenceOrigin: options.evidenceOrigin,
