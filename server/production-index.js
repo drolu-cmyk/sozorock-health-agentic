@@ -48,7 +48,7 @@ function createProductionApiOnlyApp(innerApp) {
   const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
-    if (req.path === '/api' || req.path.startsWith('/api/')) return innerApp(req, res, next);
+    if (req.path === '/api/cbcap' || req.path.startsWith('/api/cbcap/')) return innerApp(req, res, next);
     return res.sendStatus(404);
   });
   return app;
