@@ -16,6 +16,13 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
 
   let runtimeForActor = options.runtimeForActor;
   if (!runtimeForActor) {
+    const requiresPool = !options.memoryForActor
+      || !options.workspaceMemoryForActor
+      || !options.institutionalMemoryForActor;
+    if (requiresPool && (!options.pool || typeof options.pool.connect !== 'function')) {
+      throw new Error('PostgreSQL institutional runtime requires a pool with connect() unless all memory factories are supplied.');
+    }
+
     const sharedPoolOptions = {
       pool: options.pool,
       statementTimeoutMs: options.statementTimeoutMs,
