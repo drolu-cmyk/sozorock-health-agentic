@@ -5,10 +5,16 @@ const { GovernedHarness } = require('../packages/runtime/harness');
 const { InMemoryRunMemory } = require('../packages/runtime/memory');
 
 const HASH = `sha256:${'a'.repeat(64)}`;
+const APPROVAL = {
+  status: 'approved',
+  by: 'reviewer-1',
+  scope: 'county_plan',
+  reviewedAt: '2026-08-24T00:00:00.000Z',
+};
 
-function handlers(calls) {
+function handlers(calls, overrides = {}) {
   return {
-    resolvePlace: async () => ({ countyFips: '36001', name: 'Albany County' }),
+    resolvePlace: overrides.resolvePlace || (async () => ({ status: 'resolved', countyFips: '36001', name: 'Albany County' })),
     loadEvidence: async () => ({
       contract: 'sozorock.evidence-gateway.v1',
       releaseId: 'release-2026-08-23',
@@ -28,7 +34,7 @@ function handlers(calls) {
     draftBrief: async () => ({ title: 'Draft county planning brief' }),
     publish: async () => {
       calls.publish += 1;
-      return { status: 'published' };
+      return { status: 'approved_output' };
     },
   };
 }
@@ -65,28 +71,54 @@ test('CB-CAP graph runs scenarios only from explicit user assumptions', async ()
   assert.equal(result.scenario.status, 'scenario_output');
 });
 
-test('CB-CAP graph publishes only with an explicit approval record', async () => {
+test('CB-CAP graph publishes only with a complete human approval record', async () => {
   const calls = { scenario: 0, publish: 0 };
   const graph = createCBCAPGraph({ handlers: handlers(calls) });
   const result = await graph.run(
     { type: 'county_plan', location: '36001' },
-    { approval: { status: 'approved', by: 'reviewer-1', scope: 'county_plan' } },
+    { approval: APPROVAL },
   );
 
   assert.equal(result.status, 'approved_output');
   assert.equal(calls.publish, 1);
-  assert.equal(result.output.status, 'published');
+  assert.equal(result.output.status, 'approved_output');
   assert.ok(result.trace.some((entry) => entry.nodeId === 'publish'));
 });
 
-test('publishing is blocked by the harness without explicit human approval', () => {
+test('publishing is blocked when approval lacks review provenance', () => {
   const harness = new GovernedHarness({ allowedNodes: ['publish'] });
-  const blocked = harness.authorize({ nodeId: 'publish', state: { approval: { status: 'required' } }, step: 1 });
+  const blocked = harness.authorize({
+    nodeId: 'publish',
+    state: { approval: { status: 'approved', by: 'reviewer-1', scope: 'county_plan' } },
+    step: 1,
+  });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.code, 'human_approval_required');
 
-  const allowed = harness.authorize({ nodeId: 'publish', state: { approval: { status: 'approved', by: 'reviewer' } }, step: 1 });
+  const allowed = harness.authorize({ nodeId: 'publish', state: { approval: APPROVAL }, step: 1 });
   assert.equal(allowed.ok, true);
+});
+
+test('graph halts before evidence load when geography is ambiguous', async () => {
+  const calls = { scenario: 0, publish: 0 };
+  let evidenceCalls = 0;
+  const graphHandlers = handlers(calls, {
+    resolvePlace: async () => ({
+      status: 'ambiguous',
+      message: 'Select one county.',
+      matches: [{ countyFips: '36001' }, { countyFips: '36093' }],
+    }),
+  });
+  graphHandlers.loadEvidence = async () => {
+    evidenceCalls += 1;
+    throw new Error('must not run');
+  };
+  const graph = createCBCAPGraph({ handlers: graphHandlers });
+  const result = await graph.run({ type: 'county_plan', location: 'ambiguous' });
+
+  assert.equal(result.status, 'needs_place_selection');
+  assert.equal(result.error.code, 'place_selection_required');
+  assert.equal(evidenceCalls, 0);
 });
 
 test('run memory is append-only and sequence-stable', () => {
