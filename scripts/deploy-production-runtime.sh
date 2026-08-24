@@ -35,14 +35,14 @@ network_config() {
 disable_runtime() {
   if [[ -z "$RUNTIME_IMAGE_URI" ]]; then return 0; fi
   if ! aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" >/dev/null 2>&1; then return 0; fi
-  echo "Fail-closed rollback: disabling institutional ingress."
+  echo "Fail-closed rollback: disabling institutional ingress and runtime tasks."
   set +e
   aws cloudformation deploy \
     --stack-name "$RUNTIME_STACK" \
     --template-file "$RUNTIME_TEMPLATE" \
     --capabilities CAPABILITY_NAMED_IAM \
     --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-    --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false \
+    --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false \
     --no-fail-on-empty-changeset
   set -e
 }
@@ -152,6 +152,7 @@ DATABASE_SECURITY_GROUP=$(stack_output DatabaseSecurityGroupId)
 DATABASE_SUBNET_GROUP=$(stack_output DatabaseSubnetGroupName)
 RUNTIME_PASSWORD_ARN=$(stack_output RuntimeDatabasePasswordArn)
 USER_POOL_ID=$(stack_output UserPoolId)
+USER_POOL_CLIENT_ID=$(stack_output UserPoolClientId)
 PRIVATE_BUCKET=$(stack_output PrivateEvidenceBucketName)
 PRIVATE_KMS_ARN=$(stack_output PrivateEvidenceKmsKeyArn)
 LOG_GROUP=$(stack_output RuntimeLogGroupName)
@@ -161,7 +162,7 @@ CERTIFICATE_ARN=$(stack_output CertificateArn)
 LOAD_BALANCER_ARN=$(stack_output LoadBalancerArn)
 WEB_ACL_ARN=$(stack_output WebAclArn)
 
-for required in "$ECS_CLUSTER" "$ECS_SERVICE" "$MIGRATION_TASK" "$PREFLIGHT_TASK" "$RUNTIME_SECURITY_GROUP" "$PUBLIC_SUBNETS" "$DATABASE_ID" "$DATABASE_SECURITY_GROUP" "$DATABASE_SUBNET_GROUP" "$RUNTIME_PASSWORD_ARN" "$USER_POOL_ID" "$PRIVATE_BUCKET" "$PRIVATE_KMS_ARN" "$LOG_GROUP" "$INCIDENT_TOPIC" "$ALARM_ARN" "$CERTIFICATE_ARN" "$LOAD_BALANCER_ARN" "$WEB_ACL_ARN"; do
+for required in "$ECS_CLUSTER" "$ECS_SERVICE" "$MIGRATION_TASK" "$PREFLIGHT_TASK" "$RUNTIME_SECURITY_GROUP" "$PUBLIC_SUBNETS" "$DATABASE_ID" "$DATABASE_SECURITY_GROUP" "$DATABASE_SUBNET_GROUP" "$RUNTIME_PASSWORD_ARN" "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$PRIVATE_BUCKET" "$PRIVATE_KMS_ARN" "$LOG_GROUP" "$INCIDENT_TOPIC" "$ALARM_ARN" "$CERTIFICATE_ARN" "$LOAD_BALANCER_ARN" "$WEB_ACL_ARN"; do
   test -n "$required"
 done
 
@@ -228,6 +229,10 @@ test "$(jq -r '.UserPool.MfaConfiguration' <<<"$pool_json")" = "ON"
 for attr in tenant_id workspace_role workspace_access; do
   jq -e --arg attr "$attr" 'any(.UserPool.SchemaAttributes[]; .Name==$attr or .Name==("custom:"+$attr))' <<<"$pool_json" >/dev/null
 done
+client_json=$(aws cognito-idp describe-user-pool-client --user-pool-id "$USER_POOL_ID" --client-id "$USER_POOL_CLIENT_ID" --output json)
+test "$(jq -r '.UserPoolClient.ClientId' <<<"$client_json")" = "$USER_POOL_CLIENT_ID"
+test -z "$(jq -r '.UserPoolClient.ClientSecret // ""' <<<"$client_json")"
+jq -e 'any(.UserPoolClient.ExplicitAuthFlows[]; .=="ALLOW_USER_SRP_AUTH")' <<<"$client_json" >/dev/null
 identity_policy=$(node scripts/identity-policy-probe.js)
 jq -e '.ok and .sameTenantAuthorized and .humanReviewAuthorityVerified and .callerTenantOverrideIgnored and .agentCannotCreatePlan and .viewerCannotCreatePlan' <<<"$identity_policy" >/dev/null
 
@@ -294,8 +299,8 @@ test "$disallowed_status" = "403"
 host_status=$(curl --proto '=https' --tlsv1.2 --silent --output /dev/null --write-out '%{http_code}' -H 'Host: untrusted.example' "https://$API_DOMAIN/api/health")
 test "$host_status" = "503"
 
-identity_live=$(USER_POOL_ID="$USER_POOL_ID" API_DOMAIN="$API_DOMAIN" bash scripts/live-cognito-probe.sh)
-jq -e '.claimsVerified and .sameTenantAuthorized and .crossTenantDenied and .humanReviewAuthorityVerified and .livePlanAndReviewVerified and .unauthorizedAgentDenied' <<<"$identity_live" >/dev/null
+identity_live=$(USER_POOL_ID="$USER_POOL_ID" USER_POOL_CLIENT_ID="$USER_POOL_CLIENT_ID" API_DOMAIN="$API_DOMAIN" bash scripts/live-cognito-probe.sh)
+jq -e '.claimsVerified and .sameTenantAuthorized and .crossTenantDenied and .humanReviewAuthorityVerified and .livePlanAndReviewVerified and .unauthorizedAgentDenied and .productionAppClientVerified' <<<"$identity_live" >/dev/null
 
 for attempt in $(seq 1 30); do
   audit_json=$(aws logs filter-log-events --log-group-name "$LOG_GROUP" --limit 100 --output json)
