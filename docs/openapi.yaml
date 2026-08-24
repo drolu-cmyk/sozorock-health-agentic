@@ -6,9 +6,9 @@ info:
     Non-clinical place intelligence and identity-gated CB-CAP execution.
     Institutional CB-CAP uses authenticated workspace identity, authoritative
     tenant assignment, governed Evidence Gateway packages, resumable run state,
-    human review, and feature-gated funding evidence matching. It does not
-    diagnose, determine final funding eligibility, predict awards, allocate
-    funding, rank people, or replace county or funder judgment.
+    human review, funding evidence matching, and evidence-preserving visualization
+    specifications. It does not diagnose, determine final funding eligibility,
+    predict awards, allocate funding, rank people, or replace county or funder judgment.
 
     Institutional endpoints fail closed unless an authenticated gateway is
     configured. The unauthenticated CB-CAP mode is an explicit local development
@@ -48,6 +48,8 @@ paths:
                   reviewContinuationEnabled:
                     type: boolean
                   fundingIntelligenceRouteEnabled:
+                    type: boolean
+                  visualizationIntelligenceRouteEnabled:
                     type: boolean
                   unauthenticatedDevCBCAPEnabled:
                     type: boolean
@@ -219,6 +221,43 @@ paths:
           description: Funding reasoning was blocked by an unverified source, missing criterion lineage, or invalid governed record
         "503":
           description: Governed funding opportunity or tenant profile provider is not configured or unavailable
+  /api/cbcap/visualizations/spec:
+    post:
+      summary: Select an evidence-preserving visualization specification
+      operationId: createCbcapVisualizationSpec
+      security:
+        - bearerAuth: []
+      description: |
+        Selects the simplest truthful visualization family for an analytical job.
+        The endpoint accepts only data-shape and reviewed semantic metadata, not raw
+        institutional rows, arbitrary renderer code, or uploaded visual content.
+
+        It may return a blocked specification when the requested visual claim is not
+        supported, for example a choropleth without defensible normalization or a
+        trend line across incomparable vintages. Every specification includes a
+        nonvisual fallback, mobile behavior, accessibility requirements, export
+        expectations, disclosures, and anti-distortion guardrails.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VisualizationSpecRequest"
+      responses:
+        "200":
+          description: Renderable or fallback visualization specification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisualizationSpec"
+        "400":
+          description: Invalid analytical job or unsupported request field
+        "403":
+          description: Authentication or workspace authorization failed
+        "422":
+          description: Requested visual claim is blocked by the evidence conditions
+        "503":
+          description: Tenant visualization runtime is unavailable
 components:
   securitySchemes:
     bearerAuth:
@@ -392,3 +431,106 @@ components:
           const: false
         fundingAllocationProduced:
           const: false
+    VisualizationMeasure:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 240
+        name:
+          type: string
+          minLength: 1
+          maxLength: 500
+        unit:
+          type: string
+          maxLength: 120
+        direction:
+          type: string
+          maxLength: 80
+        comparisonPolicy:
+          type: string
+          maxLength: 120
+    VisualizationSpecRequest:
+      type: object
+      additionalProperties: false
+      required: [question]
+      properties:
+        question:
+          type: string
+          enum: [spatial_pattern, compare_places, uncertainty, time_change, distribution, relationship, barrier_matrix, planning_alignment, funding_fit, evidence_relationships]
+        measure:
+          $ref: "#/components/schemas/VisualizationMeasure"
+        itemCount:
+          type: integer
+          minimum: 0
+        seriesCount:
+          type: integer
+          minimum: 0
+        timePointCount:
+          type: integer
+          minimum: 0
+        geographyKind:
+          type: string
+          maxLength: 80
+        spatiallyMeaningful:
+          type: boolean
+        hasBoundaryGeometry:
+          type: boolean
+        hasConfidenceIntervals:
+          type: boolean
+        hasMissingValues:
+          type: boolean
+        comparableVintages:
+          type: boolean
+        distributionAvailable:
+          type: boolean
+        relationshipEdgesAvailable:
+          type: boolean
+        normalizationStatus:
+          type: string
+          enum: [valid, not_required, missing, invalid]
+    VisualizationSpec:
+      type: object
+      additionalProperties: true
+      required: [contract, status, question, insightTitle, artifactFamily, primaryRoute, fallbackRoute, renderer, requiredDisclosures, interaction, mobile, accessibility, export, guardrails]
+      properties:
+        contract:
+          const: cbcap.visualization.v1
+        status:
+          type: string
+          enum: [renderable, fallback_required, blocked]
+        question:
+          type: string
+        insightTitle:
+          type: string
+        artifactFamily:
+          type: string
+        primaryRoute:
+          type: string
+        fallbackRoute:
+          type: string
+        renderer:
+          type: string
+        requiredDisclosures:
+          type: array
+          items:
+            type: string
+        interaction:
+          type: object
+          additionalProperties: true
+        mobile:
+          type: object
+          additionalProperties: true
+        accessibility:
+          type: object
+          additionalProperties: true
+        export:
+          type: object
+          additionalProperties: true
+        guardrails:
+          type: array
+          items:
+            type: string
