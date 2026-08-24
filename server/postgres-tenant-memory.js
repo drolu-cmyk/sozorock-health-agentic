@@ -1,5 +1,6 @@
 const { SqlInstitutionalMemory } = require('../packages/runtime/sql-institutional-memory');
 const { SqlLearningMemory } = require('../packages/runtime/sql-learning-memory');
+const { SqlMonitoringFindingStore } = require('../packages/runtime/sql-monitoring-findings');
 const { SqlRunMemory } = require('../packages/runtime/sql-run-memory');
 const { SqlWorkspaceMemory } = require('../packages/runtime/sql-workspace-memory');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
@@ -112,9 +113,18 @@ function createPostgresLearningMemoryFactory(options = {}) {
   };
 }
 
+function createPostgresMonitoringFindingStoreFactory(options = {}) {
+  const queryForActor = queryForActorFactory(options);
+  return function monitoringFindingStoreForActor(actorInput) {
+    const { actor, query } = queryForActor(actorInput);
+    return new SqlMonitoringFindingStore({ tenantId: actor.tenantId, query, clock: options.clock });
+  };
+}
+
 module.exports = {
   createPostgresInstitutionalMemoryFactory,
   createPostgresLearningMemoryFactory,
+  createPostgresMonitoringFindingStoreFactory,
   createPostgresRunMemoryFactory,
   createPostgresTenantQuery,
   createPostgresWorkspaceMemoryFactory,

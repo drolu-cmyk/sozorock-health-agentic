@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   createPostgresLearningMemoryFactory,
+  createPostgresMonitoringFindingStoreFactory,
   createPostgresRunMemoryFactory,
   createPostgresTenantQuery,
 } = require('../server/postgres-tenant-memory');
@@ -123,4 +124,15 @@ test('learning-memory factory derives tenant scope only from the validated works
   assert.notEqual(tenantA, tenantB);
   assert.equal(typeof tenantA.recordTrajectory, 'function');
   assert.equal(typeof tenantA.reviewCandidate, 'function');
+});
+
+test('monitoring finding store factory derives tenant scope only from validated workspace actor', () => {
+  const factory = createPostgresMonitoringFindingStoreFactory({ pool: fakePool(), statementTimeoutMs: 5000 });
+  const tenantA = factory(actor('tenant-a'));
+  const tenantB = factory(actor('tenant-b'));
+  assert.equal(tenantA.tenantId, 'tenant-a');
+  assert.equal(tenantB.tenantId, 'tenant-b');
+  assert.notEqual(tenantA, tenantB);
+  assert.equal(typeof tenantA.append, 'function');
+  assert.equal(typeof tenantA.list, 'function');
 });

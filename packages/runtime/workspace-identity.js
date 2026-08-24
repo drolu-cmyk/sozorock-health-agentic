@@ -78,7 +78,13 @@ function permissionDecision(actorInput, action) {
     return { ok: false, code: 'invalid_actor' };
   }
 
-  if (['cbcap.plan.view', 'cbcap.visualization.plan', 'cbcap.workspace.read', 'cbcap.memory.read'].includes(action)) {
+  if ([
+    'cbcap.plan.view',
+    'cbcap.visualization.plan',
+    'cbcap.monitoring.evaluate',
+    'cbcap.workspace.read',
+    'cbcap.memory.read',
+  ].includes(action)) {
     return { ok: true, actor };
   }
   if (action === 'cbcap.funding.evaluate') {

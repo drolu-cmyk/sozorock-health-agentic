@@ -4,6 +4,7 @@ const { validateWorkspaceActor } = require('../packages/runtime/workspace-identi
 const { createCBCAPApi } = require('./cbcap-api');
 const { createCBCAPFundingApi } = require('./cbcap-funding-api');
 const { createCBCAPMemoryApi } = require('./cbcap-memory-api');
+const { createCBCAPMonitoringApi } = require('./cbcap-monitoring-api');
 const { createCBCAPReviewApi } = require('./cbcap-review-api');
 const { createCBCAPVisualizationApi } = require('./cbcap-visualization-api');
 const { workspaceActorReviewAuthorizer } = require('./institutional-cbcap-gateway');
@@ -75,6 +76,17 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
 
     const visualizationApi = createCBCAPVisualizationApi({ auditSink: options.auditSink });
 
+    const monitoringApi = typeof options.monitoringDefinitionForActor === 'function'
+      && typeof options.monitoringSnapshotForActor === 'function'
+      ? createCBCAPMonitoringApi({
+          definitionForActor: options.monitoringDefinitionForActor,
+          snapshotForActor: options.monitoringSnapshotForActor,
+          findingStoreForActor: options.monitoringFindingStoreForActor,
+          auditSink: options.auditSink,
+          clock: options.clock,
+        })
+      : null;
+
     let memoryApi = null;
     if (typeof options.workspaceMemoryForActor === 'function' && typeof options.institutionalMemoryForActor === 'function') {
       const [workspaceMemory, institutionalMemory] = await Promise.all([
@@ -112,9 +124,11 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       reviewApi,
       fundingApi,
       visualizationApi,
+      monitoringApi,
       memoryApi,
       learningMemory,
       scenarioCapabilityEnabled: typeof scenarioHandler === 'function',
+      monitoringIntelligenceEnabled: Boolean(monitoringApi),
       learningEvaluationEnabled: Boolean(learningMemory),
     };
   };

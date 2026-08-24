@@ -82,6 +82,16 @@ function createInstitutionalCBCAPGateway(options = {}) {
       return result;
     },
 
+    async handleMonitoring(input, context = {}) {
+      const auth = await actorFor(context.request, 'cbcap.monitoring.evaluate');
+      if (auth.error) return auth.error;
+      const selected = await runtime(auth.actor);
+      if (!selected?.monitoringApi || typeof selected.monitoringApi.handle !== 'function') return unavailable();
+      const result = await selected.monitoringApi.handle(input || {}, { ...context, workspaceActor: auth.actor });
+      auditSink({ action: 'cbcap_monitoring_request_completed', tenantId: auth.actor.tenantId, principalId: auth.actor.principalId, role: auth.actor.role, monitorId: result.body?.monitorId || null, findingStatus: result.body?.status || null, statusCode: result.statusCode });
+      return result;
+    },
+
     handleWorkspaceList(workspaceId, input, context = {}) { return memoryCall('listWorkspace', 'cbcap.workspace.read', [workspaceId, input || {}], context); },
     handleWorkspaceCreate(input, context = {}) { return memoryCall('createWorkspace', 'cbcap.workspace.write', [input || {}], context); },
     handleWorkspaceUpdate(workspaceId, itemId, input, context = {}) { return memoryCall('updateWorkspace', 'cbcap.workspace.write', [workspaceId, itemId, input || {}], context); },
