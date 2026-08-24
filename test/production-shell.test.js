@@ -20,10 +20,29 @@ test('live Cognito proof uses the deployed production client rather than a tempo
   assert.doesNotMatch(script, /delete-user-pool-client/);
 });
 
+test('live proof exercises tenant-private evidence metadata resolution', () => {
+  const script = readFileSync(path.join(__dirname, '..', 'scripts', 'live-cognito-probe.sh'), 'utf8');
+  assert.match(script, /api\/cbcap\/private-evidence\/submissions/);
+  assert.match(script, /private_evidence_status/);
+  assert.match(script, /privateEvidenceMetadataLookupVerified:true/);
+});
+
 test('deployment script binds the live probe to the stack client and fails closed to zero tasks', () => {
   const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
   assert.match(script, /USER_POOL_CLIENT_ID=\$\(stack_output UserPoolClientId\)/);
   assert.match(script, /USER_POOL_CLIENT_ID="\$USER_POOL_CLIENT_ID" API_DOMAIN/);
   assert.match(script, /DesiredCount=0 ActivationEnabled=false/);
   assert.match(script, /productionAppClientVerified/);
+});
+
+test('production template composes private evidence without the obsolete SSM placeholder', () => {
+  const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
+  assert.doesNotMatch(template, /CommonContainerEnvironment/);
+  assert.doesNotMatch(template, /AWS::SSM::Parameter/);
+  assert.match(template, /CB_CAP_PRIVATE_EVIDENCE_BUCKET/);
+  assert.match(template, /CB_CAP_PRIVATE_EVIDENCE_KMS_KEY_ARN/);
+  assert.match(template, /PolicyName: ReadTenantPrivateEvidenceMetadata/);
+  assert.match(template, /Action: s3:ListBucket/);
+  assert.match(template, /- s3:GetObject/);
+  assert.doesNotMatch(template, /s3:PutObject\n\s+Resource: !Sub '\$\{PrivateEvidenceBucket\.Arn\}\/tenant-evidence/);
 });
