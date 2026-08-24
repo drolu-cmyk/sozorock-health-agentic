@@ -18,6 +18,7 @@ The control plane now includes:
 - governed deterministic scenario intelligence with explicit user ranges, reviewed model registrations, verified baselines, source lineage, horizon controls, and no prediction claim;
 - governed workforce and capacity intelligence that preserves HPSA scope and reviewed AHRF context without a proprietary shortage score, county ranking, or allocation recommendation;
 - governed monitoring for evidence releases, local planning documents, funding opportunities, workflow commitments, and evidence expiry;
+- governed tenant-private evidence with server-resolved storage identity, rights and retention controls, human review, forced RLS, and strict no-PHI/person-level/secrets admission boundaries;
 - tenant-scoped workspace collaboration state with optimistic concurrency and immutable change events;
 - append-only institutional memory with explicit proposal, human review, evidence revalidation, expiry, and supersession;
 - append-only learning and evaluation memory for trajectories, evaluations, corrections, and reviewed improvement candidates, with no automatic production mutation;
@@ -29,21 +30,21 @@ The control plane now includes:
 
 Explore / Place Intelligence is the open public evidence surface. CB-CAP is an authenticated institutional planning workspace. They share governed evidence contracts but not product depth.
 
-CB-CAP may organize evidence, compare places, surface reviewed barriers, structure CHA/CHIP evidence, test explicit scenarios, inspect governed workforce and capacity context, evaluate funding evidence fit, monitor governed changes, and prepare reviewable decision artifacts. It does not diagnose, triage, prescribe, infer individual clinical risk, determine final funding eligibility, predict an award, allocate funding, or replace an official county, funder, or licensed-provider decision.
+CB-CAP may organize evidence, compare places, surface reviewed barriers, structure CHA/CHIP evidence, test explicit scenarios, inspect governed workforce and capacity context, evaluate funding evidence fit, monitor governed changes, use reviewed tenant-private organizational evidence, and prepare reviewable decision artifacts. It does not diagnose, triage, prescribe, infer individual clinical risk, determine final funding eligibility, predict an award, allocate funding, or replace an official county, funder, or licensed-provider decision.
 
 ## Identity and authority
 
 The runtime reuses the SozoRock Health workspace roles:
 
-| Role | Plan | Review | Funding evidence match | Visualization | Workforce context | Monitoring |
-| --- | --- | --- | --- | --- | --- | --- |
-| `foundation_reviewer` | Owner/contributor | Owner/contributor | Yes | Yes | Yes | Yes |
-| `county_planner` | Owner/contributor | Owner/contributor | Yes | Yes | Yes | Yes |
-| `community_partner` | Owner/contributor | No | Yes | Yes | Yes | Yes |
-| `research_funder_viewer` | No | No | Yes | Yes | Yes | Yes |
-| `evidence_agent` | No | No | No | Yes, nonconsequential only | Yes, nonconsequential only | Yes, nonconsequential only |
+| Role | Plan | Review | Funding evidence match | Visualization | Workforce context | Monitoring | Private evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `foundation_reviewer` | Owner/contributor | Owner/contributor | Yes | Yes | Yes | Yes | Submit/read/review with owner/contributor |
+| `county_planner` | Owner/contributor | Owner/contributor | Yes | Yes | Yes | Yes | Submit/read/review with owner/contributor |
+| `community_partner` | Owner/contributor | No | Yes | Yes | Yes | Yes | Submit with owner/contributor; read only after review |
+| `research_funder_viewer` | No | No | Yes | Yes | Yes | Yes | Read reviewed metadata only |
+| `evidence_agent` | No | No | No | Yes, nonconsequential only | Yes, nonconsequential only | Yes, nonconsequential only | Read reviewed metadata only |
 
-Viewer access never grants plan-write or approval authority. `evidence_agent` can inspect governed workforce context, evaluate governed monitoring conditions, and help choose a visualization specification, but can never satisfy a human review gate.
+Viewer access never grants plan-write or approval authority. `evidence_agent` can inspect governed workforce context, evaluate governed monitoring conditions, help choose a visualization specification, and read reviewed tenant-private metadata applicable to the current geography, but can never submit private evidence or satisfy a human review gate.
 
 The identity contract expects Cognito-compatible `custom:tenant_id`, `custom:workspace_role`, and `custom:workspace_access` claims. Authentication and authorization happen before a tenant runtime is selected.
 
@@ -69,7 +70,7 @@ The runtime recognizes:
 - `sozorock.evidence-gateway.v1`
 - `sozorock.evidence-gateway.planning.v1`
 
-The planning extension is additive to the public county package and carries reviewed county-specific document metadata, reviewed claim statements, and verified page/section locators. Raw document text, tenant state, funding decisions, approvals, and agent run state stay outside the public gateway.
+The planning extension is additive to the public county package and carries reviewed county-specific document metadata, reviewed claim statements, and verified page/section locators. Raw document text, tenant state, funding decisions, approvals, private evidence, and agent run state stay outside the public gateway.
 
 The CHA/CHIP workbench:
 
@@ -130,6 +131,16 @@ Monitoring supports Evidence Gateway releases, reviewed planning documents, fund
 
 Monitoring never determines the institutional response. It does not send external notifications, change workflows, adopt documents, alter funding decisions, promote institutional memory, or change production automatically. This repository provides the evaluator and finding store; it does not claim a production background scheduler has been deployed. See `docs/MONITORING.md`.
 
+## Tenant-Private Evidence
+
+Private evidence uses `cbcap.tenant-private-evidence.v1`. The client references an opaque `uploadId`; it cannot supply bucket, object key, object version, content hash, KMS key, public-access state, or security-scan state. Those are resolved server-side for the authenticated tenant and validated against an opaque tenant storage partition.
+
+Admission requires versioned KMS-encrypted storage with public access blocked. Unsupported media or incomplete/blocked security scanning is quarantined. Missing usage rights, person-level data, PHI, individual health records, credentials, or secrets is rejected. Submission alone does not authorize use.
+
+Accepted use requires an append-only human review by an authorized county planner or foundation reviewer. The latest review and retention date control availability. Query responses expose only sanitized metadata applicable to a requested geography; they never expose storage location or KMS identity.
+
+Accepted private evidence remains tenant-only. It does not alter the public Evidence Gateway or Explore completeness and does not become institutional truth without a separate governed promotion workflow. See `docs/TENANT_PRIVATE_EVIDENCE.md`.
+
 ## Memory domains
 
 The platform deliberately separates:
@@ -143,17 +154,17 @@ All four domains now have distinct runtime/storage contracts. Learning memory is
 
 See `docs/MEMORY_GOVERNANCE.md`, `docs/MEMORY_API.md`, and `docs/LEARNING_MEMORY.md`.
 
-## PostgreSQL memory and monitoring contract
+## PostgreSQL memory, monitoring, and private-evidence contract
 
-`SqlRunMemory`, `SqlWorkspaceMemory`, `SqlInstitutionalMemory`, `SqlLearningMemory`, `SqlMonitoringFindingStore`, and the PostgreSQL migrations under `infrastructure/postgres/` provide tenant-scoped identity, append-only execution and decision records, optimistic workspace versions, learning provenance, monitoring findings, composite tenant integrity, forced RLS, and `app.tenant_id` policies.
+`SqlRunMemory`, `SqlWorkspaceMemory`, `SqlInstitutionalMemory`, `SqlLearningMemory`, `SqlMonitoringFindingStore`, `SqlTenantPrivateEvidenceStore`, and the PostgreSQL migrations under `infrastructure/postgres/` provide tenant-scoped identity, append-only execution and decision records, optimistic workspace versions, learning provenance, monitoring findings, private-evidence review history, composite tenant integrity, forced RLS, and `app.tenant_id` policies.
 
-Production application roles must not own the protected tables and must not hold `BYPASSRLS`. Tenant context is transaction-local so pooled connections cannot leak identity between requests. Learning-candidate evaluation and correction references are validated in PostgreSQL against the active tenant rather than relying only on application logic.
+Production application roles must not own the protected tables and must not hold `BYPASSRLS`. Tenant context is transaction-local so pooled connections cannot leak identity between requests. Learning-candidate references and tenant-private evidence reviews are validated against the active tenant rather than relying only on application logic.
 
 ## Server exposure
 
-Institutional planning, review, funding, visualization, workforce, monitoring, workspace, and institutional-memory routes fail closed without an authenticated institutional gateway. Unknown `/api/...` paths also terminate with 404 and cannot fall through to the frontend SPA.
+Institutional planning, review, funding, visualization, workforce, monitoring, tenant-private evidence, workspace, and institutional-memory routes fail closed without an authenticated institutional gateway. Unknown `/api/...` paths also terminate with 404 and cannot fall through to the frontend SPA.
 
-The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, visualization, workforce, monitoring, workspace, institutional memory, or learning-memory access and is not a production authentication mode.
+The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, visualization, workforce, monitoring, private evidence, workspace, institutional memory, or learning-memory access and is not a production authentication mode.
 
 ## Verification
 
@@ -168,10 +179,9 @@ Node 24 or later is required.
 ## Outstanding activation work
 
 1. add relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
-2. add tenant-private evidence with review, rights, retention, and strict no-PHI boundaries;
-3. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
-4. extend production preflight to all memory, monitoring, and private-evidence tables, then run it against real Cognito, PostgreSQL, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime;
-5. connect a production scheduler or event source only after the monitoring evaluator, persistence, credentials, observability, retry behavior, and alert destination are verified in the target environment.
+2. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
+3. extend production preflight to all memory, monitoring, and private-evidence tables, then run it against real Cognito, PostgreSQL, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime;
+4. connect a production scheduler or event source only after the monitoring evaluator, persistence, credentials, observability, retry behavior, and alert destination are verified in the target environment.
 
 See `ARCHITECTURE.md` for the full control-plane boundary.
 
