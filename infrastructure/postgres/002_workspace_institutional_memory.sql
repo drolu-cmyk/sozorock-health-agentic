@@ -98,6 +98,12 @@ CREATE TABLE IF NOT EXISTS cbcap_institutional_memory (
 
 CREATE INDEX IF NOT EXISTS cbcap_institutional_memory_query_idx
   ON cbcap_institutional_memory (tenant_id, geography_id, decision_type, subject_id, status, reviewed_at DESC, proposed_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS cbcap_institutional_memory_single_review_idx
+  ON cbcap_institutional_memory (tenant_id, source_proposal_id)
+  WHERE source_proposal_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS cbcap_institutional_memory_single_supersession_idx
+  ON cbcap_institutional_memory (tenant_id, supersedes_memory_id)
+  WHERE supersedes_memory_id IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION deny_cbcap_institutional_memory_mutation()
 RETURNS trigger
