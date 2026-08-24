@@ -1,8 +1,28 @@
+const { createHash } = require('crypto');
 const {
   COUNTY_FIPS,
   EVIDENCE_CONTRACT,
   validateEvidenceEnvelope,
 } = require('../runtime/contracts');
+
+const PLANNING_CONTRACT = 'sozorock.evidence-gateway.planning.v1';
+
+function packageHash(packageData) {
+  return `sha256:${createHash('sha256').update(JSON.stringify(packageData)).digest('hex')}`;
+}
+
+function validatePlanningExtension(packageData) {
+  const fields = ['planning_contract_version', 'planning_documents', 'planning_claims', 'planning_citations'];
+  const present = fields.filter((field) => Object.prototype.hasOwnProperty.call(packageData || {}, field));
+  if (present.length === 0) return;
+  if (present.length !== fields.length) throw new Error('Evidence Gateway planning extension is incomplete.');
+  if (packageData.planning_contract_version !== PLANNING_CONTRACT) {
+    throw new Error(`Unsupported Evidence Gateway planning contract ${packageData.planning_contract_version || 'missing'}.`);
+  }
+  for (const field of ['planning_documents', 'planning_claims', 'planning_citations']) {
+    if (!Array.isArray(packageData[field])) throw new Error(`Evidence Gateway ${field} must be an array.`);
+  }
+}
 
 class EvidenceGatewayClient {
   constructor(options = {}) {
@@ -35,6 +55,12 @@ class EvidenceGatewayClient {
       throw new Error('Evidence Gateway county package must contain a county geography.');
     }
 
+    validatePlanningExtension(body?.package);
+    const calculatedHash = packageHash(body?.package);
+    if (body?.manifest?.release_hash !== calculatedHash) {
+      throw new Error('Evidence Gateway package SHA256 does not match its manifest release hash.');
+    }
+
     const envelope = validateEvidenceEnvelope({
       contract: body?.manifest?.contract_version,
       releaseId: body?.manifest?.release_id,
@@ -58,4 +84,9 @@ class EvidenceGatewayClient {
   }
 }
 
-module.exports = { EvidenceGatewayClient };
+module.exports = {
+  EvidenceGatewayClient,
+  PLANNING_CONTRACT,
+  packageHash,
+  validatePlanningExtension,
+};
