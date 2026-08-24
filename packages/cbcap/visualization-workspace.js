@@ -1,5 +1,8 @@
 const { createHash } = require('node:crypto');
-const { buildReviewedBarrierRegistry } = require('./barrier-registry');
+const {
+  REVIEWED_SOURCE_MEASURES,
+  buildReviewedBarrierRegistry,
+} = require('./barrier-registry');
 const {
   authorizeBarrierVisualization,
   queryBarrierEvidence,
@@ -117,12 +120,19 @@ function profileFor(question, rows) {
 }
 
 function coverageState(evidence, sourceMeasureId) {
-  const sourceVersionIds = new Set(
+  const policy = REVIEWED_SOURCE_MEASURES[sourceMeasureId];
+  if (!policy?.sourceId) return `unavailable_${sourceMeasureId}`;
+
+  const relevantSourceVersionIds = new Set(
     evidence.sourceVersions
-      .filter((item) => item?.source_id && item?.source_version_id)
+      .filter((item) => item?.source_id === policy.sourceId && item?.source_version_id)
       .map((item) => item.source_version_id),
   );
-  const assertions = evidence.sourceCoverage.filter((item) => sourceVersionIds.has(item?.source_version_id));
+  const assertions = evidence.sourceCoverage.filter((item) => (
+    item?.source_id === policy.sourceId
+    || relevantSourceVersionIds.has(item?.source_version_id)
+  ));
+  if (!assertions.length) return `unavailable_${sourceMeasureId}`;
   if (assertions.some((item) => item?.status === 'partial')) return 'unavailable_partial_coverage';
   if (assertions.some((item) => item?.status === 'unavailable')) return 'unavailable';
   if (assertions.some((item) => item?.status === 'stale')) return 'stale';
