@@ -46,6 +46,16 @@ test('institutional CB-CAP, review, and funding endpoints fail closed by default
   });
 });
 
+test('unknown API paths never fall through to the frontend SPA', async () => {
+  await withServer({}, async (base) => {
+    const response = await fetch(`${base}/api/not-a-real-route`);
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const text = await response.text();
+    assert.doesNotMatch(text, /<!doctype html>/i);
+  });
+});
+
 test('unauthenticated CB-CAP is available only through explicit development override and does not enable funding', async () => {
   await withServer({ allowUnauthenticatedDevCBCAP: true }, async (base) => {
     const response = await fetch(`${base}/api/cbcap`, {
@@ -71,6 +81,8 @@ test('unauthenticated CB-CAP is available only through explicit development over
     assert.equal(health.unauthenticatedDevCBCAPEnabled, true);
     assert.equal(health.institutionalAccessEnabled, false);
     assert.equal(health.fundingIntelligenceRouteEnabled, false);
+    assert.equal(health.workspaceMemoryRouteEnabled, false);
+    assert.equal(health.institutionalMemoryRouteEnabled, false);
   });
 });
 
@@ -220,11 +232,14 @@ test('health endpoint identifies identity-gated runtime and disabled optional bo
   await withServer({}, async (base) => {
     const response = await fetch(`${base}/api/health`);
     const body = await response.json();
-    assert.equal(body.version, '0.9.0');
+    assert.equal(body.version, '0.10.0');
     assert.equal(body.runtime, 'governed-graph');
     assert.equal(body.institutionalAccessEnabled, false);
     assert.equal(body.reviewContinuationEnabled, false);
     assert.equal(body.fundingIntelligenceRouteEnabled, false);
+    assert.equal(body.visualizationIntelligenceRouteEnabled, false);
+    assert.equal(body.workspaceMemoryRouteEnabled, false);
+    assert.equal(body.institutionalMemoryRouteEnabled, false);
     assert.equal(body.unauthenticatedDevCBCAPEnabled, false);
     assert.equal(body.legacySessionsEnabled, false);
   });

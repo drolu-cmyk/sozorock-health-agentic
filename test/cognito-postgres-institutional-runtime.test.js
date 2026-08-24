@@ -57,12 +57,12 @@ test('composition uses real Cognito resolver before the supplied tenant runtime'
   assert.deepEqual(runtimeActors, [actor()]);
 });
 
-test('composition requires PostgreSQL pool when no runtime or memory override is supplied', () => {
+test('composition requires PostgreSQL pool when no runtime or complete memory override is supplied', () => {
   assert.throws(
     () => createCognitoPostgresInstitutionalGateway({
       identityResolver: async () => actor(),
     }),
-    /PostgreSQL run-memory factory requires a pool/,
+    /PostgreSQL institutional runtime requires a pool with connect\(\)/,
   );
 });
 
