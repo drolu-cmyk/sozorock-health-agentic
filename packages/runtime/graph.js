@@ -92,6 +92,16 @@ class GovernedGraph {
     state.lastResumedAt = this.clock();
     state.resumeCount = Number.isInteger(state.resumeCount) ? state.resumeCount + 1 : 1;
 
+    const resumeStep = Number.isInteger(checkpoint.step) ? checkpoint.step : 0;
+    const authorization = this.harness.authorize({
+      nodeId: checkpoint.resumeAt,
+      state: clone(state),
+      step: resumeStep + 1,
+    });
+    if (!authorization.ok) {
+      throw new Error(`Continuation rejected: ${authorization.code}: ${authorization.reason}`);
+    }
+
     await this._memory('append', runId, {
       type: 'run_resumed',
       resumeAt: checkpoint.resumeAt,
@@ -99,7 +109,7 @@ class GovernedGraph {
       priorStatus: checkpoint.status,
       resumeCount: state.resumeCount,
     });
-    return this._execute(state, checkpoint.resumeAt, Number.isInteger(checkpoint.step) ? checkpoint.step : 0);
+    return this._execute(state, checkpoint.resumeAt, resumeStep);
   }
 
   async _execute(initialState, startNodeId, initialStep) {
