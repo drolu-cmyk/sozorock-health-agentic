@@ -6,13 +6,16 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
+    "start:production": "node server/production-index.js",
     "dev": "node server/index.js",
     "test": "node --test test/*.test.js",
+    "migrate:production": "node scripts/migrate-postgres.js",
     "preflight:production": "node scripts/run-production-preflight.js",
     "lint": "echo \"No linter configured yet\""
   },
   "dependencies": {
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "pg": "8.23.0"
   },
   "engines": {
     "node": ">=24"
