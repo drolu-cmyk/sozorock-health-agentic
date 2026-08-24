@@ -43,6 +43,17 @@ function productionPublishHandlerForActor(actor) {
   };
 }
 
+function createProductionApiOnlyApp(innerApp) {
+  if (typeof innerApp !== 'function') throw new Error('Production API boundary requires an Express application.');
+  const app = express();
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    if (req.path === '/api' || req.path.startsWith('/api/')) return innerApp(req, res, next);
+    return res.sendStatus(404);
+  });
+  return app;
+}
+
 function createProductionEdge(innerApp, options = {}) {
   const allowedHosts = options.allowedHosts;
   const readinessProbe = options.readinessProbe;
@@ -144,7 +155,8 @@ async function createProductionRuntime(options = {}) {
       enableLegacySessions: false,
       allowUnauthenticatedDevCBCAP: false,
     });
-    const app = createProductionEdge(innerApp, { allowedHosts, readinessProbe });
+    const apiOnlyApp = createProductionApiOnlyApp(innerApp);
+    const app = createProductionEdge(apiOnlyApp, { allowedHosts, readinessProbe });
     auditSink({ action: 'production_runtime_composed', institutionalAccessEnabled: true, tenantPrivateEvidenceEnabled: true });
     return { app, pool, auditSink };
   } catch (error) {
@@ -180,6 +192,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createProductionApiOnlyApp,
   createProductionAuditSink,
   createProductionEdge,
   createProductionRuntime,
