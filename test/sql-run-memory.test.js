@@ -60,7 +60,7 @@ test('SQL run memory keeps tenant ID on every database operation and preserves s
     clock: () => `2026-08-24T00:00:0${++tick}.000Z`,
   });
 
-  await memory.createRun({ product: 'cbcap', taskType: 'county_plan' }, '11111111-1111-4111-8111-111111111111');
+  await memory.createRun({ product: 'cbcap', taskType: 'county_plan', tenantId: 'county-team-1' }, '11111111-1111-4111-8111-111111111111');
   await memory.append('11111111-1111-4111-8111-111111111111', { type: 'decision', value: { approved: false } });
   await memory.checkpoint('11111111-1111-4111-8111-111111111111', { runId: '11111111-1111-4111-8111-111111111111', status: 'awaiting_human_review' }, {
     nodeId: 'await_review',
@@ -83,10 +83,20 @@ test('SQL run memory cannot read a run through a different tenant adapter', asyn
   const owner = new SqlRunMemory({ tenantId: 'tenant-a', query: database.query });
   const other = new SqlRunMemory({ tenantId: 'tenant-b', query: database.query });
   const runId = '22222222-2222-4222-8222-222222222222';
-  await owner.createRun({ product: 'cbcap', taskType: 'county_plan' }, runId);
+  await owner.createRun({ product: 'cbcap', taskType: 'county_plan', tenantId: 'tenant-a' }, runId);
   assert.equal((await owner.read(runId)).length, 1);
   assert.equal((await other.read(runId)).length, 0);
   assert.equal(await other.latestCheckpoint(runId), null);
+});
+
+test('SQL run memory rejects metadata that conflicts with its tenant scope before querying', async () => {
+  const database = fakeDatabase();
+  const memory = new SqlRunMemory({ tenantId: 'tenant-a', query: database.query });
+  await assert.rejects(
+    () => memory.createRun({ product: 'cbcap', taskType: 'county_plan', tenantId: 'tenant-b' }, '33333333-3333-4333-8333-333333333333'),
+    /tenantId does not match the SQL memory tenant scope/,
+  );
+  assert.equal(database.calls.length, 0);
 });
 
 test('SQL run memory rejects unsafe identifiers and missing tenant scope', () => {
