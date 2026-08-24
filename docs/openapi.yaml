@@ -72,15 +72,17 @@ paths:
           description: Unresolved or policy-blocked request
   /api/cbcap:
     post:
-      summary: Run the governed CB-CAP county planning workflow
+      summary: Start a governed CB-CAP county planning run
       operationId: postCbcap
       description: |
         Resolves the request to exactly one county FIPS before the planning engine
         may access evidence. Multi-county ZIP inputs and ambiguous county names stop
         for explicit selection. The planning engine uses the reviewed Evidence Gateway
-        and produces a source-backed draft that requires human review. User assumptions
-        may enter only explicitly marked scenario-capable workflows; the default runtime
-        does not install a scenario or publish capability.
+        and produces a source-backed draft that requires human review.
+
+        Approval is intentionally not accepted on this initial request. Approval must
+        later continue the exact saved run and exact Evidence Gateway release through
+        a dedicated authenticated review-continuation workflow.
       requestBody:
         required: true
         content:
@@ -88,12 +90,6 @@ paths:
             schema:
               $ref: "#/components/schemas/CbcapRequest"
       responses:
-        "200":
-          description: Approved output, only when an explicit reviewed publish capability is installed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CbcapRun"
         "202":
           description: Draft created and awaiting human review
           content:
@@ -101,7 +97,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/CbcapRun"
         "400":
-          description: Invalid request, assumptions, or approval record
+          description: Invalid request or assumptions, including approval submitted on the initial request
         "409":
           description: Geography requires explicit county selection
           content:
@@ -127,21 +123,6 @@ components:
             - type: number
             - type: boolean
             - type: "null"
-    ApprovalRecord:
-      type: object
-      required: [status, by, scope, reviewedAt]
-      additionalProperties: true
-      properties:
-        status:
-          const: approved
-        by:
-          type: string
-          minLength: 1
-        scope:
-          const: county_plan
-        reviewedAt:
-          type: string
-          format: date-time
     CbcapRequest:
       type: object
       required: [location]
@@ -158,8 +139,6 @@ components:
           maxProperties: 20
           additionalProperties:
             $ref: "#/components/schemas/UserAssumption"
-        approval:
-          $ref: "#/components/schemas/ApprovalRecord"
     PlaceResolution:
       type: object
       additionalProperties: true
@@ -191,7 +170,7 @@ components:
           type: string
         status:
           type: string
-          enum: [awaiting_human_review, approved_output, needs_place_selection, evidence_unavailable, blocked, error]
+          enum: [awaiting_human_review, needs_place_selection, evidence_unavailable, blocked, error]
         placeResolution:
           $ref: "#/components/schemas/PlaceResolution"
         evidence:
@@ -213,11 +192,4 @@ components:
         draft:
           type: object
           description: Draft for human review.
-          additionalProperties: true
-        approval:
-          type: object
-          additionalProperties: true
-        output:
-          type: object
-          description: Approved output only when an explicit reviewed publish capability is installed.
           additionalProperties: true
