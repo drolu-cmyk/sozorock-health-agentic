@@ -44,6 +44,20 @@ function createApp(options = {}) {
     }
   }
 
+  const workspaceMemoryRouteEnabled = Boolean(
+    institutionalGateway
+    && typeof institutionalGateway.handleWorkspaceList === 'function'
+    && typeof institutionalGateway.handleWorkspaceCreate === 'function'
+    && typeof institutionalGateway.handleWorkspaceUpdate === 'function',
+  );
+  const institutionalMemoryRouteEnabled = Boolean(
+    institutionalGateway
+    && typeof institutionalGateway.handleMemoryQuery === 'function'
+    && typeof institutionalGateway.handleMemoryPropose === 'function'
+    && typeof institutionalGateway.handleMemoryReview === 'function'
+    && typeof institutionalGateway.handleMemorySupersede === 'function',
+  );
+
   app.disable('x-powered-by');
   app.use(express.json({ limit: '200kb' }));
 
@@ -70,7 +84,7 @@ function createApp(options = {}) {
     res.json({
       status: 'ok',
       service: 'sozorock-health-agentic',
-      version: '0.9.0',
+      version: '0.10.0',
       runtime: 'governed-graph',
       time: new Date().toISOString(),
       geography: countyMeta(),
@@ -79,6 +93,8 @@ function createApp(options = {}) {
       reviewContinuationEnabled: Boolean(institutionalGateway),
       fundingIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleFunding === 'function'),
       visualizationIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleVisualization === 'function'),
+      workspaceMemoryRouteEnabled,
+      institutionalMemoryRouteEnabled,
       unauthenticatedDevCBCAPEnabled: Boolean(devCbcapAPI),
       legacySessionsEnabled: enableLegacySessions,
     });
@@ -144,6 +160,99 @@ function createApp(options = {}) {
     }
   });
 
+  app.get('/api/cbcap/workspaces/:workspaceId/items', async (req, res) => {
+    try {
+      if (!workspaceMemoryRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handleWorkspaceList(req.params.workspaceId, req.query || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/workspaces/:workspaceId/items', async (req, res) => {
+    try {
+      if (!workspaceMemoryRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handleWorkspaceCreate(
+        { ...(req.body || {}), workspaceId: req.params.workspaceId },
+        { request: req },
+      );
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.put('/api/cbcap/workspaces/:workspaceId/items/:itemId', async (req, res) => {
+    try {
+      if (!workspaceMemoryRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handleWorkspaceUpdate(
+        req.params.workspaceId,
+        req.params.itemId,
+        req.body || {},
+        { request: req },
+      );
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/memory/query', async (req, res) => {
+    try {
+      if (!institutionalMemoryRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handleMemoryQuery(req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/memory/proposals', async (req, res) => {
+    try {
+      if (!institutionalMemoryRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handleMemoryPropose(req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/memory/proposals/:proposalId/review', async (req, res) => {
+    try {
+      if (!institutionalMemoryRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handleMemoryReview(
+        req.params.proposalId,
+        req.body || {},
+        { request: req },
+      );
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  app.post('/api/cbcap/memory/:memoryId/supersede', async (req, res) => {
+    try {
+      if (!institutionalMemoryRouteEnabled) return res.sendStatus(404);
+      const result = await institutionalGateway.handleMemorySupersede(
+        req.params.memoryId,
+        req.body || {},
+        { request: req },
+      );
+      return res.status(result.statusCode).json(result.body);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
   if (enableLegacySessions) {
     app.post('/api/sessions', (req, res) => {
       const session = legacySessionStore.create({
@@ -172,6 +281,8 @@ function createApp(options = {}) {
   }
 
   app.get('/api/audit', (_req, res) => res.sendStatus(404));
+
+  app.use('/api', (_req, res) => res.sendStatus(404));
 
   app.use(express.static(path.join(__dirname, '../frontend')));
   app.get('*', (_req, res) => {
