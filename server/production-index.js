@@ -3,6 +3,7 @@ const express = require('express');
 const { createApp, parseAllowedOrigins } = require('./app');
 const { createCognitoPostgresInstitutionalGateway } = require('./cognito-postgres-institutional-runtime');
 const { closePool, createProductionPool, requiredEnv } = require('./production-database');
+const { createS3PrivateEvidenceObjectResolver } = require('./s3-private-evidence-object-resolver');
 
 function parseAllowedHosts(value) {
   const hosts = new Set(String(value || '').split(';').map((item) => item.trim().toLowerCase()).filter(Boolean));
@@ -101,15 +102,28 @@ async function createProductionRuntime(options = {}) {
   if (!evidenceOrigin.startsWith('https://')) throw new Error('EVIDENCE_GATEWAY_ORIGIN must use HTTPS.');
   const allowedOrigins = parseAllowedOrigins(requiredEnv(env, 'AGENTIC_ALLOWED_ORIGINS', 2048));
   const allowedHosts = parseAllowedHosts(requiredEnv(env, 'AGENTIC_ALLOWED_HOSTS', 1024));
+  const userPoolId = requiredEnv(env, 'CB_CAP_COGNITO_USER_POOL_ID', 160);
+  const appClientId = requiredEnv(env, 'CB_CAP_COGNITO_APP_CLIENT_ID', 128);
+  const privateEvidenceBucket = requiredEnv(env, 'CB_CAP_PRIVATE_EVIDENCE_BUCKET', 63);
+  const privateEvidenceKmsKeyArn = requiredEnv(env, 'CB_CAP_PRIVATE_EVIDENCE_KMS_KEY_ARN', 500);
   const pool = options.pool || createProductionPool(env);
   const auditSink = options.auditSink || createProductionAuditSink(options.logger || console);
+  const privateEvidenceObjectForActor = options.privateEvidenceObjectForActor || createS3PrivateEvidenceObjectResolver({
+    region,
+    bucket: privateEvidenceBucket,
+    kmsKeyArn: privateEvidenceKmsKeyArn,
+    client: options.s3Client,
+  });
 
   try {
     await pool.query('SELECT 1 AS ok');
     const institutionalCBCAPGateway = createCognitoPostgresInstitutionalGateway({
       pool,
       region,
+      userPoolId,
+      appClientId,
       evidenceOrigin,
+      privateEvidenceObjectForActor,
       publishHandlerForActor: options.publishHandlerForActor || productionPublishHandlerForActor,
       auditSink,
     });
@@ -131,7 +145,7 @@ async function createProductionRuntime(options = {}) {
       allowUnauthenticatedDevCBCAP: false,
     });
     const app = createProductionEdge(innerApp, { allowedHosts, readinessProbe });
-    auditSink({ action: 'production_runtime_composed', institutionalAccessEnabled: true });
+    auditSink({ action: 'production_runtime_composed', institutionalAccessEnabled: true, tenantPrivateEvidenceEnabled: true });
     return { app, pool, auditSink };
   } catch (error) {
     if (!options.pool) await closePool(pool).catch(() => {});
