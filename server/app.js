@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const { createPlaceIntelligenceAPI } = require('./place-intelligence-api');
 const { createCBCAPService } = require('../packages/cbcap/governed-service');
-const sessionStore = require('./session-store');
+const defaultSessionStore = require('./session-store');
 const { getMeta: countyMeta } = require('../packages/data/national-counties');
 const { getMeta: zipMeta } = require('../packages/data/zip-crosswalk');
 
@@ -17,6 +17,7 @@ function createApp(options = {}) {
     ? options.allowedOrigins
     : parseAllowedOrigins(options.allowedOrigins || process.env.AGENTIC_ALLOWED_ORIGINS);
   const enableLegacySessions = options.enableLegacySessions ?? process.env.ENABLE_LEGACY_SESSIONS === 'true';
+  const legacySessionStore = options.sessionStore || defaultSessionStore;
   const auditSink = typeof options.auditSink === 'function' ? options.auditSink : () => {};
   const placeAPI = options.placeAPI || createPlaceIntelligenceAPI({ onAudit: auditSink });
   const cbcapService = options.cbcapService || createCBCAPService({
@@ -82,7 +83,7 @@ function createApp(options = {}) {
 
   if (enableLegacySessions) {
     app.post('/api/sessions', (req, res) => {
-      const session = sessionStore.create({
+      const session = legacySessionStore.create({
         location: req.body.location || null,
         plan: req.body.plan || null,
         cbcapPlan: req.body.cbcapPlan || null,
@@ -91,13 +92,13 @@ function createApp(options = {}) {
     });
 
     app.get('/api/sessions/:id', (req, res) => {
-      const session = sessionStore.get(req.params.id);
+      const session = legacySessionStore.get(req.params.id);
       if (!session) return res.status(404).json({ error: 'Session not found' });
       return res.json(session);
     });
 
     app.put('/api/sessions/:id', (req, res) => {
-      const session = sessionStore.update(req.params.id, {
+      const session = legacySessionStore.update(req.params.id, {
         plan: req.body.plan,
         cbcapPlan: req.body.cbcapPlan,
         location: req.body.location,
