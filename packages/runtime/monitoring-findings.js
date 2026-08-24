@@ -13,12 +13,12 @@ function clone(value) {
 
 function validateFinding(input, tenantId) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('monitoring finding must be an object.');
+  const status = requiredString(input.status, 'status', 80);
+  if (!PERSISTED_STATUSES.has(status)) throw new Error('Only actionable or blocked monitoring findings may be persisted.');
   const findingKey = requiredString(input.findingKey, 'findingKey', 80);
   if (!/^sha256:[0-9a-f]{64}$/.test(findingKey)) throw new Error('findingKey must be a sha256 hash.');
   if (!Array.isArray(input.reasonCodes) || !input.reasonCodes.length) throw new Error('recorded monitoring findings require at least one reason code.');
   if (!Array.isArray(input.changedFields)) throw new Error('changedFields must be an array.');
-  const status = requiredString(input.status, 'status', 80);
-  if (!PERSISTED_STATUSES.has(status)) throw new Error('Only actionable or blocked monitoring findings may be persisted.');
   const sourceEntityIds = input.current?.sourceEntityIds === undefined
     ? []
     : input.current.sourceEntityIds;
