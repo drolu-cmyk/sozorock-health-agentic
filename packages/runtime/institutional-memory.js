@@ -99,6 +99,7 @@ class InMemoryInstitutionalMemory {
       reviewedBy: null,
       reviewedAt: null,
       reviewDecision: null,
+      reviewRationale: null,
       sourceProposalId: null,
       supersedesMemoryId: null,
     };
@@ -106,9 +107,19 @@ class InMemoryInstitutionalMemory {
     return clone(record);
   }
 
+  get(recordId) {
+    const id = requiredString(recordId, 'recordId', 128);
+    return clone(this.records.find((record) => record.id === id && record.tenantId === this.tenantId) || null);
+  }
+
   review(proposalId, decision, actor, options = {}) {
     const proposal = this.records.find((record) => record.id === proposalId && record.status === 'proposed');
     if (!proposal) return null;
+    if (this.records.some((record) => record.sourceProposalId === proposal.id)) {
+      const error = new Error('Institutional memory proposal has already been reviewed.');
+      error.code = 'REVIEW_CONFLICT';
+      throw error;
+    }
     if (!['approve', 'reject'].includes(decision)) throw new Error('review decision must be approve or reject.');
     const now = this.clock();
     const record = {
@@ -128,6 +139,11 @@ class InMemoryInstitutionalMemory {
   supersede(memoryId, actor, input = {}) {
     const current = this.records.find((record) => record.id === memoryId && record.status === 'reviewed');
     if (!current) return null;
+    if (this.records.some((record) => record.supersedesMemoryId === current.id)) {
+      const error = new Error('Institutional memory has already been superseded.');
+      error.code = 'SUPERSESSION_CONFLICT';
+      throw error;
+    }
     const now = this.clock();
     const record = {
       ...clone(current),
@@ -139,6 +155,7 @@ class InMemoryInstitutionalMemory {
       reviewedBy: requiredString(actor.principalId, 'actor.principalId', 200),
       reviewedAt: now,
       reviewDecision: 'supersede',
+      reviewRationale: requiredString(input.rationale, 'rationale', 5000),
       sourceProposalId: null,
       supersedesMemoryId: current.id,
       applicability: 'expired',
