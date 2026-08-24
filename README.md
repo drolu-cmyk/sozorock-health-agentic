@@ -1,68 +1,85 @@
-# SozoRock Health — Place Intelligence
+# SozoRock Health Agentic Runtime
 
-**SozoRock helps county teams turn fragmented public data into a shared, source-traceable access plan.**  
-Enter a county, compare barriers, test delivery scenarios, and hand the live plan to partners and funders.
+This repository is the execution and control plane for governed SozoRock Health agents, including the CB-CAP decision workflow.
 
-Version **0.5.0** starts nationwide foundation work: national geography contracts, ZIP crosswalk with multi-county handling, lineage-backed adapters, and durable session storage.
+It is **not** the production public-data warehouse. Governed evidence is supplied by the versioned Evidence Core and Evidence Gateway in `drolu-cmyk/sozorock-health`.
 
-## What county teams can do today
+## Current runtime foundation
 
-1. Resolve a ZIP or county name (multi-state seed + full-file loader).
-2. Run the agent pipeline against source-backed indicators when snapshots exist.
-3. See citations and release dates on each available signal.
-4. Share a plan link that **survives server restart** (file-backed sessions).
-5. Export a planning brief for partner / funder handoff (modeled scenarios labeled as estimates).
+The current branch introduces the first governed graph contracts:
 
-## Nationwide foundation (started)
+- append-only run memory;
+- a directed execution graph with explicit state transitions;
+- deterministic policy harness with allowlists, step budgets, and a kill switch;
+- Evidence Gateway contract, release, release-hash, and county identity validation;
+- scenario execution only from explicit user assumptions;
+- a mandatory human-review state before publication;
+- fail-closed behavior when governed evidence identity is inconsistent.
 
-| Component | Status |
-|-----------|--------|
-| National county/FIPS reference + multi-state seed | Live; full table via `national-counties.full.json` |
-| ZIP–County crosswalk + multi-county ZIPs | Live; full HUD file via `hud-zip-county.json` |
-| County/state name resolution | Live |
-| Source lineage contract on every signal | Live |
-| CDC PLACES adapter | Live (snapshot mode; full release via file) |
-| ACS 5-year adapter | Live (snapshot mode; full extract via file) |
-| Fail-closed when no source data | Live |
-| Durable sessions (file-backed) | Live |
-| Census boundary map layers | Not yet |
-| Live API fetch to CDC/Census | Not yet (file snapshots first) |
-| Auth / roles / live multiplayer presence | Not yet |
-| Multi-county funder aggregation | Not yet |
-| Production cloud deploy | Not yet |
+The operating principle is:
 
-See `docs/NATIONAL_DATA_INGEST.md` for how to load full national files.
+**AI drafts. People decide.**
+
+## CB-CAP graph
+
+```text
+resolve_place
+  -> load_evidence
+  -> synthesize_barriers
+  -> organize_plan
+  -> scenario?        # only with explicit user assumptions
+  -> draft_brief
+  -> await_review     # mandatory unless an authenticated approval is present
+  -> publish?         # only after approval
+```
+
+The graph is intentionally separate from model choice. Models may change without replacing the workflow, policy, evidence, memory, review, and audit contracts.
+
+## Evidence boundary
+
+Production CB-CAP agents consume governed Evidence Gateway packages. They validate exact geography and release identity before using evidence.
+
+Legacy ACS and CDC PLACES adapters in this repository remain migration assets and fixtures for now. They are not a second production evidence authority and should not be extended as a competing ingest path.
+
+## Scenario boundary
+
+Production scenarios must use explicit user assumptions and source-backed baselines where required. The runtime must preserve formulas, units, uncertainty, missing inputs, and the distinction between published evidence and user assumptions.
+
+Synthetic reach numbers, invented barrier-reduction percentages, arbitrary cost indices, demo heat points, and unsupported planning-attention scores are not acceptable production CB-CAP outputs.
+
+## Memory
+
+The current `InMemoryRunMemory` establishes an append-only event contract for graph runs. It is not the production persistence layer.
+
+The intended production model separates:
+
+1. run events and traces;
+2. authenticated workspace state;
+3. reviewed institutional memory;
+4. evaluated learning memory.
+
+Unreviewed model output must not become institutional truth automatically.
 
 ## Quick start
 
 ```bash
 npm install
-npm start
-# open http://localhost:3000
 npm test
+npm start
 ```
 
-Health check reports geography and crosswalk coverage: `GET /api/health`
+The existing server and linear Chief of Staff path remain during migration. New production CB-CAP work should target the governed graph runtime rather than adding more behavior to the legacy orchestration path.
 
-## Agent hierarchy
+## Next migration steps
 
-```
-Chief of Staff
-├── Geography Agent      (national table + ZIP crosswalk)
-├── Research Agent       (PLACES + ACS adapters + lineage)
-├── Barrier Agent        (sparse-safe scoring)
-├── Hub Matching Agent
-├── Report Agent
-└── Compliance Agent
-```
+1. migrate the legacy CB-CAP planning engine onto the governed graph;
+2. replace synthetic scenario and heat-map output with governed evidence and explicit assumptions;
+3. route production evidence through the Evidence Gateway client;
+4. add authenticated persistent workspace memory and approval records;
+5. add evaluated specialist graph nodes for barriers, CHA/CHIP, funding intelligence, monitoring, and briefs;
+6. connect the CB-CAP product surface only after those runtime gates pass.
 
-## Design rules
-
-- Non-clinical only
-- No barrier score without source lineage
-- Unknown geography fails closed
-- Modeled scenarios declare formula and uncertainty
-- Sessions persist on disk under `data/sessions/`
+See `ARCHITECTURE.md` for the authoritative runtime boundary.
 
 ## License
 
