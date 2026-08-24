@@ -1,6 +1,17 @@
-const { createApp, parseAllowedHosts, parseAllowedOrigins } = require('./app');
+const crypto = require('node:crypto');
+const express = require('express');
+const { createApp, parseAllowedOrigins } = require('./app');
 const { createCognitoPostgresInstitutionalGateway } = require('./cognito-postgres-institutional-runtime');
 const { closePool, createProductionPool, requiredEnv } = require('./production-database');
+
+function parseAllowedHosts(value) {
+  const hosts = new Set(String(value || '').split(';').map((item) => item.trim().toLowerCase()).filter(Boolean));
+  if (!hosts.size) throw new Error('At least one production host is required.');
+  for (const host of hosts) {
+    if (host === '*' || host.includes('://') || !/^[a-z0-9.-]+$/.test(host)) throw new Error('Production host allowlist is invalid.');
+  }
+  return hosts;
+}
 
 function productionPublishHandlerForActor(actor) {
   return async function publishApprovedCountyPlan(state) {
@@ -18,6 +29,48 @@ function productionPublishHandlerForActor(actor) {
       externalPublication: false,
     };
   };
+}
+
+function createProductionEdge(innerApp, options = {}) {
+  const allowedHosts = options.allowedHosts;
+  const readinessProbe = options.readinessProbe;
+  if (!(allowedHosts instanceof Set) || !allowedHosts.size) throw new Error('Production edge requires an allowed-host set.');
+  if (typeof readinessProbe !== 'function') throw new Error('Production edge requires a readiness probe.');
+
+  const app = express();
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    const authority = String(req.get('host') || '').trim().toLowerCase();
+    const host = authority.startsWith('[') ? authority : authority.split(':')[0];
+    if (!allowedHosts.has(host)) return res.status(421).json({ error: 'Misdirected request' });
+
+    const suppliedRequestId = String(req.get('x-request-id') || '').trim();
+    const requestId = /^[A-Za-z0-9._:-]{1,128}$/.test(suppliedRequestId) ? suppliedRequestId : crypto.randomUUID();
+    res.setHeader('X-Request-Id', requestId);
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    if (req.path.startsWith('/api/') || req.path === '/healthz' || req.path === '/readyz') {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+      res.setHeader('Cache-Control', 'no-store');
+    }
+    return next();
+  });
+
+  app.get('/healthz', (_req, res) => res.json({ status: 'ok', service: 'cbcap-agentic-runtime' }));
+  app.get('/readyz', async (_req, res) => {
+    try {
+      const result = await readinessProbe();
+      if (!result?.ok) return res.status(503).json({ status: 'not_ready' });
+      return res.json({ status: 'ready' });
+    } catch {
+      return res.status(503).json({ status: 'not_ready' });
+    }
+  });
+  app.use(innerApp);
+  return app;
 }
 
 async function createProductionRuntime(options = {}) {
@@ -55,14 +108,13 @@ async function createProductionRuntime(options = {}) {
       }
     };
 
-    const app = createApp({
+    const innerApp = createApp({
       institutionalCBCAPGateway,
       allowedOrigins,
-      allowedHosts,
-      readinessProbe,
       enableLegacySessions: false,
       allowUnauthenticatedDevCBCAP: false,
     });
+    const app = createProductionEdge(innerApp, { allowedHosts, readinessProbe });
     return { app, pool };
   } catch (error) {
     if (!options.pool) await closePool(pool).catch(() => {});
@@ -97,6 +149,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createProductionEdge,
   createProductionRuntime,
+  parseAllowedHosts,
   productionPublishHandlerForActor,
 };
