@@ -14,9 +14,10 @@ test('tenant-private evidence tables force tenant row-level security', async () 
   assert.match(sql, /current_setting\('app\.tenant_id', true\)/i);
 });
 
-test('private evidence review has same-tenant referential integrity and append-only history', async () => {
+test('private evidence review has same-tenant referential integrity, one acceptance, and append-only history', async () => {
   const sql = await readFile(migrationPath, 'utf8');
   assert.match(sql, /FOREIGN KEY \(tenant_id, document_id\)[\s\S]*REFERENCES cbcap_tenant_evidence_documents \(tenant_id, id\)/i);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS cbcap_tenant_evidence_one_acceptance_idx[\s\S]*WHERE decision = 'accepted'/i);
   assert.match(sql, /BEFORE UPDATE OR DELETE ON cbcap_tenant_evidence_documents/i);
   assert.match(sql, /BEFORE UPDATE OR DELETE ON cbcap_tenant_evidence_reviews/i);
   assert.match(sql, /tenant-private evidence history is append-only/i);
