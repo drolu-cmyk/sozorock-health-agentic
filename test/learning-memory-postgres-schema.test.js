@@ -37,6 +37,17 @@ test('learning records preserve same-tenant parent integrity and one review per 
   assert.match(sql, /UNIQUE \(tenant_id, candidate_id\)/);
 });
 
+test('candidate provenance is validated in PostgreSQL, not only in application code', () => {
+  assert.match(sql, /CREATE OR REPLACE FUNCTION validate_cbcap_learning_candidate_refs\(\)/);
+  assert.match(sql, /evaluation\.tenant_id = NEW\.tenant_id/);
+  assert.match(sql, /evaluation\.id::text = ref\.value/);
+  assert.match(sql, /correction\.tenant_id = NEW\.tenant_id/);
+  assert.match(sql, /correction\.id::text = ref\.value/);
+  assert.match(sql, /BEFORE INSERT ON cbcap_learning_candidates/);
+  assert.match(sql, /learning candidate references an unknown or cross-tenant evaluation/);
+  assert.match(sql, /learning candidate references an unknown or cross-tenant correction/);
+});
+
 test('trajectory schema excludes raw content columns and constrains deterministic model accounting', () => {
   assert.doesNotMatch(sql, /raw_content/i);
   assert.doesNotMatch(sql, /transcript/i);
