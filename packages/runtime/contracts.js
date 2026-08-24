@@ -60,17 +60,26 @@ function hasUserAssumptions(assumptions) {
 
 function isApprovedHumanRecord(approval) {
   if (!approval || typeof approval !== 'object' || Array.isArray(approval)) return false;
-  if (approval.status !== 'approved') return false;
+  if (approval.status !== 'approved' || approval.decision !== 'approve') return false;
   if (typeof approval.by !== 'string' || !approval.by.trim()) return false;
   if (approval.scope !== 'county_plan') return false;
   if (typeof approval.reviewedAt !== 'string' || !Number.isFinite(Date.parse(approval.reviewedAt))) return false;
+  if (typeof approval.objectId !== 'string' || !approval.objectId.trim()) return false;
+  if (typeof approval.evidenceReleaseId !== 'string' || !approval.evidenceReleaseId.trim()) return false;
   return true;
+}
+
+function approvalMatchesState(approval, state) {
+  return isApprovedHumanRecord(approval)
+    && approval.objectId === state?.runId
+    && approval.evidenceReleaseId === state?.evidence?.releaseId;
 }
 
 module.exports = {
   COUNTY_FIPS,
   EVIDENCE_CONTRACT,
   RELEASE_HASH,
+  approvalMatchesState,
   hasUserAssumptions,
   isApprovedHumanRecord,
   validateEvidenceEnvelope,
