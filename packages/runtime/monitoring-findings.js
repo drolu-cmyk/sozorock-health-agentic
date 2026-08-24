@@ -1,3 +1,5 @@
+const PERSISTED_STATUSES = new Set(['change_detected', 'attention_required', 'blocked']);
+
 function requiredString(value, label, max = 1000) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} is required.`);
   const normalized = value.trim();
@@ -16,6 +18,8 @@ function validateFinding(input, tenantId) {
   if (!Array.isArray(input.reasonCodes) || !input.reasonCodes.length) throw new Error('recorded monitoring findings require at least one reason code.');
   if (!Array.isArray(input.changedFields)) throw new Error('changedFields must be an array.');
   if (!Array.isArray(input.current?.sourceEntityIds)) throw new Error('current.sourceEntityIds must be an array.');
+  const status = requiredString(input.status, 'status', 80);
+  if (!PERSISTED_STATUSES.has(status)) throw new Error('Only actionable or blocked monitoring findings may be persisted.');
   return {
     tenantId,
     findingKey,
@@ -23,7 +27,7 @@ function validateFinding(input, tenantId) {
     subjectId: requiredString(input.subjectId, 'subjectId', 240),
     geographyId: input.geographyId ? requiredString(input.geographyId, 'geographyId', 240) : null,
     kind: requiredString(input.kind, 'kind', 80),
-    status: requiredString(input.status, 'status', 80),
+    status,
     reasonCodes: [...new Set(input.reasonCodes.map((value, index) => requiredString(value, `reasonCodes[${index}]`, 200)))].sort(),
     changedFields: [...new Set(input.changedFields.map((value, index) => requiredString(value, `changedFields[${index}]`, 120)))].sort(),
     baselineFingerprint: input.baseline?.fingerprint || null,
