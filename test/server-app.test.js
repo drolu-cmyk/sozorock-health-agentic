@@ -220,7 +220,7 @@ test('health endpoint identifies identity-gated runtime and disabled optional bo
   await withServer({}, async (base) => {
     const response = await fetch(`${base}/api/health`);
     const body = await response.json();
-    assert.equal(body.version, '0.8.0');
+    assert.equal(body.version, '0.9.0');
     assert.equal(body.runtime, 'governed-graph');
     assert.equal(body.institutionalAccessEnabled, false);
     assert.equal(body.reviewContinuationEnabled, false);
