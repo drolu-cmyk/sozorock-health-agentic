@@ -4,6 +4,24 @@ const DEFAULT_PROOF_COUNTIES = Object.freeze(['36001', '36093', '36057', '42029'
 const PLANNING_CONTRACT = 'sozorock.evidence-gateway.planning.v1';
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
+const DEPLOYMENT_PROOF_FIELDS = Object.freeze([
+  'oidcIdentityVerified',
+  'deploymentAccountVerified',
+  'protectedMainShaVerified',
+  'immutableImageVerified',
+  'vulnerabilityScanClean',
+  'managedSecretsVerified',
+  'privateEvidenceStorageVerified',
+  'databaseNetworkIsolationVerified',
+  'migrationsCompletedBeforeTraffic',
+  'runtimeEnabledAfterMigrations',
+  'tlsCertificateVerified',
+  'edgeProtectionVerified',
+  'securityHeadersVerified',
+  'corsBoundaryVerified',
+  'unauthenticatedProtectedRouteDenied',
+]);
+
 const PROTECTED_TABLES = Object.freeze([
   { name: 'agent_runs', policy: 'agent_runs_tenant_scope', privileges: ['SELECT', 'INSERT', 'UPDATE'] },
   { name: 'agent_run_events', policy: 'agent_run_events_tenant_scope', trigger: 'agent_run_events_append_only', privileges: ['SELECT', 'INSERT'] },
@@ -240,14 +258,18 @@ async function probeEvidenceGateway(options = {}) {
       const result = await evidenceClient.getCountyPackage(fips);
       const countyIssues = [];
       if (result?.countyFips !== fips) countyIssues.push('county_mismatch');
-      if (!requiredString(result?.releaseId, 'releaseId', 500)) countyIssues.push('release_id_missing');
+      try {
+        requiredString(result?.releaseId, 'releaseId', 500);
+      } catch {
+        countyIssues.push('release_id_missing');
+      }
       if (!SHA256.test(String(result?.releaseHash || ''))) countyIssues.push('release_hash_invalid');
       if (result?.package?.planning_contract_version !== PLANNING_CONTRACT) countyIssues.push('planning_contract_missing');
       if (!Array.isArray(result?.package?.planning_documents)) countyIssues.push('planning_documents_missing');
       if (!Array.isArray(result?.package?.planning_claims)) countyIssues.push('planning_claims_missing');
       if (!Array.isArray(result?.package?.planning_citations)) countyIssues.push('planning_citations_missing');
-      if (releaseId === null) releaseId = result.releaseId;
-      else if (result.releaseId !== releaseId) countyIssues.push('release_id_inconsistent');
+      if (releaseId === null) releaseId = result?.releaseId || null;
+      else if (result?.releaseId !== releaseId) countyIssues.push('release_id_inconsistent');
       for (const issue of countyIssues) issues.push(`${issue}:${fips}`);
       results.push({ countyFips: fips, ready: countyIssues.length === 0, releaseId: result?.releaseId || null, releaseHash: result?.releaseHash || null });
     } catch {
@@ -277,6 +299,7 @@ function inspectProductionConfiguration(options = {}) {
   const issues = [];
   if (String(env.ENABLE_UNAUTHENTICATED_CBCAP_DEV || '').toLowerCase() === 'true') issues.push('unauthenticated_dev_mode_enabled');
   if (String(env.ENABLE_LEGACY_SESSIONS || '').toLowerCase() === 'true') issues.push('legacy_sessions_enabled');
+
   const origins = String(env.AGENTIC_ALLOWED_ORIGINS || '').split(';').map((item) => item.trim()).filter(Boolean);
   if (!origins.length) issues.push('allowed_origins_not_explicit');
   for (const origin of origins) {
@@ -284,9 +307,22 @@ function inspectProductionConfiguration(options = {}) {
   }
   if (!origins.includes('https://cbcap.sozorockfoundation.org')) issues.push('cbcap_origin_missing');
   if (!origins.includes('https://health.sozorockfoundation.org')) issues.push('health_origin_missing');
+
+  const hosts = String(env.AGENTIC_ALLOWED_HOSTS || '').split(';').map((item) => item.trim().toLowerCase()).filter(Boolean);
+  if (!hosts.length) issues.push('allowed_hosts_not_explicit');
+  for (const host of hosts) {
+    if (host === '*' || host.includes('://') || !/^[a-z0-9.-]+$/.test(host)) issues.push('allowed_host_invalid_or_wildcard');
+  }
+
   const region = String(env.AWS_REGION || '').trim();
   if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(region)) issues.push('aws_region_missing_or_invalid');
-  return { ok: issues.length === 0, issues: unique(issues), allowedOrigins: origins, awsRegion: region || null };
+  return {
+    ok: issues.length === 0,
+    issues: unique(issues),
+    allowedOrigins: origins,
+    allowedHosts: hosts,
+    awsRegion: region || null,
+  };
 }
 
 async function runProductionReadiness(options = {}) {
@@ -300,6 +336,7 @@ async function runProductionReadiness(options = {}) {
     'crossTenantDenied',
     'humanReviewAuthorityVerified',
   ]);
+  const deployment = await runNamedProbe('deployment', options.deploymentProbe, DEPLOYMENT_PROOF_FIELDS);
   const recovery = await runNamedProbe('recovery', options.recoveryProbe, [
     'backupVerified',
     'restoreVerified',
@@ -316,7 +353,7 @@ async function runProductionReadiness(options = {}) {
     'evidenceGatewayUnaffected',
   ]);
 
-  const sections = { configuration, database, tenantIsolation, evidenceGateway, identity, recovery, observability, rollback };
+  const sections = { configuration, database, tenantIsolation, evidenceGateway, identity, deployment, recovery, observability, rollback };
   const issues = unique(Object.entries(sections).flatMap(([section, result]) => (result.issues || []).map((issue) => `${section}:${issue}`)));
   return {
     contract: 'cbcap.production-readiness.v1',
@@ -330,6 +367,7 @@ async function runProductionReadiness(options = {}) {
 
 module.exports = {
   DEFAULT_PROOF_COUNTIES,
+  DEPLOYMENT_PROOF_FIELDS,
   PLANNING_CONTRACT,
   PROTECTED_TABLES,
   inspectPostgresControlPlane,
