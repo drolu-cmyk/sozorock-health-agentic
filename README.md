@@ -16,6 +16,7 @@ The control plane now includes:
 - feature-gated Funding Intelligence that matches reviewed requirements to governed institutional evidence without determining eligibility or award probability;
 - visualization intelligence that chooses evidence-preserving maps, charts, matrices, tables, and fallbacks from data-shape and semantic metadata;
 - governed deterministic scenario intelligence with explicit user ranges, reviewed model registrations, verified baselines, source lineage, horizon controls, and no prediction claim;
+- governed workforce and capacity intelligence that preserves HPSA scope and reviewed AHRF context without a proprietary shortage score, county ranking, or allocation recommendation;
 - governed monitoring for evidence releases, local planning documents, funding opportunities, workflow commitments, and evidence expiry;
 - tenant-scoped workspace collaboration state with optimistic concurrency and immutable change events;
 - append-only institutional memory with explicit proposal, human review, evidence revalidation, expiry, and supersession;
@@ -28,21 +29,21 @@ The control plane now includes:
 
 Explore / Place Intelligence is the open public evidence surface. CB-CAP is an authenticated institutional planning workspace. They share governed evidence contracts but not product depth.
 
-CB-CAP may organize evidence, compare places, surface reviewed barriers, structure CHA/CHIP evidence, test explicit scenarios, evaluate funding evidence fit, monitor governed changes, and prepare reviewable decision artifacts. It does not diagnose, triage, prescribe, infer individual clinical risk, determine final funding eligibility, predict an award, allocate funding, or replace an official county, funder, or licensed-provider decision.
+CB-CAP may organize evidence, compare places, surface reviewed barriers, structure CHA/CHIP evidence, test explicit scenarios, inspect governed workforce and capacity context, evaluate funding evidence fit, monitor governed changes, and prepare reviewable decision artifacts. It does not diagnose, triage, prescribe, infer individual clinical risk, determine final funding eligibility, predict an award, allocate funding, or replace an official county, funder, or licensed-provider decision.
 
 ## Identity and authority
 
 The runtime reuses the SozoRock Health workspace roles:
 
-| Role | Plan | Review | Funding evidence match | Visualization | Monitoring |
-| --- | --- | --- | --- | --- | --- |
-| `foundation_reviewer` | Owner/contributor | Owner/contributor | Yes | Yes | Yes |
-| `county_planner` | Owner/contributor | Owner/contributor | Yes | Yes | Yes |
-| `community_partner` | Owner/contributor | No | Yes | Yes | Yes |
-| `research_funder_viewer` | No | No | Yes | Yes | Yes |
-| `evidence_agent` | No | No | No | Yes, nonconsequential only | Yes, nonconsequential only |
+| Role | Plan | Review | Funding evidence match | Visualization | Workforce context | Monitoring |
+| --- | --- | --- | --- | --- | --- | --- |
+| `foundation_reviewer` | Owner/contributor | Owner/contributor | Yes | Yes | Yes | Yes |
+| `county_planner` | Owner/contributor | Owner/contributor | Yes | Yes | Yes | Yes |
+| `community_partner` | Owner/contributor | No | Yes | Yes | Yes | Yes |
+| `research_funder_viewer` | No | No | Yes | Yes | Yes | Yes |
+| `evidence_agent` | No | No | No | Yes, nonconsequential only | Yes, nonconsequential only | Yes, nonconsequential only |
 
-Viewer access never grants plan-write or approval authority. `evidence_agent` can evaluate governed monitoring conditions and help choose a visualization specification, but can never satisfy a human review gate.
+Viewer access never grants plan-write or approval authority. `evidence_agent` can inspect governed workforce context, evaluate governed monitoring conditions, and help choose a visualization specification, but can never satisfy a human review gate.
 
 The identity contract expects Cognito-compatible `custom:tenant_id`, `custom:workspace_role`, and `custom:workspace_access` claims. Authentication and authorization happen before a tenant runtime is selected.
 
@@ -109,6 +110,18 @@ The baseline must be one verified, forecastable exact-county measure from the go
 
 Every successful result is labeled `scenario_output`, carries evidence release and baseline lineage, includes the user's range, and states that it is neither a published estimate nor a statistical prediction. It carries no probability of occurrence and remains subject to human review. See `docs/SCENARIO_GOVERNANCE.md`.
 
+## Workforce and Capacity Intelligence
+
+`POST /api/cbcap/workforce/capacity` is authenticated and accepts an exact county FIPS only. Workforce rows and source-coverage assertions are loaded through the same actor-scoped governed Evidence Gateway client used by institutional planning.
+
+The first contract, `cbcap.workforce-capacity.v1`, recognizes reviewed HRSA HPSA designation evidence and an explicit AHRF county-capacity allowlist when those feeds are present in the published Evidence Gateway.
+
+A source-confirmed whole-county HPSA may become county workforce barrier context. Population-group, facility, and source-designation HPSAs remain scoped context and cannot become a county-wide shortage conclusion. Negative evidence is allowed only when primary care, dental, and mental-health HPSA products all have verified complete source-coverage assertions.
+
+AHRF capacity variables are admitted only when their source, exact county, reference year, observation, source version, and metric semantics are reviewed, and their semantics are `contextual` with `context_only` comparison policy.
+
+The capability never produces a composite workforce score, county rank, final shortage verdict, provider-adequacy conclusion, or recommended allocation. Missing governed workforce feeds remain `no_verified_data`; the runtime does not synthesize replacements. See `docs/WORKFORCE_CAPACITY.md`.
+
 ## Monitoring Intelligence
 
 `POST /api/cbcap/monitoring/evaluate` is authenticated and feature-gated. The client supplies a reviewed monitor ID and optional as-of date only. The monitor definition and current snapshot come from server-owned governed providers.
@@ -138,9 +151,9 @@ Production application roles must not own the protected tables and must not hold
 
 ## Server exposure
 
-Institutional planning, review, funding, visualization, monitoring, workspace, and institutional-memory routes fail closed without an authenticated institutional gateway. Unknown `/api/...` paths also terminate with 404 and cannot fall through to the frontend SPA.
+Institutional planning, review, funding, visualization, workforce, monitoring, workspace, and institutional-memory routes fail closed without an authenticated institutional gateway. Unknown `/api/...` paths also terminate with 404 and cannot fall through to the frontend SPA.
 
-The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, visualization, monitoring, workspace, institutional memory, or learning-memory access and is not a production authentication mode.
+The explicit `ENABLE_UNAUTHENTICATED_CBCAP_DEV=true` flag enables development planning only. It does not enable review, funding, visualization, workforce, monitoring, workspace, institutional memory, or learning-memory access and is not a production authentication mode.
 
 ## Verification
 
@@ -154,7 +167,7 @@ Node 24 or later is required.
 
 ## Outstanding activation work
 
-1. add governed workforce/capacity and relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
+1. add relationship evidence only as reviewed feeds become available through the shared Evidence Gateway;
 2. add tenant-private evidence with review, rights, retention, and strict no-PHI boundaries;
 3. retire the superseded Python/FastAPI draft architecture after its reusable rules are ported;
 4. extend production preflight to all memory, monitoring, and private-evidence tables, then run it against real Cognito, PostgreSQL, backup/recovery, Evidence Gateway connectivity, same-tenant continuation, cross-tenant denial, and rollback controls before activating the institutional runtime;

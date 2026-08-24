@@ -7,6 +7,7 @@ const { createCBCAPMemoryApi } = require('./cbcap-memory-api');
 const { createCBCAPMonitoringApi } = require('./cbcap-monitoring-api');
 const { createCBCAPReviewApi } = require('./cbcap-review-api');
 const { createCBCAPVisualizationApi } = require('./cbcap-visualization-api');
+const { createCBCAPWorkforceApi } = require('./cbcap-workforce-api');
 const { workspaceActorReviewAuthorizer } = require('./institutional-cbcap-gateway');
 
 function createTenantCBCAPRuntimeFactory(options = {}) {
@@ -28,9 +29,6 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
         scenarioHandler = createGovernedScenarioHandler({ registrations, clock: options.clock });
       }
     } else if (typeof options.scenarioHandlerForActor === 'function') {
-      // Compatibility path for an already-reviewed, server-owned handler. Production
-      // composition should prefer scenarioRegistrationsForActor so formulas stay on
-      // the governed built-in method allowlist.
       const supplied = await options.scenarioHandlerForActor(actor);
       scenarioHandler = typeof supplied === 'function' ? supplied : null;
     }
@@ -75,6 +73,7 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       : null;
 
     const visualizationApi = createCBCAPVisualizationApi({ auditSink: options.auditSink });
+    const workforceApi = createCBCAPWorkforceApi({ evidenceClient: engine.evidenceClient, auditSink: options.auditSink });
 
     const monitoringApi = typeof options.monitoringDefinitionForActor === 'function'
       && typeof options.monitoringSnapshotForActor === 'function'
@@ -124,10 +123,12 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       reviewApi,
       fundingApi,
       visualizationApi,
+      workforceApi,
       monitoringApi,
       memoryApi,
       learningMemory,
       scenarioCapabilityEnabled: typeof scenarioHandler === 'function',
+      workforceCapacityEnabled: Boolean(workforceApi),
       monitoringIntelligenceEnabled: Boolean(monitoringApi),
       learningEvaluationEnabled: Boolean(learningMemory),
     };

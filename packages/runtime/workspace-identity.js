@@ -82,6 +82,7 @@ function permissionDecision(actorInput, action) {
     'cbcap.plan.view',
     'cbcap.visualization.plan',
     'cbcap.monitoring.evaluate',
+    'cbcap.workforce.view',
     'cbcap.workspace.read',
     'cbcap.memory.read',
   ].includes(action)) {
