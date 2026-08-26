@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm install --package-lock=false --ignore-scripts
+          npm ci --ignore-scripts
           npm test
           npm audit --audit-level=high
           git diff --exit-code

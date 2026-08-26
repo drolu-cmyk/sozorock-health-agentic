@@ -62,6 +62,26 @@ class InMemoryRunMemory {
     }
     return null;
   }
+
+  claimResume(runId, checkpointSequence, event) {
+    const events = this.runs.get(runId);
+    if (!events) throw new Error(`Unknown run ${runId}.`);
+    if (!Number.isInteger(checkpointSequence) || checkpointSequence < 1) {
+      throw new Error('checkpointSequence must be a positive integer.');
+    }
+    if (!event || typeof event !== 'object' || Array.isArray(event) || event.type !== 'run_resumed') {
+      throw new Error('Resume claim requires a run_resumed event.');
+    }
+    const checkpoint = events[checkpointSequence - 1];
+    if (
+      events.length !== checkpointSequence
+      || checkpoint?.type !== 'state_checkpoint'
+      || checkpoint?.status !== 'awaiting_human_review'
+    ) {
+      return null;
+    }
+    return this.append(runId, event);
+  }
 }
 
 module.exports = { InMemoryRunMemory };

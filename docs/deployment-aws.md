@@ -1,37 +1,43 @@
-# AWS Deployment Notes
+# AWS deployment boundary
 
-## Recommended Path for Frontend
+CB-CAP is a private institutional Node.js runtime, not a static public frontend or a
+stateless public-data API. The public Explore application and Evidence Gateway are
+owned by `drolu-cmyk/sozorock-health`; this repository consumes their versioned,
+hash-verified evidence packages.
 
-1. Upload the contents of `frontend/` to an S3 bucket configured for static website hosting.
-2. Place a CloudFront distribution in front of the bucket.
-3. Set the default root object to `index.html`.
-4. Configure cache behaviors appropriate for HTML (short TTL) and assets (longer TTL).
+The target compute service may be ECS, Lambda, App Runner, or another approved AWS
+service. That choice does not change the mandatory control plane:
 
-No server is required for the current Explore and Voice interfaces.
+- Node.js 24 or later and an immutable, vulnerability-scanned release artifact;
+- GitHub OIDC or equivalent short-lived deployment identity;
+- authenticated Cognito-compatible institutional identity before tenant selection;
+- private PostgreSQL with TLS, transaction-local tenant context, forced RLS, and a
+  least-privileged non-owner application role;
+- KMS-encrypted, versioned, non-public tenant-private evidence storage;
+- approved Host, CORS, TLS, WAF/rate-limit, security-header, and no-store controls;
+- migrations and recovery verification before traffic;
+- live Evidence Gateway, identity, database-isolation, observability, backup/restore,
+  and rollback proofs.
 
-## Optional API Layer
+Deploy the release with institutional traffic disabled. Build the deployment-owned
+readiness adapter from managed target-environment credentials, then run:
 
-If agent endpoints are needed:
-
-- Package the contents of `src/` and `api/` as a Lambda function (Node 18+ runtime) or container image for ECS / Fargate.
-- Expose via API Gateway.
-- Use environment variables for any external data source endpoints or feature flags.
-- Keep the function stateless; all county data should be loaded from public sources or a read-only data store.
-
-## Environment Variables (example)
-
+```bash
+CB_CAP_PRODUCTION_READINESS_ADAPTER=/run/secrets/cbcap-readiness-adapter.js \
+AGENTIC_ALLOWED_ORIGINS='https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org' \
+AGENTIC_ALLOWED_HOSTS='api.cbcap.sozorockfoundation.org' \
+AWS_REGION=us-east-1 \
+npm run preflight:production
 ```
-PLACE_DATA_SOURCE=public
-CB_CAP_ENDPOINT=
-LOG_LEVEL=info
-```
 
-## Security Notes
+Enable traffic only when the exact deployed release returns
+`eligible_for_controlled_activation`. Configuration booleans are not substitutes for
+live probes, and the readiness gate must not be bypassed because a dependency is
+pending.
 
-- No individual health records are stored or processed.
-- All evidence is public-source and source-traceable.
-- CORS and rate limiting should be applied at the API Gateway layer if agents are exposed publicly.
+The runtime rejects PHI, person-level records, credentials, and secrets at its
+admission boundaries. Tenant-private institutional evidence is nevertheless durable,
+tenant scoped, retention controlled, and never written into the public Evidence Core.
 
-## Cost Profile
-
-Static hosting + CloudFront is the lowest-cost starting point. Scale the compute layer only when live agent volume requires it.
+See [`PRODUCTION_ACTIVATION.md`](PRODUCTION_ACTIVATION.md) for the complete required
+proof contract and activation order.

@@ -113,7 +113,8 @@ See `docs/SUPERSEDED_DRAFT_MIGRATION.md`.
 ## Verification
 
 ```bash
-npm install
+npm ci
+npm run lint
 npm test
 npm audit --omit=dev --audit-level=high
 ```
