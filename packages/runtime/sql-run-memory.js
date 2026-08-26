@@ -154,6 +154,51 @@ class SqlRunMemory {
     if (!result?.rows?.length) return null;
     return rowToEvent(result.rows[0]);
   }
+
+  async claimResume(runId, checkpointSequence, event) {
+    requiredString(runId, 'runId');
+    if (!Number.isInteger(checkpointSequence) || checkpointSequence < 1) {
+      throw new Error('checkpointSequence must be a positive integer.');
+    }
+    if (!event || typeof event !== 'object' || Array.isArray(event) || event.type !== 'run_resumed') {
+      throw new Error('Resume claim requires a run_resumed event.');
+    }
+    const now = this.clock();
+    const sql = `
+      WITH allocated AS (
+        UPDATE ${this.runsTable}
+        SET next_sequence = next_sequence + 1,
+            updated_at = $4::timestamptz
+        WHERE run_id = $1::uuid
+          AND tenant_id = $2
+          AND next_sequence = $3::bigint + 1
+          AND EXISTS (
+            SELECT 1
+            FROM ${this.eventsTable} checkpoint
+            WHERE checkpoint.run_id = $1::uuid
+              AND checkpoint.tenant_id = $2
+              AND checkpoint.sequence = $3::bigint
+              AND checkpoint.event_type = 'state_checkpoint'
+              AND checkpoint.event->>'status' = 'awaiting_human_review'
+          )
+        RETURNING next_sequence - 1 AS sequence
+      )
+      INSERT INTO ${this.eventsTable}
+        (run_id, tenant_id, sequence, event_type, event, created_at)
+      SELECT $1::uuid, $2, sequence, 'run_resumed', $5::jsonb, $4::timestamptz
+      FROM allocated
+      RETURNING sequence, event, created_at
+    `;
+    const result = await this.query(sql, [
+      runId,
+      this.tenantId,
+      checkpointSequence,
+      now,
+      JSON.stringify(event),
+    ]);
+    if (!result?.rows?.length) return null;
+    return rowToEvent(result.rows[0]);
+  }
 }
 
 module.exports = {

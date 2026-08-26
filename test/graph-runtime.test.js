@@ -132,6 +132,24 @@ test('completed run cannot be resumed again', async () => {
   );
 });
 
+test('concurrent review continuations claim the checkpoint exactly once', async () => {
+  const calls = counters();
+  const memory = new InMemoryRunMemory();
+  const graph = createCBCAPGraph({ handlers: handlers(calls), memory });
+  await graph.run({ type: 'county_plan', location: '36001' }, { runId: 'run-concurrent' });
+
+  const outcomes = await Promise.allSettled([
+    graph.resume('run-concurrent', { approval: approval('run-concurrent') }),
+    graph.resume('run-concurrent', { approval: approval('run-concurrent') }),
+  ]);
+
+  assert.equal(outcomes.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(outcomes.filter((result) => result.status === 'rejected').length, 1);
+  assert.match(outcomes.find((result) => result.status === 'rejected').reason.message, /already claimed/);
+  assert.equal(calls.publish, 1);
+  assert.equal(memory.read('run-concurrent').filter((event) => event.type === 'run_resumed').length, 1);
+});
+
 test('run() refuses to overwrite an existing run ID', async () => {
   const calls = counters();
   const memory = new InMemoryRunMemory();

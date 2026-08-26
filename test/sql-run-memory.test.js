@@ -107,3 +107,46 @@ test('SQL run memory rejects unsafe identifiers and missing tenant scope', () =>
     /safe lowercase SQL identifier/,
   );
 });
+
+test('SQL resume claim is conditional on the exact awaiting-review checkpoint sequence', async () => {
+  const calls = [];
+  const memory = new SqlRunMemory({
+    tenantId: 'tenant-a',
+    clock: () => '2026-08-26T00:00:00.000Z',
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return {
+        rows: [{
+          sequence: 9,
+          event: params[4],
+          created_at: '2026-08-26T00:00:00.000Z',
+        }],
+      };
+    },
+  });
+
+  const event = await memory.claimResume('11111111-1111-4111-8111-111111111111', 8, {
+    type: 'run_resumed',
+    checkpointSequence: 8,
+  });
+
+  assert.equal(event.type, 'run_resumed');
+  assert.equal(event.sequence, 9);
+  assert.match(calls[0].sql, /next_sequence = \$3::bigint \+ 1/);
+  assert.match(calls[0].sql, /checkpoint\.event->>'status' = 'awaiting_human_review'/);
+  assert.deepEqual(calls[0].params.slice(0, 3), [
+    '11111111-1111-4111-8111-111111111111',
+    'tenant-a',
+    8,
+  ]);
+});
+
+test('SQL resume claim returns null after another continuation advances the run', async () => {
+  const memory = new SqlRunMemory({
+    tenantId: 'tenant-a',
+    async query() { return { rows: [] }; },
+  });
+  assert.equal(await memory.claimResume('11111111-1111-4111-8111-111111111111', 8, {
+    type: 'run_resumed',
+  }), null);
+});

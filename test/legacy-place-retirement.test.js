@@ -16,8 +16,15 @@ test('legacy place endpoint is explicitly retired and cannot emit a composite ba
 test('legacy weighted scorer and composite orchestrator are absent from the repository', () => {
   const root = path.join(__dirname, '..');
   for (const relative of [
+    'api/example-handler.js',
+    'src/agents/orchestrator.js',
+    'src/agents/place-agent.js',
+    'src/agents/hub-matcher.js',
     'packages/core/barrier-scoring.js',
     'packages/agents/sub-agents/barrier-agent.js',
+    'packages/agents/sub-agents/hub-matching-agent.js',
+    'packages/agents/sub-agents/report-agent.js',
+    'packages/agents/sub-agents/research-agent.js',
     'packages/agents/chief-of-staff.js',
   ]) {
     assert.equal(existsSync(path.join(root, relative)), false, `${relative} must remain retired`);
