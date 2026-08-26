@@ -47,8 +47,9 @@ paths:
                   legacySessionsEnabled: { type: boolean }
   /api/place:
     post:
-      summary: Run the legacy place-intelligence entry point
+      summary: Retired legacy place-intelligence entry point
       operationId: postPlace
+      deprecated: true
       requestBody:
         required: true
         content:
@@ -62,9 +63,8 @@ paths:
                   type: string
                   enum: [resident, planner, funder, cbcap]
       responses:
-        "200": { description: Place-intelligence response }
-        "400": { description: Invalid request }
-        "422": { description: Unresolved or policy-blocked request }
+        "410":
+          description: The synthetic place-intelligence prototype is retired; use the governed CB-CAP workflow
   /api/cbcap:
     post:
       summary: Start an authenticated CB-CAP county planning run

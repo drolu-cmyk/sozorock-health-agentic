@@ -9,7 +9,7 @@
     "dev": "node server/index.js",
     "test": "node --test test/*.test.js",
     "preflight:production": "node scripts/run-production-preflight.js",
-    "lint": "echo \"No linter configured yet\""
+    "lint": "node scripts/lint.js"
   },
   "dependencies": {
     "express": "^4.21.0"

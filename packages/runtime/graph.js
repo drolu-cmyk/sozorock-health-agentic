@@ -102,13 +102,16 @@ class GovernedGraph {
       throw new Error(`Continuation rejected: ${authorization.code}: ${authorization.reason}`);
     }
 
-    await this._memory('append', runId, {
+    const claim = await this._memory('claimResume', runId, checkpoint.sequence, {
       type: 'run_resumed',
       resumeAt: checkpoint.resumeAt,
       checkpointSequence: checkpoint.sequence,
       priorStatus: checkpoint.status,
       resumeCount: state.resumeCount,
     });
+    if (!claim) {
+      throw new Error(`Run ${runId} review continuation was already claimed.`);
+    }
     return this._execute(state, checkpoint.resumeAt, resumeStep);
   }
 
