@@ -3,5 +3,5 @@ runtime: node-governed-control-plane
 activation_contract: cbcap.production-readiness.v1
 api_domain: api.cbcap.sozorockfoundation.org
 approval: user-authorized-production-activation
-request_generation: 2
-retry_reason: generation 1 failed closed before AWS activation because a configuration test inherited the production runner AWS_REGION; generation 2 makes that test deterministic and resolves the already governed SozoRock Health OpenAI secret ARN without reading its value
+request_generation: 3
+retry_reason: generation 2 cleared all exact-source gates and failed closed at the stale AWS OIDC trust boundary; generation 3 follows the bounded SozoRock Health bootstrap generation 9 repair and retains exact repo/environment trust verification
