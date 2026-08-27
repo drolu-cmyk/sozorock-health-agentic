@@ -3,5 +3,5 @@ runtime: node-governed-control-plane
 activation_contract: cbcap.production-readiness.v1
 api_domain: api.cbcap.sozorockfoundation.org
 approval: user-authorized-production-activation
-request_generation: 4
-retry_reason: generation 3 followed a successful bounded bootstrap but AWS still rejected role assumption; generation 4 proves the non-secret GitHub OIDC audience, subject, repository, main ref, and exact workflow identity before attempting AWS access
+request_generation: 5
+retry_reason: generation 4 proved GitHub emits the immutable-ID production subject; generation 5 requires that exact stable owner and repository identity after bounded bootstrap generation 10 installs the matching AWS trust
