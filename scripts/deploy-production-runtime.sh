@@ -116,7 +116,8 @@ for attempt in $(seq 1 60); do
     --repository-name "$ECR_REPOSITORY" \
     --image-id imageTag="$APPROVED_COMMIT" \
     --output json 2>/tmp/cbcap-scan.err || true)
-  scan_status=$(jq -r '.imageScanStatus.status // ""' <<<"${scan_json:-{}}")
+  if [[ -z "$scan_json" ]]; then scan_json='{}'; fi
+  scan_status=$(jq -r '.imageScanStatus.status // ""' <<<"$scan_json")
   case "$scan_status" in
     COMPLETE) break ;;
     FAILED|UNSUPPORTED_IMAGE|FINDINGS_UNAVAILABLE) echo "ECR scan failed with $scan_status"; exit 1 ;;
