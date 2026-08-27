@@ -133,8 +133,19 @@ done
 
 critical=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<<"$scan_json")
 high=$(jq -r '.imageScanFindings.findingSeverityCounts.HIGH // 0' <<<"$scan_json")
-test "$critical" = "0"
-test "$high" = "0"
+if [[ "$critical" != "0" || "$high" != "0" ]]; then
+  echo "ECR scan blocked activation: CRITICAL=$critical HIGH=$high"
+  jq -c '[.imageScanFindings.findings[]?
+    | select(.severity == "CRITICAL" or .severity == "HIGH")
+    | {
+        name,
+        severity,
+        package: ([.attributes[]? | select(.key == "PACKAGE_NAME") | .value][0] // "unknown"),
+        version: ([.attributes[]? | select(.key == "PACKAGE_VERSION") | .value][0] // "unknown")
+      }
+  ] | unique' <<<"$scan_json"
+  exit 1
+fi
 image_digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$APPROVED_COMMIT" --query 'imageDetails[0].imageDigest' --output text)
 [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
 RUNTIME_IMAGE_URI="$repository_uri@$image_digest"
