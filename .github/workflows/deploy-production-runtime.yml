@@ -78,6 +78,29 @@ jobs:
           role-session-name: cbcap-agentic-production
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Resolve governed model provider configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          openai_secret_arn="$OPENAI_API_KEY_SECRET_ARN"
+          if [[ -z "$openai_secret_arn" ]]; then
+            openai_secret_arn=$(aws cloudformation describe-stacks \
+              --stack-name sozorock-health-contact \
+              --query "Stacks[0].Parameters[?ParameterKey=='OpenAISecretArn'].ParameterValue | [0]" \
+              --output text)
+          fi
+          [[ "$openai_secret_arn" =~ ^arn:aws:secretsmanager:${AWS_REGION}:${EXPECTED_AWS_ACCOUNT_ID}:secret:[A-Za-z0-9/_+=.@-]+$ ]]
+          resolved_secret_arn=$(aws secretsmanager describe-secret \
+            --secret-id "$openai_secret_arn" \
+            --query ARN --output text)
+          test "$resolved_secret_arn" = "$openai_secret_arn"
+          agent_model="${CB_CAP_AGENT_MODEL:-gpt-5.6-sol}"
+          [[ "$agent_model" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$ ]]
+          {
+            echo "OPENAI_API_KEY_SECRET_ARN=$openai_secret_arn"
+            echo "CB_CAP_AGENT_MODEL=$agent_model"
+          } >> "$GITHUB_ENV"
+
       - name: Execute fail-closed production activation
         shell: bash
         run: bash scripts/deploy-production-runtime.sh
