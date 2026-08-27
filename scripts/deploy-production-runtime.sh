@@ -140,8 +140,8 @@ if [[ "$critical" != "0" || "$high" != "0" ]]; then
     | {
         name,
         severity,
-        package: ([.attributes[]? | select(.key == "PACKAGE_NAME") | .value][0] // "unknown"),
-        version: ([.attributes[]? | select(.key == "PACKAGE_VERSION") | .value][0] // "unknown")
+        package: ([.attributes[]? | select(.key == "package_name") | .value][0] // "unknown"),
+        version: ([.attributes[]? | select(.key == "package_version") | .value][0] // "unknown")
       }
   ] | unique' <<<"$scan_json"
   exit 1

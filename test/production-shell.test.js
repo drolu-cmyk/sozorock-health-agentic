@@ -97,8 +97,8 @@ test('ECR scan polling never appends a shell fallback brace to valid JSON', () =
 test('ECR vulnerability failures report only bounded finding metadata before activation', () => {
   const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
   assert.match(script, /ECR scan blocked activation: CRITICAL=\$critical HIGH=\$high/);
-  assert.match(script, /PACKAGE_NAME/);
-  assert.match(script, /PACKAGE_VERSION/);
+  assert.match(script, /package_name/);
+  assert.match(script, /package_version/);
   assert.match(script, /select\(\.severity == "CRITICAL" or \.severity == "HIGH"\)/);
   assert.doesNotMatch(script, /\.description|\.uri/);
 });
@@ -123,6 +123,7 @@ test('production workflow deploys only the exact triggering commit', () => {
 
 test('production image excludes the retired demonstration frontend', () => {
   const dockerfile = readFileSync(path.join(__dirname, '..', 'Dockerfile.runtime'), 'utf8');
+  assert.match(dockerfile, /^FROM node:24\.19\.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df$/m);
   assert.doesNotMatch(dockerfile, /^COPY frontend\b/m);
   assert.match(dockerfile, /CMD \["node", "server\/production-index\.js"\]/);
   assert.match(dockerfile, /COPY package\.json package-lock\.json/);
