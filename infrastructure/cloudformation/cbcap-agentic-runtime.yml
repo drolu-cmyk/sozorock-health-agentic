@@ -528,7 +528,7 @@ Resources:
           Essential: true
           ReadonlyRootFilesystem: true
           LinuxParameters: {InitProcessEnabled: true}
-          Command: [node, scripts/migrate-postgres.js]
+          Command: [scripts/migrate-postgres.js]
           Environment:
             - {Name: CB_CAP_DATABASE_HOST, Value: !GetAtt Database.Endpoint.Address}
             - {Name: CB_CAP_DATABASE_PORT, Value: !GetAtt Database.Endpoint.Port}
@@ -564,7 +564,7 @@ Resources:
           Essential: true
           ReadonlyRootFilesystem: true
           LinuxParameters: {InitProcessEnabled: true}
-          Command: [node, scripts/run-production-preflight.js]
+          Command: [scripts/run-production-preflight.js]
           Environment:
             - {Name: AWS_REGION, Value: !Ref 'AWS::Region'}
             - {Name: EVIDENCE_GATEWAY_ORIGIN, Value: 'https://health.sozorockfoundation.org'}
