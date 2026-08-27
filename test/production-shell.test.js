@@ -103,6 +103,16 @@ test('ECR vulnerability failures report only bounded finding metadata before act
   assert.doesNotMatch(script, /\.description|\.uri/);
 });
 
+test('failed CloudFormation recovery is diagnosed before another stack mutation', () => {
+  const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
+  assert.match(script, /runtime_stack_status=.*describe-stacks/);
+  assert.match(script, /runtime_stack_status" == "ROLLBACK_FAILED"/);
+  assert.match(script, /describe-stack-events/);
+  assert.match(script, /--max-items 25/);
+  assert.match(script, /LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason/);
+  assert.match(script, /requires reviewed recovery before another change set/);
+});
+
 test('production workflow deploys only the exact triggering commit', () => {
   const workflow = readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'deploy-production-runtime.yml'), 'utf8');
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
