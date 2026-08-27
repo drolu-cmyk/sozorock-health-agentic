@@ -51,6 +51,53 @@ emit_stack_failure_context() {
     --output table >&2 || true
 }
 
+recover_failed_initial_stack() {
+  local events resources user_pool_id users pool
+  events=$(aws cloudformation describe-stack-events --stack-name "$RUNTIME_STACK" --max-items 200 --output json)
+  if ! jq -e '
+    any(.StackEvents[];
+      .LogicalResourceId == "UserPool" and
+      .ResourceStatus == "CREATE_FAILED" and
+      (.ResourceStatusReason | contains("Value '\''true'\'' at '\''mfaConfiguration'\''"))) and
+    any(.StackEvents[];
+      .LogicalResourceId == "UserPool" and
+      .ResourceStatus == "DELETE_FAILED" and
+      (.ResourceStatusReason | contains("deletion protection is activated"))) and
+    all(.StackEvents[] as $event;
+      if (["CREATE_FAILED", "UPDATE_FAILED", "DELETE_FAILED"] | index($event.ResourceStatus)) != null and
+         (($event.ResourceStatusReason // "") | contains("Resource creation cancelled") | not)
+      then $event.LogicalResourceId == "UserPool"
+      else true end)
+  ' <<<"$events" >/dev/null; then
+    return 1
+  fi
+
+  resources=$(aws cloudformation list-stack-resources --stack-name "$RUNTIME_STACK" --output json)
+  user_pool_id=$(jq -r '.StackResourceSummaries[] | select(.LogicalResourceId=="UserPool") | .PhysicalResourceId // empty' <<<"$resources")
+  [[ "$user_pool_id" =~ ^[a-z]{2}(-gov)?-[a-z]+-[0-9]_[A-Za-z0-9]+$ ]] || return 1
+  if jq -e 'any(.StackResourceSummaries[];
+    (.LogicalResourceId == "Database" or .LogicalResourceId == "PrivateEvidenceBucket") and
+    ((.PhysicalResourceId // "") | length > 0))' <<<"$resources" >/dev/null; then
+    return 1
+  fi
+
+  pool=$(aws cognito-idp describe-user-pool --user-pool-id "$user_pool_id" --output json)
+  jq -e --arg id "$user_pool_id" --arg account "$EXPECTED_AWS_ACCOUNT_ID" --arg region "$AWS_REGION" '
+    .UserPool.Id == $id and
+    .UserPool.Name == "cbcap-agentic-workspace" and
+    .UserPool.DeletionProtection == "ACTIVE" and
+    (.UserPool.EstimatedNumberOfUsers // 0) == 0 and
+    .UserPool.Arn == ("arn:aws:cognito-idp:" + $region + ":" + $account + ":userpool/" + $id)
+  ' <<<"$pool" >/dev/null || return 1
+  users=$(aws cognito-idp list-users --user-pool-id "$user_pool_id" --limit 1 --output json)
+  jq -e '(.Users // []) | length == 0' <<<"$users" >/dev/null || return 1
+
+  echo "Recovering the exact empty CB-CAP first-create rollback."
+  aws cognito-idp update-user-pool --user-pool-id "$user_pool_id" --deletion-protection INACTIVE >/dev/null || return 1
+  aws cloudformation delete-stack --stack-name "$RUNTIME_STACK" --role-arn "$CLOUDFORMATION_ROLE_ARN" || return 1
+  aws cloudformation wait stack-delete-complete --stack-name "$RUNTIME_STACK" || return 1
+}
+
 disable_runtime() {
   if [[ -z "$RUNTIME_IMAGE_URI" ]]; then return 0; fi
   if ! aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" >/dev/null 2>&1; then return 0; fi
@@ -61,7 +108,7 @@ disable_runtime() {
     --template-file "$RUNTIME_TEMPLATE" \
     --capabilities CAPABILITY_NAMED_IAM \
     --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-    --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
+    --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false UserPoolDeletionProtection=ACTIVE OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
     --no-fail-on-empty-changeset
   set -e
 }
@@ -103,17 +150,16 @@ test -z "$(git status --porcelain --untracked-files=no)"
 
 runtime_stack_status=$(aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)
+initial_user_pool_protection=ACTIVE
 if [[ "$runtime_stack_status" == "ROLLBACK_FAILED" ]]; then
-  failed_stack_arn=$(aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" --query 'Stacks[0].StackId' --output text)
-  failed_resources=$(aws cloudformation list-stack-resources --stack-name "$failed_stack_arn" --output json)
-  failed_user_pool_id=$(jq -r '[.StackResourceSummaries[] | select(.LogicalResourceId=="UserPool" and .ResourceType=="AWS::Cognito::UserPool") | .PhysicalResourceId][0] // empty' <<<"$failed_resources")
-  [[ "$failed_stack_arn" =~ ^arn:aws:cloudformation:${AWS_REGION}:${EXPECTED_AWS_ACCOUNT_ID}:stack/cbcap-agentic-production/[0-9a-f-]{36}$ ]]
-  [[ "$failed_user_pool_id" =~ ^[a-z]{2}(-gov)?-[a-z]+-[0-9]_[A-Za-z0-9]+$ ]]
-  echo "Verified failed stack ARN: $failed_stack_arn" >&2
-  echo "Verified failed user pool ARN: arn:aws:cognito-idp:${AWS_REGION}:${EXPECTED_AWS_ACCOUNT_ID}:userpool/${failed_user_pool_id}" >&2
-  echo "CB-CAP runtime stack requires reviewed recovery before another change set can be created." >&2
-  emit_stack_failure_context
-  exit 1
+  if ! recover_failed_initial_stack; then
+    echo "CB-CAP runtime stack requires reviewed recovery before another change set can be created." >&2
+    emit_stack_failure_context
+    exit 1
+  fi
+  initial_user_pool_protection=INACTIVE
+elif [[ -z "$runtime_stack_status" || "$runtime_stack_status" == "None" ]]; then
+  initial_user_pool_protection=INACTIVE
 fi
 
 aws cloudformation deploy \
@@ -185,7 +231,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false UserPoolDeletionProtection="$initial_user_pool_protection" OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 
 ECS_CLUSTER=$(stack_output ClusterName)
@@ -241,7 +287,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false UserPoolDeletionProtection=ACTIVE OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
 
@@ -347,7 +393,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=true OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=true UserPoolDeletionProtection=ACTIVE OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
 
@@ -391,7 +437,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false UserPoolDeletionProtection=ACTIVE OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 rollback_api_status=$(curl --proto '=https' --tlsv1.2 --silent --output /dev/null --write-out '%{http_code}' "https://$API_DOMAIN/healthz")
 test "$rollback_api_status" = "503"
@@ -405,7 +451,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=true OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=true UserPoolDeletionProtection=ACTIVE OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 for attempt in $(seq 1 30); do
   if curl --proto '=https' --tlsv1.2 --fail --silent --show-error "https://$API_DOMAIN/readyz" | jq -e '.status=="ready"' >/dev/null; then break; fi
