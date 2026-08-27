@@ -116,8 +116,11 @@ test('only the exact empty first-create rollback can be recovered', () => {
   assert.match(script, /LogicalResourceId == "Database"/);
   assert.match(script, /LogicalResourceId == "PrivateEvidenceBucket"/);
   assert.match(script, /update-user-pool.*--deletion-protection INACTIVE/);
+  assert.match(script, /update-user-pool.*--deletion-protection INACTIVE.*\|\| return 1/);
   assert.match(script, /delete-stack.*--role-arn/);
+  assert.match(script, /delete-stack.*--role-arn.*\|\| return 1/);
   assert.match(script, /wait stack-delete-complete/);
+  assert.match(script, /wait stack-delete-complete.*\|\| return 1/);
   assert.doesNotMatch(script, /force-delete-without-recovery/);
   assert.doesNotMatch(script, /delete-log-group/);
   assert.doesNotMatch(script, /schedule-key-deletion/);
@@ -150,7 +153,9 @@ test('first-create rollback remains deletable until the stack is healthy', () =>
   assert.match(template, /UserPoolDeletionProtection:/);
   assert.match(template, /AllowedValues: \[ACTIVE, INACTIVE\]/);
   assert.match(template, /DeletionProtection: !Ref UserPoolDeletionProtection/);
-  assert.match(script, /DesiredCount=0 ActivationEnabled=false UserPoolDeletionProtection=INACTIVE/);
+  assert.match(script, /initial_user_pool_protection=ACTIVE/);
+  assert.match(script, /initial_user_pool_protection=INACTIVE/);
+  assert.match(script, /UserPoolDeletionProtection="\$initial_user_pool_protection"/);
   assert.match(script, /DesiredCount=1 ActivationEnabled=false UserPoolDeletionProtection=ACTIVE/);
   assert.match(script, /DesiredCount=1 ActivationEnabled=true UserPoolDeletionProtection=ACTIVE/);
 });

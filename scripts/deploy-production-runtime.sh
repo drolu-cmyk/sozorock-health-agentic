@@ -93,9 +93,9 @@ recover_failed_initial_stack() {
   jq -e '(.Users // []) | length == 0' <<<"$users" >/dev/null || return 1
 
   echo "Recovering the exact empty CB-CAP first-create rollback."
-  aws cognito-idp update-user-pool --user-pool-id "$user_pool_id" --deletion-protection INACTIVE >/dev/null
-  aws cloudformation delete-stack --stack-name "$RUNTIME_STACK" --role-arn "$CLOUDFORMATION_ROLE_ARN"
-  aws cloudformation wait stack-delete-complete --stack-name "$RUNTIME_STACK"
+  aws cognito-idp update-user-pool --user-pool-id "$user_pool_id" --deletion-protection INACTIVE >/dev/null || return 1
+  aws cloudformation delete-stack --stack-name "$RUNTIME_STACK" --role-arn "$CLOUDFORMATION_ROLE_ARN" || return 1
+  aws cloudformation wait stack-delete-complete --stack-name "$RUNTIME_STACK" || return 1
 }
 
 disable_runtime() {
@@ -150,12 +150,16 @@ test -z "$(git status --porcelain --untracked-files=no)"
 
 runtime_stack_status=$(aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)
+initial_user_pool_protection=ACTIVE
 if [[ "$runtime_stack_status" == "ROLLBACK_FAILED" ]]; then
   if ! recover_failed_initial_stack; then
     echo "CB-CAP runtime stack requires reviewed recovery before another change set can be created." >&2
     emit_stack_failure_context
     exit 1
   fi
+  initial_user_pool_protection=INACTIVE
+elif [[ -z "$runtime_stack_status" || "$runtime_stack_status" == "None" ]]; then
+  initial_user_pool_protection=INACTIVE
 fi
 
 aws cloudformation deploy \
@@ -227,7 +231,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false UserPoolDeletionProtection=INACTIVE OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false UserPoolDeletionProtection="$initial_user_pool_protection" OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 
 ECS_CLUSTER=$(stack_output ClusterName)
