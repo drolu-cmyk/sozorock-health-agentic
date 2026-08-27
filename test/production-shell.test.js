@@ -87,6 +87,13 @@ test('deployment script binds the live probe to the stack client and fails close
   assert.doesNotMatch(script, /get-secret-value/);
 });
 
+test('ECR scan polling never appends a shell fallback brace to valid JSON', () => {
+  const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
+  assert.match(script, /if \[\[ -z "\$scan_json" \]\]; then scan_json='\{\}'; fi/);
+  assert.match(script, /<<<"\$scan_json"/);
+  assert.doesNotMatch(script, /\$\{scan_json:-\{\}\}/);
+});
+
 test('production workflow deploys only the exact triggering commit', () => {
   const workflow = readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'deploy-production-runtime.yml'), 'utf8');
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
