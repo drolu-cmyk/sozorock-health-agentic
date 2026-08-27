@@ -71,6 +71,35 @@ jobs:
           test "$origin_main" = "$approved_commit"
           echo "APPROVED_COMMIT=$approved_commit" >> "$GITHUB_ENV"
 
+      - name: Prove exact GitHub OIDC claims
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_token=$(curl --fail-with-body --silent --show-error \
+            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -er '.value')
+          claims=$(OIDC_TOKEN="$oidc_token" node <<'NODE'
+          const token = process.env.OIDC_TOKEN || '';
+          const part = token.split('.')[1] || '';
+          const payload = JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+          process.stdout.write(JSON.stringify({
+            aud: payload.aud || null,
+            sub: payload.sub || null,
+            repository: payload.repository || null,
+            ref: payload.ref || null,
+            job_workflow_ref: payload.job_workflow_ref || null,
+            environment: payload.environment || null,
+          }));
+          NODE
+          )
+          unset oidc_token
+          echo "GitHub OIDC claim boundary: $claims"
+          jq -e \
+            --arg subject 'repo:drolu-cmyk/sozorock-health-agentic:environment:production' \
+            --arg workflow 'drolu-cmyk/sozorock-health-agentic/.github/workflows/deploy-production-runtime.yml@refs/heads/main' \
+            '.aud == "sts.amazonaws.com" and .sub == $subject and .repository == "drolu-cmyk/sozorock-health-agentic" and .ref == "refs/heads/main" and .job_workflow_ref == $workflow' \
+            <<<"$claims" >/dev/null
+
       - name: Assume repository-scoped AWS OIDC deployment role
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
