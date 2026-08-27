@@ -94,6 +94,11 @@ test('production workflow deploys only the exact triggering commit', () => {
   assert.match(workflow, /RELEASE_SHA: \$\{\{ github\.sha \}\}/);
   assert.match(workflow, /test "\$approved_commit" = "\$RELEASE_SHA"/);
   assert.match(workflow, /test "\$origin_main" = "\$approved_commit"/);
+  assert.match(workflow, /sozorock-health-contact/);
+  assert.match(workflow, /Parameters\[\?ParameterKey=='OpenAISecretArn'\]/);
+  assert.match(workflow, /secretsmanager describe-secret/);
+  assert.doesNotMatch(workflow, /get-secret-value/);
+  assert.match(workflow, /CB_CAP_AGENT_MODEL:-gpt-5\.6-sol/);
 });
 
 test('production image excludes the retired demonstration frontend', () => {

@@ -120,7 +120,7 @@ test('composition requires PostgreSQL pool when no runtime or complete memory ov
 test('composition requires Cognito region, user pool, and app client when no identity override is supplied', () => {
   const runtimeForActor = async () => ({ planningApi: { handle: async () => ({ statusCode: 202, body: {} }) } });
   assert.throws(
-    () => createCognitoPostgresInstitutionalGateway({ runtimeForActor }),
+    () => createCognitoPostgresInstitutionalGateway({ region: 'not-a-region', runtimeForActor }),
     /valid AWS region/,
   );
   assert.throws(
