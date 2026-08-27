@@ -53,10 +53,12 @@ test('multi-county ZIP stops before the planning engine', async () => {
       county: 'Dutchess',
       state: 'NY',
       multiCounty: true,
-      resolvedAs: 'zip',
+      resolvedAs: 'census_zcta_proxy',
+      resolutionMethod: 'census_zcta_proxy',
+      caveat: 'A postal ZIP Code is not a Census ZCTA.',
       allCounties: [
-        { fips: '36027', name: 'Dutchess', resRatio: 0.65 },
-        { fips: '36111', name: 'Ulster', resRatio: 0.35 },
+        { fips: '36027', name: 'Dutchess', areaRatio: 0.65 },
+        { fips: '36111', name: 'Ulster', areaRatio: 0.35 },
       ],
     }),
   });
@@ -65,6 +67,11 @@ test('multi-county ZIP stops before the planning engine', async () => {
   assert.equal(result.statusCode, 409);
   assert.equal(result.body.status, 'needs_place_selection');
   assert.equal(result.body.error.code, 'multi_county_selection_required');
+  assert.equal(result.body.place.kind, 'multi_county_census_zcta_proxy');
+  assert.equal(result.body.place.resolutionMethod, 'census_zcta_proxy');
+  assert.match(result.body.place.caveat, /not a Census ZCTA/i);
+  assert.equal(result.body.place.matches[0].landAreaShare, 0.65);
+  assert.equal(result.body.place.matches[0].residentialShare, null);
   assert.equal(result.body.place.matches.length, 2);
   assert.equal(calls.engine, 0);
 });

@@ -103,7 +103,7 @@ function createApp(options = {}) {
       runtime: 'governed-graph',
       time: new Date().toISOString(),
       geography: countyMeta(),
-      zipCrosswalk: zipMeta(),
+      postalGeography: zipMeta(),
       institutionalAccessEnabled: Boolean(institutionalGateway),
       reviewContinuationEnabled: Boolean(institutionalGateway),
       fundingIntelligenceRouteEnabled: Boolean(institutionalGateway && typeof institutionalGateway.handleFunding === 'function'),

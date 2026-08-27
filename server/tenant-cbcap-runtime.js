@@ -38,6 +38,12 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
     const publishHandler = typeof options.publishHandlerForActor === 'function'
       ? await options.publishHandlerForActor(actor)
       : null;
+    const agentOrchestrator = typeof options.agentOrchestratorForActor === 'function'
+      ? await options.agentOrchestratorForActor(actor)
+      : null;
+    if (agentOrchestrator && typeof agentOrchestrator.run !== 'function') {
+      throw new Error('Tenant agent orchestrator must expose run(state).');
+    }
 
     const engine = new CBCAPPlanningEngine({
       tenantId: actor.tenantId,
@@ -53,6 +59,7 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       clock: options.clock,
       scenarioHandler: typeof scenarioHandler === 'function' ? scenarioHandler : undefined,
       publishHandler: typeof publishHandler === 'function' ? publishHandler : undefined,
+      agentOrchestrator: agentOrchestrator || undefined,
     });
 
     const planningApi = createCBCAPApi({ engine });
@@ -151,6 +158,7 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       monitoringIntelligenceEnabled: Boolean(monitoringApi),
       privateEvidenceEnabled: Boolean(privateEvidenceApi),
       learningEvaluationEnabled: Boolean(learningMemory),
+      agentAssistanceEnabled: Boolean(agentOrchestrator),
     };
   };
 }

@@ -1,4 +1,7 @@
 const crypto = require('crypto');
+const { readProductionAgentConfig } = require('./production-agent-runtime');
+const { loadCountyArtifact } = require('../packages/data/national-counties');
+const { loadZipArtifact } = require('../packages/data/zip-crosswalk');
 
 const DEFAULT_PROOF_COUNTIES = Object.freeze(['36001', '36093', '36057', '42029', '48029']);
 const PLANNING_CONTRACT = 'sozorock.evidence-gateway.planning.v1';
@@ -20,6 +23,18 @@ const DEPLOYMENT_PROOF_FIELDS = Object.freeze([
   'securityHeadersVerified',
   'corsBoundaryVerified',
   'unauthenticatedProtectedRouteDenied',
+  'cognitoPkceHostedUiVerified',
+]);
+
+const MODEL_PROOF_FIELDS = Object.freeze([
+  'structuredOutputVerified',
+  'specialistSequenceVerified',
+  'countyReleaseBound',
+  'humanReviewPreserved',
+  'modelIdentityVerified',
+  'promptVersionVerified',
+  'outputHashRecorded',
+  'responseIdHashRecorded',
 ]);
 
 const PROTECTED_TABLES = Object.freeze([
@@ -316,17 +331,76 @@ function inspectProductionConfiguration(options = {}) {
 
   const region = String(env.AWS_REGION || '').trim();
   if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(region)) issues.push('aws_region_missing_or_invalid');
+  let agent = null;
+  try {
+    const config = readProductionAgentConfig(env);
+    agent = {
+      model: config.model,
+      promptVersion: config.promptVersion,
+      killSwitchEnabled: config.killSwitchEnabled,
+    };
+    if (config.killSwitchEnabled) issues.push('agent_kill_switch_enabled');
+  } catch {
+    issues.push('agent_configuration_missing_or_invalid');
+  }
   return {
     ok: issues.length === 0,
     issues: unique(issues),
     allowedOrigins: origins,
     allowedHosts: hosts,
     awsRegion: region || null,
+    agent,
   };
+}
+
+function inspectNationalGeographyData(options = {}) {
+  if (typeof options.geographyProbe === 'function') {
+    try {
+      const result = options.geographyProbe();
+      return result && typeof result.then !== 'function'
+        ? result
+        : { ok: false, issues: ['geography_probe_must_be_synchronous'] };
+    } catch {
+      return { ok: false, issues: ['geography_probe_failed'] };
+    }
+  }
+  const issues = [];
+  let counties = null;
+  let postalGeography = null;
+  try {
+    const loaded = loadCountyArtifact({ production: true });
+    counties = {
+      count: loaded.validation.count,
+      stateCount: loaded.validation.stateCount,
+      version: loaded.artifact.version || null,
+      effectiveDate: loaded.artifact.effectiveDate || null,
+      sourceSha256: loaded.artifact.source?.sha256 || null,
+    };
+  } catch {
+    issues.push('national_counties_not_ready');
+  }
+  try {
+    const loaded = loadZipArtifact({ production: true });
+    postalGeography = {
+      activeMethod: loaded.method,
+      geographyKind: loaded.method === 'census_zcta_proxy' ? 'census_zcta_proxy' : 'usps_zip_crosswalk',
+      geographyCount: loaded.validation.geographyCount,
+      countyCount: loaded.validation.countyCount,
+      relationshipCount: loaded.validation.relationshipCount,
+      version: loaded.artifact.version || null,
+      effectiveDate: loaded.artifact.effectiveDate || null,
+      sourceSha256: loaded.artifact.source?.sha256 || null,
+      caveat: loaded.method === 'census_zcta_proxy' ? loaded.artifact.caveat : null,
+    };
+  } catch {
+    issues.push('postal_geography_not_ready');
+  }
+  return { ok: issues.length === 0, counties, postalGeography, issues };
 }
 
 async function runProductionReadiness(options = {}) {
   const configuration = inspectProductionConfiguration(options);
+  const nationalGeography = inspectNationalGeographyData(options);
   const database = await inspectPostgresControlPlane(options);
   const tenantIsolation = await probeTenantIsolation(options);
   const evidenceGateway = await probeEvidenceGateway(options);
@@ -337,6 +411,7 @@ async function runProductionReadiness(options = {}) {
     'humanReviewAuthorityVerified',
   ]);
   const deployment = await runNamedProbe('deployment', options.deploymentProbe, DEPLOYMENT_PROOF_FIELDS);
+  const model = await runNamedProbe('model', options.modelProbe, MODEL_PROOF_FIELDS);
   const recovery = await runNamedProbe('recovery', options.recoveryProbe, [
     'backupVerified',
     'restoreVerified',
@@ -353,7 +428,7 @@ async function runProductionReadiness(options = {}) {
     'evidenceGatewayUnaffected',
   ]);
 
-  const sections = { configuration, database, tenantIsolation, evidenceGateway, identity, deployment, recovery, observability, rollback };
+  const sections = { configuration, nationalGeography, database, tenantIsolation, evidenceGateway, identity, deployment, model, recovery, observability, rollback };
   const issues = unique(Object.entries(sections).flatMap(([section, result]) => (result.issues || []).map((issue) => `${section}:${issue}`)));
   return {
     contract: 'cbcap.production-readiness.v1',
@@ -368,9 +443,11 @@ async function runProductionReadiness(options = {}) {
 module.exports = {
   DEFAULT_PROOF_COUNTIES,
   DEPLOYMENT_PROOF_FIELDS,
+  MODEL_PROOF_FIELDS,
   PLANNING_CONTRACT,
   PROTECTED_TABLES,
   inspectPostgresControlPlane,
+  inspectNationalGeographyData,
   inspectProductionConfiguration,
   probeEvidenceGateway,
   probeTenantIsolation,

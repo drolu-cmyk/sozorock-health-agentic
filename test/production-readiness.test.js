@@ -4,11 +4,28 @@ const {
   DEFAULT_PROOF_COUNTIES,
   PROTECTED_TABLES,
   inspectPostgresControlPlane,
+  inspectNationalGeographyData,
   inspectProductionConfiguration,
   probeEvidenceGateway,
   probeTenantIsolation,
   runProductionReadiness,
 } = require('../server/production-readiness');
+
+test('production geography readiness accepts the complete governed Census ZCTA proxy', () => {
+  const result = inspectNationalGeographyData();
+  assert.equal(result.ok, true);
+  assert.equal(result.counties.count, 3144);
+  assert.equal(result.postalGeography.activeMethod, 'census_zcta_proxy');
+  assert.equal(result.postalGeography.geographyKind, 'census_zcta_proxy');
+  assert.equal(result.postalGeography.geographyCount, 33354);
+  assert.equal(result.postalGeography.relationshipCount, 46641);
+  assert.match(result.postalGeography.caveat, /not a Census ZCTA/i);
+});
+
+test('production geography readiness can consume an independently verified deployment probe', () => {
+  const result = inspectNationalGeographyData({ geographyProbe: () => ({ ok: true, counties: { count: 3144 }, postalGeography: { activeMethod: 'hud_usps_zip_county', geographyCount: 40000 }, issues: [] }) });
+  assert.equal(result.ok, true);
+});
 
 function privilegeRow(table) {
   const expected = new Set(table.privileges);
@@ -162,6 +179,10 @@ test('production configuration disables bypasses and requires explicit origins, 
     AGENTIC_ALLOWED_ORIGINS: 'https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org',
     AGENTIC_ALLOWED_HOSTS: 'api.cbcap.sozorockfoundation.org',
     AWS_REGION: 'us-east-1',
+    OPENAI_API_KEY: 'test-openai-key-not-live-123456',
+    CB_CAP_AGENT_MODEL: 'gpt-5-mini',
+    CB_CAP_AGENT_PROMPT_VERSION: 'cbcap-prompts-v1',
+    CB_CAP_AGENT_KILL_SWITCH: 'false',
   } });
   assert.equal(good.ok, true);
 
@@ -176,6 +197,24 @@ test('production configuration disables bypasses and requires explicit origins, 
   assert.ok(bad.issues.includes('legacy_sessions_enabled'));
   assert.ok(bad.issues.includes('allowed_host_invalid_or_wildcard'));
   assert.ok(bad.issues.includes('aws_region_missing_or_invalid'));
+  assert.ok(bad.issues.includes('agent_configuration_missing_or_invalid'));
+});
+
+test('production configuration fails closed when the model kill switch is enabled', () => {
+  const result = inspectProductionConfiguration({ env: {
+    ENABLE_UNAUTHENTICATED_CBCAP_DEV: 'false',
+    ENABLE_LEGACY_SESSIONS: 'false',
+    AGENTIC_ALLOWED_ORIGINS: 'https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org',
+    AGENTIC_ALLOWED_HOSTS: 'api.cbcap.sozorockfoundation.org',
+    AWS_REGION: 'us-east-1',
+    OPENAI_API_KEY: 'test-openai-key-not-live-123456',
+    CB_CAP_AGENT_MODEL: 'gpt-5-mini',
+    CB_CAP_AGENT_PROMPT_VERSION: 'cbcap-prompts-v1',
+    CB_CAP_AGENT_KILL_SWITCH: 'true',
+  } });
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.includes('agent_kill_switch_enabled'));
+  assert.equal(Object.hasOwn(result.agent, 'apiKey'), false);
 });
 
 test('full activation gate stays blocked if any target-environment proof is missing', async () => {
@@ -184,6 +223,10 @@ test('full activation gate stays blocked if any target-environment proof is miss
       AGENTIC_ALLOWED_ORIGINS: 'https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org',
       AGENTIC_ALLOWED_HOSTS: 'api.cbcap.sozorockfoundation.org',
       AWS_REGION: 'us-east-1',
+      OPENAI_API_KEY: 'test-openai-key-not-live-123456',
+      CB_CAP_AGENT_MODEL: 'gpt-5-mini',
+      CB_CAP_AGENT_PROMPT_VERSION: 'cbcap-prompts-v1',
+      CB_CAP_AGENT_KILL_SWITCH: 'false',
     },
     pool: inspectionPool(),
     tenantA: 'tenant-a',
@@ -206,6 +249,17 @@ test('full activation gate stays blocked if any target-environment proof is miss
       securityHeadersVerified: true,
       corsBoundaryVerified: true,
       unauthenticatedProtectedRouteDenied: true,
+      cognitoPkceHostedUiVerified: true,
+    }),
+    modelProbe: async () => ({
+      structuredOutputVerified: true,
+      specialistSequenceVerified: true,
+      countyReleaseBound: true,
+      humanReviewPreserved: true,
+      modelIdentityVerified: true,
+      promptVersionVerified: true,
+      outputHashRecorded: true,
+      responseIdHashRecorded: true,
     }),
     recoveryProbe: async () => ({ backupVerified: true, restoreVerified: true }),
     observabilityProbe: async () => ({ logsReachable: true, auditEventsReachable: true, alertsConfigured: true, incidentRouteConfigured: true }),

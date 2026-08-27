@@ -31,6 +31,7 @@ exports.createReadinessOptions = async function createReadinessOptions() {
     evidenceClient: new EvidenceGatewayClient({ baseUrl: evidenceOrigin }),
     identityProbe: async () => proofSection(proof, 'identity'),
     deploymentProbe: async () => proofSection(proof, 'deployment'),
+    modelProbe: async () => proofSection(proof, 'model'),
     recoveryProbe: async () => proofSection(proof, 'recovery'),
     observabilityProbe: async () => proofSection(proof, 'observability'),
     rollbackProbe: async () => proofSection(proof, 'rollback'),

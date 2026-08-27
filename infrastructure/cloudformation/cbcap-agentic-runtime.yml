@@ -28,6 +28,20 @@ Parameters:
     Type: String
     Default: 'false'
     AllowedValues: ['true', 'false']
+  OpenAIApiKeySecretArn:
+    Type: String
+    MinLength: 20
+    AllowedPattern: '^arn:[A-Za-z0-9-]+:secretsmanager:[A-Za-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$'
+  AgentModel:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$'
+  AgentPromptVersion:
+    Type: String
+    AllowedPattern: '^[a-z0-9][a-z0-9._-]{5,119}$'
+  AgentKillSwitch:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
   LogRetentionDays:
     Type: Number
     Default: 90
@@ -338,6 +352,18 @@ Resources:
       RefreshTokenValidity: 30
       TokenValidityUnits: {AccessToken: minutes, IdToken: minutes, RefreshToken: days}
       ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      CallbackURLs: ['https://cbcap.sozorockfoundation.org/auth/callback']
+      LogoutURLs: ['https://cbcap.sozorockfoundation.org/']
+      SupportedIdentityProviders: [COGNITO]
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub cbcap-sozorock-${AWS::AccountId}
+      UserPoolId: !Ref UserPool
 
   RuntimeLogGroup:
     Type: AWS::Logs::LogGroup
@@ -375,13 +401,15 @@ Resources:
       ManagedPolicyArns:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
       Policies:
-        - PolicyName: ReadRuntimePassword
+        - PolicyName: ReadRuntimeInjectedSecrets
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: !Ref RuntimeDatabasePassword
+                Resource:
+                  - !Ref RuntimeDatabasePassword
+                  - !Ref OpenAIApiKeySecretArn
 
   RuntimeTaskRole:
     Type: AWS::IAM::Role
@@ -469,9 +497,14 @@ Resources:
             - {Name: CB_CAP_COGNITO_APP_CLIENT_ID, Value: !Ref UserPoolClient}
             - {Name: CB_CAP_PRIVATE_EVIDENCE_BUCKET, Value: !Ref PrivateEvidenceBucket}
             - {Name: CB_CAP_PRIVATE_EVIDENCE_KMS_KEY_ARN, Value: !GetAtt PrivateEvidenceKey.Arn}
+            - {Name: CB_CAP_AGENT_MODEL, Value: !Ref AgentModel}
+            - {Name: CB_CAP_AGENT_PROMPT_VERSION, Value: !Ref AgentPromptVersion}
+            - {Name: CB_CAP_AGENT_KILL_SWITCH, Value: !Ref AgentKillSwitch}
           Secrets:
             - Name: CB_CAP_DATABASE_PASSWORD
               ValueFrom: !Ref RuntimeDatabasePassword
+            - Name: OPENAI_API_KEY
+              ValueFrom: !Ref OpenAIApiKeySecretArn
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -545,9 +578,14 @@ Resources:
             - {Name: CB_CAP_DATABASE_USERNAME, Value: cbcap_runtime}
             - {Name: CB_CAP_DATABASE_CA_FILE, Value: /app/certs/global-bundle.pem}
             - {Name: CB_CAP_PRODUCTION_READINESS_ADAPTER, Value: /app/scripts/production-readiness-adapter.js}
+            - {Name: CB_CAP_AGENT_MODEL, Value: !Ref AgentModel}
+            - {Name: CB_CAP_AGENT_PROMPT_VERSION, Value: !Ref AgentPromptVersion}
+            - {Name: CB_CAP_AGENT_KILL_SWITCH, Value: !Ref AgentKillSwitch}
           Secrets:
             - Name: CB_CAP_DATABASE_PASSWORD
               ValueFrom: !Ref RuntimeDatabasePassword
+            - Name: OPENAI_API_KEY
+              ValueFrom: !Ref OpenAIApiKeySecretArn
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -730,6 +768,7 @@ Resources:
         EvaluateTargetHealth: true
 
 Outputs:
+  OpenAIApiKeySecretArn: {Value: !Ref OpenAIApiKeySecretArn}
   ApiUrl: {Value: !Sub 'https://${DomainName}'}
   ClusterName: {Value: !Ref EcsCluster}
   RuntimeServiceName: {Value: !GetAtt RuntimeService.Name}
@@ -745,6 +784,10 @@ Outputs:
   RuntimeDatabasePasswordArn: {Value: !Ref RuntimeDatabasePassword}
   UserPoolId: {Value: !Ref UserPool}
   UserPoolClientId: {Value: !Ref UserPoolClient}
+  CognitoIssuerUrl: {Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'}
+  CognitoHostedUiDomain: {Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com'}
+  CognitoOAuthCallbackUrl: {Value: 'https://cbcap.sozorockfoundation.org/auth/callback'}
+  CognitoOAuthLogoutUrl: {Value: 'https://cbcap.sozorockfoundation.org/'}
   PrivateEvidenceBucketName: {Value: !Ref PrivateEvidenceBucket}
   PrivateEvidenceKmsKeyArn: {Value: !GetAtt PrivateEvidenceKey.Arn}
   RuntimeLogGroupName: {Value: !Ref RuntimeLogGroup}

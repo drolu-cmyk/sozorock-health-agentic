@@ -34,6 +34,22 @@ test('live proof rejects legacy frontend and unauthenticated place routes', () =
   assert.match(script, /legacy_health_status/);
   assert.match(script, /institutionalApiBoundaryVerified:true/);
   assert.match(script, /legacyPlaceApiDenied:true/);
+  assert.match(script, /apiHealthForwarded:true/);
+});
+
+test('production Cognito uses Hosted UI authorization-code PKCE with exact UI redirects and no implicit flow', () => {
+  const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
+  const deploy = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
+  assert.match(template, /AllowedOAuthFlows: \[code\]/);
+  assert.doesNotMatch(template, /AllowedOAuthFlows:.*implicit/);
+  assert.match(template, /CallbackURLs: \['https:\/\/cbcap\.sozorockfoundation\.org\/auth\/callback'\]/);
+  assert.match(template, /LogoutURLs: \['https:\/\/cbcap\.sozorockfoundation\.org\/'\]/);
+  assert.match(template, /AWS::Cognito::UserPoolDomain/);
+  assert.match(template, /CognitoHostedUiDomain:/);
+  assert.match(template, /CognitoIssuerUrl:/);
+  assert.match(deploy, /authorization_code_pkce/);
+  assert.match(deploy, /describe-user-pool-domain/);
+  assert.match(deploy, /ui-runtime-config\.json/);
 });
 
 test('live proof exercises the five-county Evidence Gateway visualization workspace and render claim', () => {
@@ -49,6 +65,16 @@ test('live proof exercises the five-county Evidence Gateway visualization worksp
   assert.match(script, /compositeScore == null/);
 });
 
+test('live proof runs the bounded structured model path and records only model identifiers and hashes', () => {
+  const script = readFileSync(path.join(__dirname, '..', 'scripts', 'live-cognito-probe.sh'), 'utf8');
+  assert.match(script, /cbcap\.agent-run\.v1/);
+  assert.match(script, /synthesize_governed_evidence.*draft_reviewable_planning_brief/);
+  assert.match(script, /completed_requires_human_review/);
+  assert.match(script, /agentResponseIdHash/);
+  assert.match(script, /agentOutputHash/);
+  assert.doesNotMatch(script, /responseId:[^H]/);
+});
+
 test('deployment script binds the live probe to the stack client and fails closed to zero tasks', () => {
   const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
   assert.match(script, /USER_POOL_CLIENT_ID=\$\(stack_output UserPoolClientId\)/);
@@ -56,6 +82,9 @@ test('deployment script binds the live probe to the stack client and fails close
   assert.match(script, /bash scripts\/live-cognito-probe\.sh/);
   assert.match(script, /DesiredCount=0 ActivationEnabled=false/);
   assert.match(script, /productionAppClientVerified/);
+  assert.match(script, /OPENAI_API_KEY_SECRET_ARN/);
+  assert.match(script, /secretsmanager describe-secret/);
+  assert.doesNotMatch(script, /get-secret-value/);
 });
 
 test('production workflow deploys only the exact triggering commit', () => {
@@ -71,6 +100,19 @@ test('production image excludes the retired demonstration frontend', () => {
   const dockerfile = readFileSync(path.join(__dirname, '..', 'Dockerfile.runtime'), 'utf8');
   assert.doesNotMatch(dockerfile, /^COPY frontend\b/m);
   assert.match(dockerfile, /CMD \["node", "server\/production-index\.js"\]/);
+  assert.match(dockerfile, /COPY package\.json package-lock\.json/);
+  assert.match(dockerfile, /npm ci --omit=dev/);
+});
+
+test('production template injects the exact OpenAI secret only through the ECS execution role', () => {
+  const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
+  assert.match(template, /OpenAIApiKeySecretArn:/);
+  assert.match(template, /PolicyName: ReadRuntimeInjectedSecrets[\s\S]*!Ref OpenAIApiKeySecretArn/);
+  assert.match(template, /Name: OPENAI_API_KEY[\s\S]*ValueFrom: !Ref OpenAIApiKeySecretArn/);
+  const applicationRole = template.slice(template.indexOf('  RuntimeTaskRole:'), template.indexOf('  MigrationTaskExecutionRole:'));
+  assert.doesNotMatch(applicationRole, /secretsmanager/);
+  const migrationTask = template.slice(template.indexOf('  MigrationTaskDefinition:'), template.indexOf('  PreflightTaskDefinition:'));
+  assert.doesNotMatch(migrationTask, /OPENAI_API_KEY/);
 });
 
 test('production template composes private evidence without the obsolete SSM placeholder', () => {

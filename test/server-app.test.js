@@ -234,6 +234,11 @@ test('health endpoint identifies identity-gated runtime and disabled optional bo
     const body = await response.json();
     assert.equal(body.version, '0.10.0');
     assert.equal(body.runtime, 'governed-graph');
+    assert.equal(body.postalGeography.method, 'census_zcta_proxy');
+    assert.equal(body.postalGeography.resolvedGeographyKind, 'census_zcta_proxy');
+    assert.equal(body.postalGeography.count, 33354);
+    assert.match(body.postalGeography.caveat, /not a Census ZCTA/i);
+    assert.equal(body.zipCrosswalk, undefined);
     assert.equal(body.institutionalAccessEnabled, false);
     assert.equal(body.reviewContinuationEnabled, false);
     assert.equal(body.fundingIntelligenceRouteEnabled, false);

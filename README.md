@@ -128,7 +128,8 @@ The repository implementation is complete for the currently defined governed cap
 1. run the production-readiness gate against the real AWS Cognito, PostgreSQL, storage, network, backup/restore, observability, deployment, and rollback adapters;
 2. enable institutional traffic only after that target environment returns `eligible_for_controlled_activation`;
 3. connect a production scheduler or event source for monitoring only after its credentials, retry behavior, destination, and incident handling are verified;
-4. add future relationship or other evidence feeds only when reviewed sources exist in the shared Evidence Gateway; absence is never synthesized.
+4. configure reviewed server-owned scenario registrations, funding opportunities and tenant applicant profiles, and monitor definitions/snapshots before enabling those provider-dependent capabilities; missing provider records fail closed and are never synthesized;
+5. add future relationship or other evidence feeds only when reviewed sources exist in the shared Evidence Gateway; absence is never synthesized.
 
 See `ARCHITECTURE.md` for the full control-plane boundary.
 

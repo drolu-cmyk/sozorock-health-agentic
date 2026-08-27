@@ -17,8 +17,8 @@ RUN apt-get update \
        -o /app/certs/global-bundle.pem \
     && grep -q 'BEGIN CERTIFICATE' /app/certs/global-bundle.pem
 
-COPY package.json /app/package.json
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+COPY package.json package-lock.json /app/
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && npm cache clean --force
 
 COPY server /app/server

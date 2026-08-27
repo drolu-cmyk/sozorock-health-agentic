@@ -7,8 +7,9 @@
  * This is intentionally limited. Unknown ZIPs return null so callers fail
  * clearly instead of inventing geography.
  *
- * Production path: load the full HUD / Census ZIP–county crosswalk
- * (approximately 41k+ ZCTA records) via loadFullCrosswalk().
+ * This legacy demonstration module is not the production resolver. Production
+ * uses zip-crosswalk.js, which distinguishes HUD USPS ZIP relationships from
+ * the same-numbered Census ZCTA proxy and always carries the ZIP-not-ZCTA caveat.
  */
 
 const ZIP_TO_FIPS = {

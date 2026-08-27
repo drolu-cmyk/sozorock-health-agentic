@@ -5,6 +5,13 @@ set -euo pipefail
 : "${EXPECTED_AWS_ACCOUNT_ID:?EXPECTED_AWS_ACCOUNT_ID is required}"
 : "${CLOUDFORMATION_ROLE_ARN:?CLOUDFORMATION_ROLE_ARN is required}"
 : "${APPROVED_COMMIT:?APPROVED_COMMIT is required}"
+: "${OPENAI_API_KEY_SECRET_ARN:?OPENAI_API_KEY_SECRET_ARN is required}"
+: "${CB_CAP_AGENT_MODEL:?CB_CAP_AGENT_MODEL is required}"
+: "${CB_CAP_AGENT_PROMPT_VERSION:?CB_CAP_AGENT_PROMPT_VERSION is required}"
+
+[[ "$OPENAI_API_KEY_SECRET_ARN" =~ ^arn:[A-Za-z0-9-]+:secretsmanager:[A-Za-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$ ]]
+[[ "$CB_CAP_AGENT_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$ ]]
+[[ "$CB_CAP_AGENT_PROMPT_VERSION" =~ ^[a-z0-9][a-z0-9._-]{5,119}$ ]]
 
 REGISTRY_STACK="cbcap-agentic-registry"
 RUNTIME_STACK="cbcap-agentic-production"
@@ -42,7 +49,7 @@ disable_runtime() {
     --template-file "$RUNTIME_TEMPLATE" \
     --capabilities CAPABILITY_NAMED_IAM \
     --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-    --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false \
+    --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
     --no-fail-on-empty-changeset
   set -e
 }
@@ -138,7 +145,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=0 ActivationEnabled=false OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 
 ECS_CLUSTER=$(stack_output ClusterName)
@@ -153,6 +160,10 @@ DATABASE_SUBNET_GROUP=$(stack_output DatabaseSubnetGroupName)
 RUNTIME_PASSWORD_ARN=$(stack_output RuntimeDatabasePasswordArn)
 USER_POOL_ID=$(stack_output UserPoolId)
 USER_POOL_CLIENT_ID=$(stack_output UserPoolClientId)
+COGNITO_ISSUER_URL=$(stack_output CognitoIssuerUrl)
+COGNITO_HOSTED_UI_DOMAIN=$(stack_output CognitoHostedUiDomain)
+COGNITO_OAUTH_CALLBACK_URL=$(stack_output CognitoOAuthCallbackUrl)
+COGNITO_OAUTH_LOGOUT_URL=$(stack_output CognitoOAuthLogoutUrl)
 PRIVATE_BUCKET=$(stack_output PrivateEvidenceBucketName)
 PRIVATE_KMS_ARN=$(stack_output PrivateEvidenceKmsKeyArn)
 LOG_GROUP=$(stack_output RuntimeLogGroupName)
@@ -161,10 +172,13 @@ ALARM_ARN=$(stack_output UnhealthyTargetAlarmArn)
 CERTIFICATE_ARN=$(stack_output CertificateArn)
 LOAD_BALANCER_ARN=$(stack_output LoadBalancerArn)
 WEB_ACL_ARN=$(stack_output WebAclArn)
+STACK_OPENAI_SECRET_ARN=$(stack_output OpenAIApiKeySecretArn)
 
-for required in "$ECS_CLUSTER" "$ECS_SERVICE" "$MIGRATION_TASK" "$PREFLIGHT_TASK" "$RUNTIME_SECURITY_GROUP" "$PUBLIC_SUBNETS" "$DATABASE_ID" "$DATABASE_SECURITY_GROUP" "$DATABASE_SUBNET_GROUP" "$RUNTIME_PASSWORD_ARN" "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$PRIVATE_BUCKET" "$PRIVATE_KMS_ARN" "$LOG_GROUP" "$INCIDENT_TOPIC" "$ALARM_ARN" "$CERTIFICATE_ARN" "$LOAD_BALANCER_ARN" "$WEB_ACL_ARN"; do
+for required in "$ECS_CLUSTER" "$ECS_SERVICE" "$MIGRATION_TASK" "$PREFLIGHT_TASK" "$RUNTIME_SECURITY_GROUP" "$PUBLIC_SUBNETS" "$DATABASE_ID" "$DATABASE_SECURITY_GROUP" "$DATABASE_SUBNET_GROUP" "$RUNTIME_PASSWORD_ARN" "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$COGNITO_ISSUER_URL" "$COGNITO_HOSTED_UI_DOMAIN" "$COGNITO_OAUTH_CALLBACK_URL" "$COGNITO_OAUTH_LOGOUT_URL" "$PRIVATE_BUCKET" "$PRIVATE_KMS_ARN" "$LOG_GROUP" "$INCIDENT_TOPIC" "$ALARM_ARN" "$CERTIFICATE_ARN" "$LOAD_BALANCER_ARN" "$WEB_ACL_ARN" "$STACK_OPENAI_SECRET_ARN"; do
   test -n "$required"
 done
+test "$STACK_OPENAI_SECRET_ARN" = "$OPENAI_API_KEY_SECRET_ARN"
+aws secretsmanager describe-secret --secret-id "$STACK_OPENAI_SECRET_ARN" >/dev/null
 
 migration_task_arn=$(aws ecs run-task \
   --cluster "$ECS_CLUSTER" \
@@ -187,7 +201,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
 
@@ -233,6 +247,29 @@ client_json=$(aws cognito-idp describe-user-pool-client --user-pool-id "$USER_PO
 test "$(jq -r '.UserPoolClient.ClientId' <<<"$client_json")" = "$USER_POOL_CLIENT_ID"
 test -z "$(jq -r '.UserPoolClient.ClientSecret // ""' <<<"$client_json")"
 jq -e 'any(.UserPoolClient.ExplicitAuthFlows[]; .=="ALLOW_USER_SRP_AUTH")' <<<"$client_json" >/dev/null
+test "$(jq -c '.UserPoolClient.AllowedOAuthFlows' <<<"$client_json")" = '["code"]'
+jq -e '.UserPoolClient.AllowedOAuthFlowsUserPoolClient == true' <<<"$client_json" >/dev/null
+jq -e '.UserPoolClient.AllowedOAuthScopes | sort == ["email","openid","profile"]' <<<"$client_json" >/dev/null
+jq -e '.UserPoolClient.CallbackURLs == ["https://cbcap.sozorockfoundation.org/auth/callback"]' <<<"$client_json" >/dev/null
+jq -e '.UserPoolClient.LogoutURLs == ["https://cbcap.sozorockfoundation.org/"]' <<<"$client_json" >/dev/null
+jq -e 'any(.UserPoolClient.SupportedIdentityProviders[]; .=="COGNITO")' <<<"$client_json" >/dev/null
+test "$COGNITO_OAUTH_CALLBACK_URL" = "https://cbcap.sozorockfoundation.org/auth/callback"
+test "$COGNITO_OAUTH_LOGOUT_URL" = "https://cbcap.sozorockfoundation.org/"
+hosted_ui_prefix="${COGNITO_HOSTED_UI_DOMAIN#https://}"
+hosted_ui_prefix="${hosted_ui_prefix%%.auth.*}"
+domain_json=$(aws cognito-idp describe-user-pool-domain --domain "$hosted_ui_prefix" --output json)
+test "$(jq -r '.DomainDescription.UserPoolId // ""' <<<"$domain_json")" = "$USER_POOL_ID"
+jq -cn \
+  --arg apiOrigin "https://$API_DOMAIN" \
+  --arg region "$AWS_REGION" \
+  --arg userPoolId "$USER_POOL_ID" \
+  --arg clientId "$USER_POOL_CLIENT_ID" \
+  --arg issuer "$COGNITO_ISSUER_URL" \
+  --arg hostedUiDomain "$COGNITO_HOSTED_UI_DOMAIN" \
+  --arg callbackUrl "$COGNITO_OAUTH_CALLBACK_URL" \
+  --arg logoutUrl "$COGNITO_OAUTH_LOGOUT_URL" \
+  '{apiOrigin:$apiOrigin,awsRegion:$region,userPoolId:$userPoolId,userPoolClientId:$clientId,issuer:$issuer,hostedUiDomain:$hostedUiDomain,oauthFlow:"authorization_code_pkce",callbackUrl:$callbackUrl,logoutUrl:$logoutUrl}' \
+  > output/production/ui-runtime-config.json
 identity_policy=$(node scripts/identity-policy-probe.js)
 jq -e '.ok and .sameTenantAuthorized and .humanReviewAuthorityVerified and .callerTenantOverrideIgnored and .agentCannotCreatePlan and .viewerCannotCreatePlan' <<<"$identity_policy" >/dev/null
 
@@ -270,7 +307,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=true \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=true OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
 
@@ -299,8 +336,8 @@ test "$disallowed_status" = "403"
 host_status=$(curl --proto '=https' --tlsv1.2 --silent --output /dev/null --write-out '%{http_code}' -H 'Host: untrusted.example' "https://$API_DOMAIN/api/health")
 test "$host_status" = "503"
 
-identity_live=$(USER_POOL_ID="$USER_POOL_ID" USER_POOL_CLIENT_ID="$USER_POOL_CLIENT_ID" API_DOMAIN="$API_DOMAIN" bash scripts/live-cognito-probe.sh)
-jq -e '.claimsVerified and .sameTenantAuthorized and .crossTenantDenied and .humanReviewAuthorityVerified and .livePlanAndReviewVerified and .unauthorizedAgentDenied and .productionAppClientVerified' <<<"$identity_live" >/dev/null
+identity_live=$(USER_POOL_ID="$USER_POOL_ID" USER_POOL_CLIENT_ID="$USER_POOL_CLIENT_ID" API_DOMAIN="$API_DOMAIN" CB_CAP_AGENT_MODEL="$CB_CAP_AGENT_MODEL" CB_CAP_AGENT_PROMPT_VERSION="$CB_CAP_AGENT_PROMPT_VERSION" bash scripts/live-cognito-probe.sh)
+jq -e '.claimsVerified and .sameTenantAuthorized and .crossTenantDenied and .humanReviewAuthorityVerified and .livePlanAndReviewVerified and .unauthorizedAgentDenied and .productionAppClientVerified and .agentStructuredOutputVerified and .agentSpecialistSequenceVerified and .agentCountyReleaseBound and .agentHumanReviewPreserved and .agentModelIdentityVerified and .agentPromptVersionVerified and (.agentResponseIdHash|test("^sha256:[0-9a-f]{64}$")) and (.agentOutputHash|test("^sha256:[0-9a-f]{64}$"))' <<<"$identity_live" >/dev/null
 
 for attempt in $(seq 1 30); do
   audit_json=$(aws logs filter-log-events --log-group-name "$LOG_GROUP" --limit 100 --output json)
@@ -314,7 +351,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=false OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 rollback_api_status=$(curl --proto '=https' --tlsv1.2 --silent --output /dev/null --write-out '%{http_code}' "https://$API_DOMAIN/healthz")
 test "$rollback_api_status" = "503"
@@ -328,7 +365,7 @@ aws cloudformation deploy \
   --template-file "$RUNTIME_TEMPLATE" \
   --capabilities CAPABILITY_NAMED_IAM \
   --role-arn "$CLOUDFORMATION_ROLE_ARN" \
-  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=true \
+  --parameter-overrides RuntimeImageUri="$RUNTIME_IMAGE_URI" DesiredCount=1 ActivationEnabled=true OpenAIApiKeySecretArn="$OPENAI_API_KEY_SECRET_ARN" AgentModel="$CB_CAP_AGENT_MODEL" AgentPromptVersion="$CB_CAP_AGENT_PROMPT_VERSION" AgentKillSwitch=false \
   --no-fail-on-empty-changeset
 for attempt in $(seq 1 30); do
   if curl --proto '=https' --tlsv1.2 --fail --silent --show-error "https://$API_DOMAIN/readyz" | jq -e '.status=="ready"' >/dev/null; then break; fi
@@ -359,7 +396,22 @@ PROOF_JSON=$(jq -cn \
       edgeProtectionVerified:true,
       securityHeadersVerified:true,
       corsBoundaryVerified:true,
-      unauthenticatedProtectedRouteDenied:true
+      unauthenticatedProtectedRouteDenied:true,
+      cognitoPkceHostedUiVerified:true
+    },
+    model:{
+      structuredOutputVerified:$identity.agentStructuredOutputVerified,
+      specialistSequenceVerified:$identity.agentSpecialistSequenceVerified,
+      countyReleaseBound:$identity.agentCountyReleaseBound,
+      humanReviewPreserved:$identity.agentHumanReviewPreserved,
+      modelIdentityVerified:$identity.agentModelIdentityVerified,
+      promptVersionVerified:$identity.agentPromptVersionVerified,
+      outputHashRecorded:($identity.agentOutputHash|test("^sha256:[0-9a-f]{64}$")),
+      responseIdHashRecorded:($identity.agentResponseIdHash|test("^sha256:[0-9a-f]{64}$")),
+      modelId:$identity.agentModelId,
+      promptVersion:$identity.agentPromptVersion,
+      outputHash:$identity.agentOutputHash,
+      responseIdHash:$identity.agentResponseIdHash
     },
     recovery:{backupVerified:true,restoreVerified:true},
     observability:{logsReachable:true,auditEventsReachable:true,alertsConfigured:true,incidentRouteConfigured:true},

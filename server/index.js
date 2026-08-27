@@ -20,5 +20,5 @@ app.listen(PORT, () => {
   console.log(`SozoRock Health Agentic v0.10.0 on http://localhost:${PORT}`);
   console.log('  runtime: governed control plane; institutional routes fail closed by default');
   console.log(`  geography: ${countyMeta().count} counties (${countyMeta().source})`);
-  console.log(`  zip crosswalk: ${zipMeta().count} ZIPs (${zipMeta().source})`);
+  console.log(`  postal geography: ${zipMeta().count} records via ${zipMeta().method} (${zipMeta().source})`);
 });

@@ -34,13 +34,28 @@ class CBCAPPlanningEngine {
     });
     this.scenarioHandler = typeof options.scenarioHandler === 'function' ? options.scenarioHandler : null;
     this.publishHandler = typeof options.publishHandler === 'function' ? options.publishHandler : null;
+    this.agentOrchestrator = options.agentOrchestrator || null;
+    if (this.agentOrchestrator && typeof this.agentOrchestrator.run !== 'function') {
+      throw new Error('agentOrchestrator must expose run(state).');
+    }
 
     const handlers = {
       resolvePlace: async (task) => ({ countyFips: task.countyFips }),
       loadEvidence: async (place) => this.evidenceClient.getCountyPackage(place.countyFips),
       synthesizeBarriers: async (evidence) => buildBarrierProfile(evidence),
       organizePlan: async (state) => buildPlanningWorkspace(state.evidence, state.barriers),
-      draftBrief: async (state) => buildPlanningBrief(state),
+      draftBrief: async (state) => {
+        const deterministicDraft = buildPlanningBrief(state);
+        if (!this.agentOrchestrator) return deterministicDraft;
+        const agentRun = await this.agentOrchestrator.run({ ...clone(state), draft: clone(deterministicDraft) });
+        return {
+          ...deterministicDraft,
+          agentAssistance: {
+            status: 'completed_requires_human_review',
+            ...clone(agentRun),
+          },
+        };
+      },
     };
 
     if (this.scenarioHandler) {
@@ -82,6 +97,8 @@ class CBCAPPlanningEngine {
         scenarioRequiresHumanReview: Boolean(state.scenario),
         humanReviewRequired: state.status !== 'approved_output',
         resumableReview: state.status === 'awaiting_human_review' && Boolean(this.publishHandler),
+        agentAssistanceEnabled: Boolean(this.agentOrchestrator),
+        agentAssistanceStatus: state.draft?.agentAssistance?.status || null,
       },
     };
   }

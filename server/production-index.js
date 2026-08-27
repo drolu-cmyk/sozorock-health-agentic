@@ -2,8 +2,29 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { createApp, parseAllowedOrigins } = require('./app');
 const { createCognitoPostgresInstitutionalGateway } = require('./cognito-postgres-institutional-runtime');
+const {
+  createProductionAgentOrchestratorFactory,
+  safeProductionAgentConfig,
+} = require('./production-agent-runtime');
 const { closePool, createProductionPool, requiredEnv } = require('./production-database');
+const { createProductionGovernedEvidenceProviders } = require('./governed-evidence-providers');
 const { createS3PrivateEvidenceObjectResolver } = require('./s3-private-evidence-object-resolver');
+const { loadCountyArtifact } = require('../packages/data/national-counties');
+const { loadZipArtifact } = require('../packages/data/zip-crosswalk');
+
+function assertNationalGeographyReady() {
+  const counties = loadCountyArtifact({ production: true });
+  const postalGeography = loadZipArtifact({ production: true });
+  return {
+    counties: counties.validation.count,
+    postalGeographyCount: postalGeography.validation.geographyCount,
+    postalGeographyMethod: postalGeography.method,
+    postalGeographyKind: postalGeography.method === 'census_zcta_proxy' ? 'census_zcta_proxy' : 'usps_zip_crosswalk',
+    caveat: postalGeography.method === 'census_zcta_proxy' ? postalGeography.artifact.caveat : null,
+    countySourceSha256: counties.artifact.source.sha256,
+    postalGeographySourceSha256: postalGeography.artifact.source.sha256,
+  };
+}
 
 function parseAllowedHosts(value) {
   const hosts = new Set(String(value || '').split(';').map((item) => item.trim().toLowerCase()).filter(Boolean));
@@ -48,7 +69,7 @@ function createProductionApiOnlyApp(innerApp) {
   const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
-    if (req.path === '/api/cbcap' || req.path.startsWith('/api/cbcap/')) return innerApp(req, res, next);
+    if (req.path === '/api/health' || req.path === '/api/cbcap' || req.path.startsWith('/api/cbcap/')) return innerApp(req, res, next);
     return res.sendStatus(404);
   });
   return app;
@@ -101,6 +122,7 @@ function createProductionEdge(innerApp, options = {}) {
 
 async function createProductionRuntime(options = {}) {
   const env = options.env || process.env;
+  const geography = (options.nationalGeographyLoader || assertNationalGeographyReady)();
   if (String(env.ENABLE_UNAUTHENTICATED_CBCAP_DEV || '').toLowerCase() === 'true') {
     throw new Error('Unauthenticated development planning is forbidden in production.');
   }
@@ -125,6 +147,14 @@ async function createProductionRuntime(options = {}) {
     kmsKeyArn: privateEvidenceKmsKeyArn,
     client: options.s3Client,
   });
+  const governedEvidenceProviders = createProductionGovernedEvidenceProviders({
+    evidenceOrigin,
+    evidenceClient: options.evidenceClient,
+    fetchImpl: options.evidenceFetchImpl,
+  });
+  const agentConfig = safeProductionAgentConfig(env);
+  const agentOrchestratorForActor = options.agentOrchestratorForActor
+    || createProductionAgentOrchestratorFactory({ env, modelRunner: options.modelRunner });
 
   try {
     await pool.query('SELECT 1 AS ok');
@@ -134,8 +164,18 @@ async function createProductionRuntime(options = {}) {
       userPoolId,
       appClientId,
       evidenceOrigin,
+      evidenceClientForActor: options.evidenceClientForActor || governedEvidenceProviders.evidenceClientForActor,
       privateEvidenceObjectForActor,
+      institutionalEvidenceValidatorForActor: options.institutionalEvidenceValidatorForActor
+        || governedEvidenceProviders.institutionalEvidenceValidatorForActor,
+      scenarioRegistrationsForActor: options.scenarioRegistrationsForActor,
+      scenarioHandlerForActor: options.scenarioHandlerForActor,
+      fundingOpportunityForActor: options.fundingOpportunityForActor,
+      fundingApplicantProfileForActor: options.fundingApplicantProfileForActor,
+      monitoringDefinitionForActor: options.monitoringDefinitionForActor,
+      monitoringSnapshotForActor: options.monitoringSnapshotForActor,
       publishHandlerForActor: options.publishHandlerForActor || productionPublishHandlerForActor,
+      agentOrchestratorForActor,
       auditSink,
     });
 
@@ -157,7 +197,23 @@ async function createProductionRuntime(options = {}) {
     });
     const apiOnlyApp = createProductionApiOnlyApp(innerApp);
     const app = createProductionEdge(apiOnlyApp, { allowedHosts, readinessProbe });
-    auditSink({ action: 'production_runtime_composed', institutionalAccessEnabled: true, tenantPrivateEvidenceEnabled: true });
+    auditSink({
+      action: 'production_runtime_composed',
+      institutionalAccessEnabled: true,
+      tenantPrivateEvidenceEnabled: true,
+      agentAssistanceEnabled: true,
+      agentModel: agentConfig.model,
+      agentPromptVersion: agentConfig.promptVersion,
+      agentKillSwitchEnabled: agentConfig.killSwitchEnabled,
+      scenarioProviderConfigured: Boolean(options.scenarioRegistrationsForActor || options.scenarioHandlerForActor),
+      fundingProviderConfigured: Boolean(options.fundingOpportunityForActor && options.fundingApplicantProfileForActor),
+      monitoringProviderConfigured: Boolean(options.monitoringDefinitionForActor && options.monitoringSnapshotForActor),
+      workforceProviderConfigured: true,
+      visualizationProviderConfigured: true,
+      institutionalEvidenceValidationConfigured: true,
+      privateEvidenceUploadInitiationEnabled: false,
+      nationalGeography: geography,
+    });
     return { app, pool, auditSink };
   } catch (error) {
     if (!options.pool) await closePool(pool).catch(() => {});
@@ -192,6 +248,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  assertNationalGeographyReady,
   createProductionApiOnlyApp,
   createProductionAuditSink,
   createProductionEdge,

@@ -171,6 +171,37 @@ test('governed planning uses reviewed Evidence Gateway barriers without syntheti
   assert.equal(JSON.stringify(result.evidence).includes('UNREVIEWED:Crude'), true, 'raw governed evidence remains available for audit');
 });
 
+test('planning engine attaches bounded agent assistance without replacing governed draft or review', async () => {
+  let calls = 0;
+  const { engine } = engineFor(evidencePackage(), {
+    agentOrchestrator: {
+      async run(state) {
+        calls += 1;
+        assert.equal(state.evidence.releaseId, 'release-2026-08-23');
+        assert.equal(state.planning.geography.countyFips, '36001');
+        assert.equal(state.draft.status, 'draft_requires_human_review');
+        return {
+          contract: 'cbcap.agent-run.v1',
+          promptVersion: 'prompt-v1',
+          model: 'reviewed-model',
+          synthesis: { kind: 'cbcap.agent-evidence-synthesis.v1' },
+          brief: { kind: 'cbcap.agent-planning-brief.v1' },
+          trace: { toolCalls: ['synthesize_governed_evidence', 'draft_reviewable_planning_brief'] },
+        };
+      },
+    },
+  });
+
+  const result = await engine.buildCountyPlan('36001');
+  assert.equal(calls, 1);
+  assert.equal(result.status, 'awaiting_human_review');
+  assert.equal(result.draft.status, 'draft_requires_human_review');
+  assert.equal(result.draft.agentAssistance.status, 'completed_requires_human_review');
+  assert.equal(result.draft.agentAssistance.contract, 'cbcap.agent-run.v1');
+  assert.equal(result.meta.agentAssistanceEnabled, true);
+  assert.equal(result.meta.humanReviewRequired, true);
+});
+
 test('provisional barrier evidence remains no verified data', async () => {
   const evidence = evidencePackage({
     measures: [

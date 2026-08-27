@@ -5,6 +5,8 @@ set -euo pipefail
 : "${USER_POOL_ID:?USER_POOL_ID is required}"
 : "${USER_POOL_CLIENT_ID:?USER_POOL_CLIENT_ID is required}"
 : "${API_DOMAIN:?API_DOMAIN is required}"
+: "${CB_CAP_AGENT_MODEL:?CB_CAP_AGENT_MODEL is required}"
+: "${CB_CAP_AGENT_PROMPT_VERSION:?CB_CAP_AGENT_PROMPT_VERSION is required}"
 
 probe_id="${GITHUB_RUN_ID:-$(date +%s)}"
 planner_user="cbcap-preflight-planner-${probe_id}@example.invalid"
@@ -38,7 +40,9 @@ test "$legacy_place_status" = "404"
 legacy_health_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
   --output /tmp/cbcap-legacy-health.json --write-out '%{http_code}' \
   "https://$API_DOMAIN/api/health")
-test "$legacy_health_status" = "404"
+test "$legacy_health_status" = "200"
+test "$(jq -r '.status // ""' /tmp/cbcap-legacy-health.json)" = "ok"
+test "$(jq -r '.institutionalAccessEnabled // false' /tmp/cbcap-legacy-health.json)" = "true"
 
 create_user() {
   local username="$1"
@@ -100,6 +104,17 @@ test "$planner_status" = "202"
 run_id=$(jq -r '.runId // ""' /tmp/cbcap-planner-plan.json)
 test -n "$run_id"
 test "$(jq -r '.status // ""' /tmp/cbcap-planner-plan.json)" = "awaiting_human_review"
+test "$(jq -r '.draft.agentAssistance.status // ""' /tmp/cbcap-planner-plan.json)" = "completed_requires_human_review"
+test "$(jq -r '.draft.agentAssistance.contract // ""' /tmp/cbcap-planner-plan.json)" = "cbcap.agent-run.v1"
+test "$(jq -r '.draft.agentAssistance.synthesis.kind // ""' /tmp/cbcap-planner-plan.json)" = "cbcap.agent-evidence-synthesis.v1"
+test "$(jq -r '.draft.agentAssistance.brief.kind // ""' /tmp/cbcap-planner-plan.json)" = "cbcap.agent-planning-brief.v1"
+test "$(jq -r '.draft.agentAssistance.model // ""' /tmp/cbcap-planner-plan.json)" = "$CB_CAP_AGENT_MODEL"
+test "$(jq -r '.draft.agentAssistance.promptVersion // ""' /tmp/cbcap-planner-plan.json)" = "$CB_CAP_AGENT_PROMPT_VERSION"
+jq -e '.draft.agentAssistance.trace.toolCalls == ["synthesize_governed_evidence","draft_reviewable_planning_brief"]' /tmp/cbcap-planner-plan.json >/dev/null
+jq -e '.draft.agentAssistance.trace.responseIdHash | test("^sha256:[0-9a-f]{64}$")' /tmp/cbcap-planner-plan.json >/dev/null
+jq -e '.draft.agentAssistance.synthesis.countyFips == .evidence.countyFips and .draft.agentAssistance.brief.countyFips == .evidence.countyFips and .draft.agentAssistance.synthesis.releaseId == .evidence.releaseId and .draft.agentAssistance.brief.releaseId == .evidence.releaseId' /tmp/cbcap-planner-plan.json >/dev/null
+agent_response_id_hash=$(jq -r '.draft.agentAssistance.trace.responseIdHash' /tmp/cbcap-planner-plan.json)
+agent_output_hash="sha256:$(jq -cS '.draft.agentAssistance | {contract,promptVersion,model,synthesis,brief,trace:{toolCalls,lastAgent,responseIdHash}}' /tmp/cbcap-planner-plan.json | sha256sum | awk '{print $1}')"
 
 visualization_workspace_status=$(curl --proto '=https' --tlsv1.2 --silent --show-error \
   --output /tmp/cbcap-visualization-workspace.json --write-out '%{http_code}' \
@@ -200,6 +215,10 @@ jq -cn \
   --arg clientId "$USER_POOL_CLIENT_ID" \
   --arg visualizationRelease "$visualization_workspace_release" \
   --arg visualizationClaim "$visualization_workspace_claim" \
+  --arg agentModel "$CB_CAP_AGENT_MODEL" \
+  --arg agentPromptVersion "$CB_CAP_AGENT_PROMPT_VERSION" \
+  --arg agentResponseIdHash "$agent_response_id_hash" \
+  --arg agentOutputHash "$agent_output_hash" \
   '{
     claimsVerified:true,
     sameTenantAuthorized:true,
@@ -212,10 +231,20 @@ jq -cn \
     institutionalApiBoundaryVerified:true,
     legacyFrontendDenied:true,
     legacyPlaceApiDenied:true,
-    legacyHealthApiDenied:true,
+    apiHealthForwarded:true,
     visualizationWorkspaceVerified:true,
     visualizationWorkspaceFiveCountyEvidenceVerified:true,
     visualizationWorkspaceRenderClaimVerified:true,
+    agentStructuredOutputVerified:true,
+    agentSpecialistSequenceVerified:true,
+    agentCountyReleaseBound:true,
+    agentHumanReviewPreserved:true,
+    agentModelIdentityVerified:true,
+    agentPromptVersionVerified:true,
+    agentResponseIdHash:$agentResponseIdHash,
+    agentOutputHash:$agentOutputHash,
+    agentModelId:$agentModel,
+    agentPromptVersion:$agentPromptVersion,
     visualizationRelease:$visualizationRelease,
     visualizationClaim:$visualizationClaim,
     crossTenantReviewStatus:$crossTenantStatus,

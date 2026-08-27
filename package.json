@@ -11,12 +11,15 @@
     "test": "node --test test/*.test.js",
     "migrate:production": "node scripts/migrate-postgres.js",
     "preflight:production": "node scripts/run-production-preflight.js",
+    "build:national-geography": "node scripts/build-national-geography.js",
     "lint": "node scripts/lint.js"
   },
   "dependencies": {
+    "@openai/agents": "0.17.0",
     "@aws-sdk/client-s3": "3.1116.0",
     "express": "4.22.2",
-    "pg": "8.23.0"
+    "pg": "8.23.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "amazon-cognito-identity-js": "6.3.20"

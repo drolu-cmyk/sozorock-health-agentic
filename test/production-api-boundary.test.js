@@ -16,7 +16,7 @@ async function withServer(app, callback) {
   }
 }
 
-test('production host exposes only institutional CB-CAP routes', async () => {
+test('production host exposes institutional CB-CAP routes and API health but not root or legacy place', async () => {
   const inner = express();
   inner.get('/', (_req, res) => res.type('html').send('<h1>Demonstration frontend</h1>'));
   inner.post('/api/place', (_req, res) => res.json({ compositeBarrier: 77 }));
@@ -32,7 +32,8 @@ test('production host exposes only institutional CB-CAP routes', async () => {
     assert.equal(place.status, 404);
 
     const health = await fetch(`${origin}/api/health`);
-    assert.equal(health.status, 404);
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { status: 'ok' });
 
     const cbcap = await fetch(`${origin}/api/cbcap`, { method: 'POST' });
     assert.equal(cbcap.status, 200);

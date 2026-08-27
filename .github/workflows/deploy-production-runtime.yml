@@ -27,6 +27,9 @@ jobs:
       DEPLOY_ROLE_ARN: arn:aws:iam::791860731989:role/cbcap-agentic-github-deploy
       CLOUDFORMATION_ROLE_ARN: arn:aws:iam::791860731989:role/cbcap-agentic-cloudformation
       AWS_PAGER: ""
+      OPENAI_API_KEY_SECRET_ARN: ${{ secrets.CB_CAP_OPENAI_API_KEY_SECRET_ARN }}
+      CB_CAP_AGENT_MODEL: ${{ vars.CB_CAP_AGENT_MODEL }}
+      CB_CAP_AGENT_PROMPT_VERSION: cbcap-agent-prompts-2026-08-26-v1
     steps:
       - name: Check out exact release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

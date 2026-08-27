@@ -70,6 +70,7 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
       scenarioRegistrationsForActor: options.scenarioRegistrationsForActor,
       scenarioHandlerForActor: options.scenarioHandlerForActor,
       publishHandlerForActor: options.publishHandlerForActor,
+      agentOrchestratorForActor: options.agentOrchestratorForActor,
       fundingOpportunityForActor: options.fundingOpportunityForActor,
       fundingApplicantProfileForActor: options.fundingApplicantProfileForActor,
       auditSink: options.auditSink,

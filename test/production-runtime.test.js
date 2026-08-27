@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
 const {
+  assertNationalGeographyReady,
   createProductionAuditSink,
   createProductionEdge,
   parseAllowedHosts,
@@ -44,6 +45,15 @@ function requestWithHost(base, requestPath, host) {
     request.end();
   });
 }
+
+test('production runtime accepts the governed Census proxy and exposes its method', () => {
+  const result = assertNationalGeographyReady();
+  assert.equal(result.counties, 3144);
+  assert.equal(result.postalGeographyCount, 33354);
+  assert.equal(result.postalGeographyMethod, 'census_zcta_proxy');
+  assert.equal(result.postalGeographyKind, 'census_zcta_proxy');
+  assert.match(result.caveat, /not a Census ZCTA/i);
+});
 
 test('production host allowlist rejects wildcards and URL-shaped values', () => {
   assert.throws(() => parseAllowedHosts('*'), /invalid/);

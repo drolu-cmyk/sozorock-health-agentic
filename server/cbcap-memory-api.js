@@ -27,10 +27,10 @@ function createCBCAPMemoryApi(options = {}) {
     return decision.ok ? decision.actor : null;
   }
 
-  async function validateEvidence(workspaceActor, evidenceEntityIds) {
+  async function validateEvidence(workspaceActor, evidenceEntityIds, context = {}) {
     if (!evidenceValidator) return { ok: false, unavailable: true, missing: [] };
     try {
-      const result = await evidenceValidator(workspaceActor, evidenceEntityIds);
+      const result = await evidenceValidator(workspaceActor, evidenceEntityIds, context);
       const missing = Array.isArray(result?.missingIds) ? result.missingIds : [];
       return { ok: result?.ok === true && missing.length === 0, unavailable: false, missing };
     } catch {
@@ -102,7 +102,7 @@ function createCBCAPMemoryApi(options = {}) {
       const workspaceActor = actor(context, 'cbcap.memory.propose');
       if (!workspaceActor) return forbidden();
       const ids = Array.isArray(input?.evidenceEntityIds) ? input.evidenceEntityIds : [];
-      const validation = await validateEvidence(workspaceActor, ids);
+      const validation = await validateEvidence(workspaceActor, ids, { geographyId: input?.geographyId || null });
       if (validation.unavailable) return { statusCode: 503, body: { error: 'Institutional evidence validation is unavailable.' } };
       if (!validation.ok) return { statusCode: 422, body: { error: 'Institutional memory evidence is not fully verified.', missingEvidenceIds: validation.missing } };
       try {
@@ -123,7 +123,7 @@ function createCBCAPMemoryApi(options = {}) {
       const proposal = await institutionalMemory.get(proposalId);
       if (!proposal || proposal.status !== 'proposed') return { statusCode: 404, body: { error: 'Institutional memory proposal not found.' } };
       if (input.decision === 'approve') {
-        const validation = await validateEvidence(workspaceActor, proposal.evidenceEntityIds);
+        const validation = await validateEvidence(workspaceActor, proposal.evidenceEntityIds, { geographyId: proposal.geographyId });
         if (validation.unavailable) return { statusCode: 503, body: { error: 'Institutional evidence validation is unavailable.' } };
         if (!validation.ok) return { statusCode: 422, body: { error: 'Institutional memory evidence is no longer fully verified.', missingEvidenceIds: validation.missing } };
       }
