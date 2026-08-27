@@ -103,10 +103,24 @@ test('ECR vulnerability failures report only bounded finding metadata before act
   assert.doesNotMatch(script, /\.description|\.uri/);
 });
 
-test('failed CloudFormation recovery is diagnosed before another stack mutation', () => {
+test('only the exact empty first-create rollback can be recovered', () => {
   const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
   assert.match(script, /runtime_stack_status=.*describe-stacks/);
   assert.match(script, /runtime_stack_status" == "ROLLBACK_FAILED"/);
+  assert.match(script, /recover_failed_initial_stack/);
+  assert.match(script, /mfaConfiguration/);
+  assert.match(script, /deletion protection is activated/);
+  assert.match(script, /EstimatedNumberOfUsers/);
+  assert.match(script, /list-users --user-pool-id/);
+  assert.match(script, /length == 0/);
+  assert.match(script, /LogicalResourceId == "Database"/);
+  assert.match(script, /LogicalResourceId == "PrivateEvidenceBucket"/);
+  assert.match(script, /update-user-pool.*--deletion-protection INACTIVE/);
+  assert.match(script, /delete-stack.*--role-arn/);
+  assert.match(script, /wait stack-delete-complete/);
+  assert.doesNotMatch(script, /force-delete-without-recovery/);
+  assert.doesNotMatch(script, /delete-log-group/);
+  assert.doesNotMatch(script, /schedule-key-deletion/);
   assert.match(script, /describe-stack-events/);
   assert.match(script, /--max-items 200/);
   assert.match(script, /ResourceStatus==`CREATE_FAILED`/);
@@ -114,10 +128,31 @@ test('failed CloudFormation recovery is diagnosed before another stack mutation'
   assert.match(script, /ResourceStatus==`DELETE_FAILED`/);
   assert.match(script, /LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason/);
   assert.match(script, /requires reviewed recovery before another change set/);
-  assert.match(script, /Stacks\[0\]\.StackId/);
-  assert.match(script, /LogicalResourceId=="UserPool"/);
-  assert.match(script, /Verified failed stack ARN/);
-  assert.match(script, /Verified failed user pool ARN/);
+});
+
+test('replacement stack preserves retained failed-create artifacts under distinct names', () => {
+  const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
+  assert.match(template, /Name: cbcap-agentic\/runtime-database-password-production/);
+  assert.match(template, /LogGroupName: \/sozorock\/cbcap\/agentic-runtime-production/);
+  assert.doesNotMatch(template, /Name: cbcap-agentic\/runtime-database-password(?:\n|$)/);
+  assert.doesNotMatch(template, /LogGroupName: \/sozorock\/cbcap\/agentic-runtime(?:\n|$)/);
+});
+
+test('Cognito MFA enum remains a quoted string', () => {
+  const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
+  assert.match(template, /MfaConfiguration: 'ON'/);
+  assert.doesNotMatch(template, /MfaConfiguration: ON(?:\n|$)/);
+});
+
+test('first-create rollback remains deletable until the stack is healthy', () => {
+  const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
+  const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
+  assert.match(template, /UserPoolDeletionProtection:/);
+  assert.match(template, /AllowedValues: \[ACTIVE, INACTIVE\]/);
+  assert.match(template, /DeletionProtection: !Ref UserPoolDeletionProtection/);
+  assert.match(script, /DesiredCount=0 ActivationEnabled=false UserPoolDeletionProtection=INACTIVE/);
+  assert.match(script, /DesiredCount=1 ActivationEnabled=false UserPoolDeletionProtection=ACTIVE/);
+  assert.match(script, /DesiredCount=1 ActivationEnabled=true UserPoolDeletionProtection=ACTIVE/);
 });
 
 test('production workflow deploys only the exact triggering commit', () => {

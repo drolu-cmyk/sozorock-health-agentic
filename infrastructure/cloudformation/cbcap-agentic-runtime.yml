@@ -28,6 +28,10 @@ Parameters:
     Type: String
     Default: 'false'
     AllowedValues: ['true', 'false']
+  UserPoolDeletionProtection:
+    Type: String
+    Default: ACTIVE
+    AllowedValues: [ACTIVE, INACTIVE]
   OpenAIApiKeySecretArn:
     Type: String
     MinLength: 20
@@ -182,7 +186,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Name: cbcap-agentic/runtime-database-password
+      Name: cbcap-agentic/runtime-database-password-production
       Description: Password for the least-privilege CB-CAP PostgreSQL runtime role.
       GenerateSecretString:
         PasswordLength: 48
@@ -307,12 +311,14 @@ Resources:
     Type: AWS::Cognito::UserPool
     Properties:
       UserPoolName: cbcap-agentic-workspace
-      DeletionProtection: ACTIVE
+      DeletionProtection: !Ref UserPoolDeletionProtection
       UsernameAttributes: [email]
       AutoVerifiedAttributes: [email]
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
-      MfaConfiguration: ON
+      # Quote YAML 1.1 boolean-like enums so CloudFormation sends the Cognito
+      # string value rather than JSON boolean true.
+      MfaConfiguration: 'ON'
       EnabledMfas: [SOFTWARE_TOKEN_MFA]
       AccountRecoverySetting:
         RecoveryMechanisms:
@@ -370,7 +376,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: /sozorock/cbcap/agentic-runtime
+      LogGroupName: /sozorock/cbcap/agentic-runtime-production
       RetentionInDays: !Ref LogRetentionDays
 
   IncidentTopic:
