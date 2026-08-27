@@ -3,5 +3,5 @@ runtime: node-governed-control-plane
 activation_contract: cbcap.production-readiness.v1
 api_domain: api.cbcap.sozorockfoundation.org
 approval: user-authorized-production-activation
-request_generation: 11
-retry_reason: generation 10 cleared the ECR zero-critical and zero-high gate but the first runtime stack deployment entered ROLLBACK_FAILED; generation 11 performs a read-only preflight of that failed stack and reports only bounded CloudFormation event metadata so recovery can be reviewed before any further stack mutation
+request_generation: 12
+retry_reason: generation 11 proved the failed stack is mutation-blocked but the bounded recent-event view omitted the original create failure; generation 12 remains read-only and reports the complete bounded set of failed CloudFormation resources so the exact recovery can be reviewed
