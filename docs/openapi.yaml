@@ -19,6 +19,19 @@ servers:
   - url: http://localhost:3000
     description: Local development
 paths:
+  /healthz:
+    get:
+      summary: Production process liveness probe
+      description: Available at the production edge; returns no institutional data.
+      responses:
+        "200": { description: Runtime process is live }
+  /readyz:
+    get:
+      summary: Production database readiness probe
+      description: Available at the production edge and fails closed when the runtime database cannot be queried.
+      responses:
+        "200": { description: Runtime and database are ready }
+        "503": { description: Runtime is not ready }
   /api/health:
     get:
       summary: Health check
@@ -41,6 +54,10 @@ paths:
                   reviewContinuationEnabled: { type: boolean }
                   fundingIntelligenceRouteEnabled: { type: boolean }
                   visualizationIntelligenceRouteEnabled: { type: boolean }
+                  visualizationWorkspaceRouteEnabled: { type: boolean }
+                  workforceCapacityRouteEnabled: { type: boolean }
+                  monitoringIntelligenceRouteEnabled: { type: boolean }
+                  privateEvidenceRouteEnabled: { type: boolean }
                   workspaceMemoryRouteEnabled: { type: boolean }
                   institutionalMemoryRouteEnabled: { type: boolean }
                   unauthenticatedDevCBCAPEnabled: { type: boolean }
@@ -162,6 +179,117 @@ paths:
         "403": { description: Authentication or workspace authorization failed }
         "422": { description: Requested visual claim blocked by evidence conditions }
         "503": { description: Tenant visualization runtime unavailable }
+  /api/cbcap/visualizations/workspace:
+    post:
+      summary: Build and render a governed multi-county visualization workspace
+      operationId: createCbcapVisualizationWorkspace
+      security: [{ bearerAuth: [] }]
+      description: Loads all values from the Evidence Gateway. Caller-supplied raw values or renderer code are not accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [question, countyFips, sourceMeasureIds]
+              properties:
+                question: { type: string, enum: [compare_places, uncertainty, time_change, distribution, barrier_matrix, planning_alignment] }
+                countyFips: { type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: { type: string, pattern: '^\d{5}$' } }
+                sourceMeasureIds: { type: array, minItems: 1, maxItems: 8, uniqueItems: true, items: { type: string, maxLength: 240 } }
+                selectedCountyFips: { type: [string, "null"], pattern: '^\d{5}$' }
+      responses:
+        "200": { description: Governed workspace and deterministic render package }
+        "400": { description: Invalid workspace request }
+        "403": { description: Authentication or workspace authorization failed }
+        "422": { description: Requested evidence claim cannot be rendered safely }
+        "503": { description: Governed Evidence Gateway package unavailable }
+  /api/cbcap/workforce/capacity:
+    post:
+      summary: Build a nonconsequential governed county workforce-capacity view
+      operationId: evaluateCbcapWorkforceCapacity
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [countyFips]
+              properties:
+                countyFips: { type: string, pattern: '^\d{5}$' }
+      responses:
+        "200": { description: Evidence-preserving workforce context without a rank, score, or shortage verdict }
+        "400": { description: Invalid county request }
+        "403": { description: Authentication or workspace authorization failed }
+        "422": { description: Governed evidence envelope was unusable }
+        "503": { description: Governed workforce evidence unavailable }
+  /api/cbcap/monitoring/evaluate:
+    post:
+      summary: Evaluate a server-owned reviewed monitor on demand
+      operationId: evaluateCbcapMonitor
+      security: [{ bearerAuth: [] }]
+      description: Request-driven only. This route does not imply a scheduler, notification sender, or automatic action.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [monitorId]
+              properties:
+                monitorId: { type: string, minLength: 1, maxLength: 240 }
+                asOf: { type: string, format: date }
+      responses:
+        "200": { description: No-change or reviewable monitoring result }
+        "400": { description: Invalid monitoring request }
+        "403": { description: Authentication or workspace authorization failed }
+        "404": { description: Reviewed monitor definition not found }
+        "422": { description: Monitoring evaluation blocked by governed conditions }
+        "503": { description: Monitor definition, snapshot, or finding persistence unavailable }
+  /api/cbcap/private-evidence/submissions:
+    post:
+      summary: Finalize metadata for an externally staged tenant-private evidence object
+      operationId: finalizeCbcapPrivateEvidenceSubmission
+      security: [{ bearerAuth: [] }]
+      description: |
+        This is not an upload-initiation endpoint. Production does not issue presigned upload URLs.
+        The opaque uploadId must already resolve to exactly one tenant-partitioned, versioned,
+        KMS-encrypted object carrying SHA-256 and security-scan metadata.
+      responses:
+        "201": { description: Evidence metadata recorded; human review is still required }
+        "400": { description: Invalid governance metadata or unsafe object }
+        "403": { description: Authentication or submit authority failed }
+        "404": { description: Tenant-scoped staged object not found }
+        "503": { description: Tenant-private evidence runtime unavailable }
+  /api/cbcap/private-evidence/{documentId}/review:
+    post:
+      summary: Append a human review of tenant-private evidence metadata
+      operationId: reviewCbcapPrivateEvidence
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 240 }
+      responses:
+        "201": { description: Append-only review recorded }
+        "400": { description: Invalid review }
+        "403": { description: Human review authority failed }
+        "404": { description: Document not found in authenticated tenant }
+        "503": { description: Tenant-private evidence runtime unavailable }
+  /api/cbcap/private-evidence/query:
+    post:
+      summary: Query sanitized reviewed tenant-private evidence metadata
+      operationId: queryCbcapPrivateEvidence
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Applicable sanitized metadata; never raw content or storage coordinates }
+        "400": { description: Invalid geography or as-of request }
+        "403": { description: Authentication or read authority failed }
+        "503": { description: Tenant-private evidence runtime unavailable }
   /api/cbcap/workspaces/{workspaceId}/items:
     get:
       summary: List tenant-scoped workspace collaboration items

@@ -103,6 +103,8 @@ Actionable and blocked findings require human review. The output always states:
 
 This repository provides the governed evaluation and finding-persistence capability. It does not claim that a background scheduler is deployed merely because monitoring code exists.
 
+Production exposes the authenticated request-driven evaluation route only when both a reviewed monitor-definition provider and governed snapshot provider are configured. Without both providers the capability fails closed. The Evidence Gateway-backed workforce and visualization providers do not implicitly create monitoring definitions or baselines.
+
 A production scheduler, event source, or managed automation may invoke the authenticated monitoring capability later. That scheduler must use the same tenant identity, provider, persistence, observability, and failure controls as an interactive evaluation.
 
 **Agents can watch. People decide what changes.**

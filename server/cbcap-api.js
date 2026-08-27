@@ -87,12 +87,15 @@ function geographyResponse(resolved, query) {
       },
       place: {
         status: 'ambiguous',
-        kind: 'multi_county_zip',
+        kind: resolved.resolutionMethod === 'census_zcta_proxy' ? 'multi_county_census_zcta_proxy' : 'multi_county_usps_zip',
         query,
+        resolutionMethod: resolved.resolutionMethod || null,
+        caveat: resolved.caveat || null,
         matches: (resolved.allCounties || []).map((item) => ({
           countyFips: item.fips,
           county: item.name || null,
           residentialShare: item.resRatio ?? null,
+          landAreaShare: item.areaRatio ?? null,
         })),
       },
     };
@@ -175,6 +178,8 @@ function createCBCAPApi(options = {}) {
           county: resolved.county || null,
           state: resolved.state || null,
           resolvedAs: resolved.resolvedAs || null,
+          resolutionMethod: resolved.resolutionMethod || null,
+          caveat: resolved.caveat || null,
           input: location,
         },
       };

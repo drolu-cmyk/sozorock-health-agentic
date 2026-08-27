@@ -1,0 +1,37 @@
+FROM node:24.19.0-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+
+ENV NODE_ENV=production \
+    PORT=8080 \
+    CB_CAP_DATABASE_CA_FILE=/app/certs/global-bundle.pem
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 cbcap \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin cbcap \
+    && mkdir -p /app/certs \
+    && curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+       https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+       -o /app/certs/global-bundle.pem \
+    && grep -q 'BEGIN CERTIFICATE' /app/certs/global-bundle.pem
+
+COPY package.json package-lock.json /app/
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+    && npm cache clean --force
+
+COPY server /app/server
+COPY packages /app/packages
+COPY scripts /app/scripts
+COPY infrastructure/postgres /app/infrastructure/postgres
+
+RUN chown -R 10001:10001 /app
+USER 10001:10001
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=4s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:8080/healthz',{headers:{host:'api.cbcap.sozorockfoundation.org'}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "server/production-index.js"]

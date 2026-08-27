@@ -1,151 +1,163 @@
 /**
- * National County / FIPS Reference
+ * Census county and county-equivalent reference.
  *
- * Contract: every U.S. county and county-equivalent is addressable by FIPS.
- * Seed includes counties across multiple states so resolution is not NY-only.
- *
- * Production path:
- *   1. Download Census county reference (gazetteer or TIGER)
- *   2. Place as data/national-counties.full.json
- *   3. Call loadFullCountyTable()
- *
- * Territories and county-equivalents (AK census areas, LA parishes, etc.)
- * are included in the full table; seed notes the policy below.
+ * Development and tests may use the small seed below. Production is fail-closed:
+ * national-counties.full.json must be present, valid, and meet the national
+ * coverage thresholds before any geography is resolved.
  */
 
-const fs = require("fs");
-const path = require("path");
+const fs = require('node:fs');
+const path = require('node:path');
 
-/**
- * Policy for territories and county-equivalents:
- * - Include all 50 states + DC
- * - Include Puerto Rico municipios when present in Census files
- * - Include AK census areas / boroughs as county-equivalents
- * - Exclude purely statistical areas that are not county-equivalents
- */
-const TERRITORY_POLICY = {
+const FULL_DATA_PATH = path.join(__dirname, 'national-counties.full.json');
+const MIN_COUNTY_COUNT = 3144;
+const MIN_STATE_AND_DC_COUNT = 51;
+const FIPS = /^\d{5}$/;
+const STATE_FIPS = /^\d{2}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+
+const TERRITORY_POLICY = Object.freeze({
   includeDC: true,
-  includePR: true,
+  includePR: false,
   includeAKEquivalents: true,
-  includeUSVI: false, // enable when boundary + indicator coverage exists
-  includeGuam: false
-};
+  includeUSVI: false,
+  includeGuam: false,
+});
 
-/**
- * Multi-state seed (not exhaustive). Full table loaded from file when present.
- * Format: fips -> { fips, name, state, stateFips, type, lat, lng }
- */
-const SEED = {
-  // New York
-  "36095": { fips: "36095", name: "Schoharie", state: "NY", stateFips: "36", type: "county", lat: 42.68, lng: -74.49 },
-  "36025": { fips: "36025", name: "Delaware", state: "NY", stateFips: "36", type: "county", lat: 42.20, lng: -75.00 },
-  "36001": { fips: "36001", name: "Albany", state: "NY", stateFips: "36", type: "county", lat: 42.60, lng: -73.97 },
-  "36093": { fips: "36093", name: "Schenectady", state: "NY", stateFips: "36", type: "county", lat: 42.81, lng: -74.06 },
-  "36067": { fips: "36067", name: "Onondaga", state: "NY", stateFips: "36", type: "county", lat: 43.00, lng: -76.19 },
-  "36061": { fips: "36061", name: "New York", state: "NY", stateFips: "36", type: "county", lat: 40.78, lng: -73.97 },
-  "36047": { fips: "36047", name: "Kings", state: "NY", stateFips: "36", type: "county", lat: 40.65, lng: -73.95 },
-  // California
-  "06037": { fips: "06037", name: "Los Angeles", state: "CA", stateFips: "06", type: "county", lat: 34.05, lng: -118.24 },
-  "06075": { fips: "06075", name: "San Francisco", state: "CA", stateFips: "06", type: "county", lat: 37.77, lng: -122.42 },
-  "06073": { fips: "06073", name: "San Diego", state: "CA", stateFips: "06", type: "county", lat: 32.72, lng: -117.16 },
-  // Texas
-  "48201": { fips: "48201", name: "Harris", state: "TX", stateFips: "48", type: "county", lat: 29.76, lng: -95.37 },
-  "48113": { fips: "48113", name: "Dallas", state: "TX", stateFips: "48", type: "county", lat: 32.78, lng: -96.80 },
-  "48029": { fips: "48029", name: "Bexar", state: "TX", stateFips: "48", type: "county", lat: 29.42, lng: -98.49 },
-  // Florida
-  "12086": { fips: "12086", name: "Miami-Dade", state: "FL", stateFips: "12", type: "county", lat: 25.76, lng: -80.19 },
-  "12095": { fips: "12095", name: "Orange", state: "FL", stateFips: "12", type: "county", lat: 28.54, lng: -81.38 },
-  // Illinois
-  "17031": { fips: "17031", name: "Cook", state: "IL", stateFips: "17", type: "county", lat: 41.84, lng: -87.68 },
-  // Pennsylvania
-  "42101": { fips: "42101", name: "Philadelphia", state: "PA", stateFips: "42", type: "county", lat: 39.95, lng: -75.17 },
-  // Ohio
-  "39035": { fips: "39035", name: "Cuyahoga", state: "OH", stateFips: "39", type: "county", lat: 41.50, lng: -81.69 },
-  // Georgia
-  "13121": { fips: "13121", name: "Fulton", state: "GA", stateFips: "13", type: "county", lat: 33.75, lng: -84.39 },
-  // Washington
-  "53033": { fips: "53033", name: "King", state: "WA", stateFips: "53", type: "county", lat: 47.61, lng: -122.33 },
-  // Arizona
-  "04013": { fips: "04013", name: "Maricopa", state: "AZ", stateFips: "04", type: "county", lat: 33.45, lng: -112.07 },
-  // Massachusetts
-  "25025": { fips: "25025", name: "Suffolk", state: "MA", stateFips: "25", type: "county", lat: 42.36, lng: -71.06 },
-  // Colorado
-  "08031": { fips: "08031", name: "Denver", state: "CO", stateFips: "08", type: "county", lat: 39.74, lng: -104.99 },
-  // District of Columbia
-  "11001": { fips: "11001", name: "District of Columbia", state: "DC", stateFips: "11", type: "county_equivalent", lat: 38.91, lng: -77.04 }
-};
+const SEED = Object.freeze({
+  '36095': { fips: '36095', name: 'Schoharie', state: 'NY', stateFips: '36', type: 'County', lat: 42.68, lng: -74.49 },
+  '36025': { fips: '36025', name: 'Delaware', state: 'NY', stateFips: '36', type: 'County', lat: 42.20, lng: -75.00 },
+  '36001': { fips: '36001', name: 'Albany', state: 'NY', stateFips: '36', type: 'County', lat: 42.60, lng: -73.97 },
+  '36093': { fips: '36093', name: 'Schenectady', state: 'NY', stateFips: '36', type: 'County', lat: 42.81, lng: -74.06 },
+  '36057': { fips: '36057', name: 'Montgomery', state: 'NY', stateFips: '36', type: 'County', lat: 42.90, lng: -74.44 },
+  '42029': { fips: '42029', name: 'Chester', state: 'PA', stateFips: '42', type: 'County', lat: 39.97, lng: -75.75 },
+  '06037': { fips: '06037', name: 'Los Angeles', state: 'CA', stateFips: '06', type: 'County', lat: 34.05, lng: -118.24 },
+  '48201': { fips: '48201', name: 'Harris', state: 'TX', stateFips: '48', type: 'County', lat: 29.76, lng: -95.37 },
+  '48029': { fips: '48029', name: 'Bexar', state: 'TX', stateFips: '48', type: 'County', lat: 29.42, lng: -98.49 },
+  '12086': { fips: '12086', name: 'Miami-Dade', state: 'FL', stateFips: '12', type: 'County', lat: 25.76, lng: -80.19 },
+  '17031': { fips: '17031', name: 'Cook', state: 'IL', stateFips: '17', type: 'County', lat: 41.84, lng: -87.68 },
+  '53033': { fips: '53033', name: 'King', state: 'WA', stateFips: '53', type: 'County', lat: 47.61, lng: -122.33 },
+  '11001': { fips: '11001', name: 'District of Columbia', state: 'DC', stateFips: '11', type: 'County equivalent', lat: 38.91, lng: -77.04 },
+});
 
-let _table = null;
-let _meta = {
-  source: "seed",
-  count: Object.keys(SEED).length,
-  loadedAt: null,
-  version: "seed-0.5.0"
-};
+let cache = null;
+
+function isProduction(env = process.env) {
+  return String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+}
+
+function validateCountyArtifact(raw, options = {}) {
+  const requireNational = options.requireNational === true;
+  const issues = [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, issues: ['artifact_not_object'], count: 0, stateCount: 0 };
+  if (!raw.counties || typeof raw.counties !== 'object' || Array.isArray(raw.counties)) issues.push('counties_not_object');
+  if (!raw.source || typeof raw.source !== 'object') issues.push('source_metadata_missing');
+  if (!/^https:\/\/www2\.census\.gov\//.test(String(raw.source?.url || ''))) issues.push('census_source_url_invalid');
+  if (!SHA256.test(String(raw.source?.sha256 || ''))) issues.push('census_source_sha256_invalid');
+  if (!/^\d{4}$/.test(String(raw.vintage || ''))) issues.push('vintage_invalid');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(raw.effectiveDate || ''))) issues.push('effective_date_invalid');
+
+  const counties = raw.counties && typeof raw.counties === 'object' && !Array.isArray(raw.counties) ? raw.counties : {};
+  const states = new Set();
+  for (const [key, county] of Object.entries(counties)) {
+    if (!FIPS.test(key) || county?.fips !== key) issues.push(`county_fips_invalid:${key}`);
+    if (!STATE_FIPS.test(String(county?.stateFips || '')) || key.slice(0, 2) !== county?.stateFips) issues.push(`state_fips_invalid:${key}`);
+    if (!/^[A-Z]{2}$/.test(String(county?.state || ''))) issues.push(`state_postal_invalid:${key}`);
+    if (!String(county?.name || '').trim()) issues.push(`county_name_missing:${key}`);
+    if (!Number.isFinite(county?.lat) || county.lat < -90 || county.lat > 90) issues.push(`latitude_invalid:${key}`);
+    if (!Number.isFinite(county?.lng) || county.lng < -180 || county.lng > 180) issues.push(`longitude_invalid:${key}`);
+    states.add(county?.stateFips);
+  }
+  const count = Object.keys(counties).length;
+  if (requireNational && count < MIN_COUNTY_COUNT) issues.push(`county_coverage_below_threshold:${count}`);
+  if (requireNational && states.size < MIN_STATE_AND_DC_COUNT) issues.push(`state_coverage_below_threshold:${states.size}`);
+  for (const fips of ['36057', '42029']) if (!counties[fips]) issues.push(`required_county_missing:${fips}`);
+  return { ok: issues.length === 0, issues, count, stateCount: states.size };
+}
+
+function loadCountyArtifact(options = {}) {
+  const production = options.production ?? isProduction(options.env);
+  if (!fs.existsSync(FULL_DATA_PATH)) {
+    if (production) throw new Error('Production national county artifact is missing.');
+    return {
+      artifact: { version: 'seed-1', vintage: 'seed', effectiveDate: '1970-01-01', counties: SEED, source: { url: 'development-seed', sha256: 'development-seed' } },
+      validation: { ok: true, issues: [], count: Object.keys(SEED).length, stateCount: new Set(Object.values(SEED).map((row) => row.stateFips)).size },
+      source: 'seed',
+    };
+  }
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(FULL_DATA_PATH, 'utf8'));
+  } catch {
+    throw new Error('National county artifact cannot be parsed.');
+  }
+  const validation = validateCountyArtifact(raw, { requireNational: production });
+  if (!validation.ok) throw new Error(`National county artifact failed validation: ${validation.issues.join(',')}`);
+  return { artifact: raw, validation, source: path.basename(FULL_DATA_PATH) };
+}
+
+function loaded() {
+  if (!cache) cache = loadCountyArtifact();
+  return cache;
+}
 
 function getTable() {
-  if (_table) return _table;
-  _table = { ...SEED };
-  _meta.loadedAt = new Date().toISOString();
-
-  // Attempt full file load
-  const fullPath = path.join(__dirname, "national-counties.full.json");
-  try {
-    if (fs.existsSync(fullPath)) {
-      const raw = JSON.parse(fs.readFileSync(fullPath, "utf8"));
-      if (raw && raw.counties) {
-        _table = raw.counties;
-        _meta = {
-          source: "national-counties.full.json",
-          count: Object.keys(_table).length,
-          loadedAt: new Date().toISOString(),
-          version: raw.version || "file",
-          effectiveDate: raw.effectiveDate || null
-        };
-      }
-    }
-  } catch (e) {
-    // keep seed
-  }
-  return _table;
+  return loaded().artifact.counties;
 }
 
 function getByFips(fips) {
   if (!fips) return null;
-  const key = String(fips).padStart(5, "0");
+  const key = String(fips).padStart(5, '0');
   return getTable()[key] || null;
 }
 
 function resolveByName(name, state) {
   if (!name) return null;
-  const n = String(name).toLowerCase().replace(/\s+county$/i, "").trim();
-  const st = state ? String(state).toUpperCase() : null;
-  const table = getTable();
-  for (const rec of Object.values(table)) {
-    if (rec.name.toLowerCase() === n) {
-      if (!st || rec.state === st) return rec;
-    }
+  const normalized = String(name).toLowerCase().replace(/\s+(county|parish|borough|municipality|census area)$/i, '').trim();
+  const postal = state ? String(state).toUpperCase() : null;
+  for (const county of Object.values(getTable())) {
+    const candidate = county.name.toLowerCase().replace(/\s+(county|parish|borough|municipality|census area)$/i, '').trim();
+    if (candidate === normalized && (!postal || county.state === postal)) return county;
   }
   return null;
 }
 
 function listStates() {
-  const set = new Set();
-  Object.values(getTable()).forEach(r => set.add(r.state));
-  return [...set].sort();
+  return [...new Set(Object.values(getTable()).map((county) => county.state))].sort();
 }
 
 function getMeta() {
-  getTable();
-  return { ..._meta, territoryPolicy: TERRITORY_POLICY };
+  const value = loaded();
+  return {
+    source: value.source,
+    version: value.artifact.version || null,
+    vintage: value.artifact.vintage || null,
+    effectiveDate: value.artifact.effectiveDate || null,
+    count: value.validation.count,
+    stateCount: value.validation.stateCount,
+    coverageReady: value.source !== 'seed' && validateCountyArtifact(value.artifact, { requireNational: true }).ok,
+    sourceProvenance: value.artifact.source || null,
+    territoryPolicy: TERRITORY_POLICY,
+  };
+}
+
+function resetForTests() {
+  cache = null;
 }
 
 module.exports = {
+  FULL_DATA_PATH,
+  MIN_COUNTY_COUNT,
+  MIN_STATE_AND_DC_COUNT,
+  SEED,
+  TERRITORY_POLICY,
   getByFips,
-  resolveByName,
-  listStates,
   getMeta,
   getTable,
-  TERRITORY_POLICY,
-  SEED
+  isProduction,
+  listStates,
+  loadCountyArtifact,
+  resetForTests,
+  resolveByName,
+  validateCountyArtifact,
 };

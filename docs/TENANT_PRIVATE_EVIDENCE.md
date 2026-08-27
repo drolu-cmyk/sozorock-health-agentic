@@ -8,6 +8,10 @@ A client may identify an opaque `uploadId` and provide governance metadata such 
 
 A client cannot submit or choose the storage bucket, object key, object version, content hash, encryption key, public-access posture, or security-scan result. Those values must be resolved server-side for the authenticated tenant.
 
+## Upload initiation boundary
+
+The current runtime does not initiate uploads and does not issue presigned URLs. Its application IAM role is read-only for tenant-private objects, and the repository does not include a production malware-scanning ingestion pipeline. `POST /api/cbcap/private-evidence/submissions` is therefore a metadata-finalization endpoint for an opaque `uploadId` that was staged through a separately governed process; it is not an upload endpoint. Until a bounded uploader, content-length and media enforcement, KMS-only write policy, scan transition, expiry, and abandoned-upload cleanup are deployed and tested together, upload initiation remains explicitly disabled.
+
 ## Storage requirements
 
 The runtime admits only objects that resolve to the authenticated tenant's opaque partition under `tenant-evidence/<tenant-hash>/...`.

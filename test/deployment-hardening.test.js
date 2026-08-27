@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   DEPLOYMENT_PROOF_FIELDS,
+  MODEL_PROOF_FIELDS,
   runProductionReadiness,
 } = require('../server/production-readiness');
 
@@ -21,10 +22,26 @@ const EXPECTED_FIELDS = [
   'securityHeadersVerified',
   'corsBoundaryVerified',
   'unauthenticatedProtectedRouteDenied',
+  'cognitoPkceHostedUiVerified',
+];
+
+const EXPECTED_MODEL_FIELDS = [
+  'structuredOutputVerified',
+  'specialistSequenceVerified',
+  'countyReleaseBound',
+  'humanReviewPreserved',
+  'modelIdentityVerified',
+  'promptVersionVerified',
+  'outputHashRecorded',
+  'responseIdHashRecorded',
 ];
 
 test('deployment proof preserves the release and edge safeguards from the superseded infrastructure draft', () => {
   assert.deepEqual(DEPLOYMENT_PROOF_FIELDS, EXPECTED_FIELDS);
+});
+
+test('model proof requires structured bounded execution, provenance, human review, and hashed identifiers', () => {
+  assert.deepEqual(MODEL_PROOF_FIELDS, EXPECTED_MODEL_FIELDS);
 });
 
 test('one failed deployment supply-chain proof blocks production activation', async () => {
@@ -36,6 +53,10 @@ test('one failed deployment supply-chain proof blocks production activation', as
       AGENTIC_ALLOWED_ORIGINS: 'https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org',
       AGENTIC_ALLOWED_HOSTS: 'api.cbcap.sozorockfoundation.org',
       AWS_REGION: 'us-east-1',
+      OPENAI_API_KEY: 'test-openai-key-not-live-123456',
+      CB_CAP_AGENT_MODEL: 'gpt-5-mini',
+      CB_CAP_AGENT_PROMPT_VERSION: 'cbcap-prompts-v1',
+      CB_CAP_AGENT_KILL_SWITCH: 'false',
     },
     deploymentProbe: async () => evidence,
   });
@@ -51,6 +72,10 @@ test('missing deployment probe is never treated as not applicable', async () => 
       AGENTIC_ALLOWED_ORIGINS: 'https://cbcap.sozorockfoundation.org;https://health.sozorockfoundation.org',
       AGENTIC_ALLOWED_HOSTS: 'api.cbcap.sozorockfoundation.org',
       AWS_REGION: 'us-east-1',
+      OPENAI_API_KEY: 'test-openai-key-not-live-123456',
+      CB_CAP_AGENT_MODEL: 'gpt-5-mini',
+      CB_CAP_AGENT_PROMPT_VERSION: 'cbcap-prompts-v1',
+      CB_CAP_AGENT_KILL_SWITCH: 'false',
     },
   });
   assert.ok(report.issues.includes('deployment:deployment_probe_unavailable'));

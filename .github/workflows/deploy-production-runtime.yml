@@ -1,0 +1,131 @@
+name: Deploy CB-CAP production runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "release/production.request"
+
+permissions:
+  contents: read
+  id-token: write
+  statuses: write
+
+concurrency:
+  group: cbcap-agentic-production
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    name: Build, migrate, prove, activate, rollback-test, and preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: production
+    env:
+      AWS_REGION: us-east-1
+      EXPECTED_AWS_ACCOUNT_ID: '791860731989'
+      DEPLOY_ROLE_ARN: arn:aws:iam::791860731989:role/cbcap-agentic-github-deploy
+      CLOUDFORMATION_ROLE_ARN: arn:aws:iam::791860731989:role/cbcap-agentic-cloudformation
+      AWS_PAGER: ""
+      OPENAI_API_KEY_SECRET_ARN: ${{ secrets.CB_CAP_OPENAI_API_KEY_SECRET_ARN }}
+      CB_CAP_AGENT_MODEL: ${{ vars.CB_CAP_AGENT_MODEL }}
+      CB_CAP_AGENT_PROMPT_VERSION: cbcap-agent-prompts-2026-08-26-v1
+    steps:
+      - name: Check out exact release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Publish pending production status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload=$(jq -cn --arg state pending --arg target_url "$RUN_URL" --arg description 'CB-CAP production activation is running' --arg context 'cbcap-agentic/production' '{state:$state,target_url:$target_url,description:$description,context:$context}')
+          curl --fail-with-body --silent --show-error --request POST --header "Accept: application/vnd.github+json" --header "Authorization: Bearer $GH_TOKEN" --header "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPOSITORY/statuses/$RELEASE_SHA" --data "$payload" >/dev/null
+
+      - name: Use Node.js 24.19.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24.19.0'
+
+      - name: Re-run exact-source release gates
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm test
+          npm audit --audit-level=high
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=no)"
+          approved_commit=$(git rev-parse HEAD)
+          test "$approved_commit" = "$RELEASE_SHA"
+          origin_main=$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')
+          test "$origin_main" = "$approved_commit"
+          echo "APPROVED_COMMIT=$approved_commit" >> "$GITHUB_ENV"
+
+      - name: Assume repository-scoped AWS OIDC deployment role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          role-session-name: cbcap-agentic-production
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Execute fail-closed production activation
+        shell: bash
+        run: bash scripts/deploy-production-runtime.sh
+
+      - name: Force runtime tasks to zero after any failed activation
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          if aws ecs describe-clusters --clusters cbcap-agentic-production --query 'clusters[0].status' --output text 2>/dev/null | grep -qx ACTIVE; then
+            aws ecs update-service \
+              --cluster cbcap-agentic-production \
+              --service cbcap-agentic-runtime \
+              --desired-count 0 \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Upload nonsecret live proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cbcap-production-readiness-proof
+          path: output/production/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Publish successful production status
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload=$(jq -cn --arg state success --arg target_url "$RUN_URL" --arg description 'CB-CAP production activation and preflight passed' --arg context 'cbcap-agentic/production' '{state:$state,target_url:$target_url,description:$description,context:$context}')
+          curl --fail-with-body --silent --show-error --request POST --header "Accept: application/vnd.github+json" --header "Authorization: Bearer $GH_TOKEN" --header "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPOSITORY/statuses/$RELEASE_SHA" --data "$payload" >/dev/null
+
+      - name: Publish failed production status
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload=$(jq -cn --arg state failure --arg target_url "$RUN_URL" --arg description 'CB-CAP production activation failed closed' --arg context 'cbcap-agentic/production' '{state:$state,target_url:$target_url,description:$description,context:$context}')
+          curl --fail-with-body --silent --show-error --request POST --header "Accept: application/vnd.github+json" --header "Authorization: Bearer $GH_TOKEN" --header "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$REPOSITORY/statuses/$RELEASE_SHA" --data "$payload" >/dev/null

@@ -3,7 +3,7 @@
  *
  * Resolution order for five-digit input:
  *   1. National county table as FIPS
- *   2. ZIP crosswalk
+ *   2. governed HUD ZIP crosswalk or explicitly labeled Census ZCTA proxy
  *   3. null (fail closed)
  *
  * County name without state:
@@ -40,7 +40,8 @@ class GeographyAgent {
           fips: primary.fips,
           county: c.name || null,
           state: c.state || null,
-          zcta: q,
+          postalCodeInput: q,
+          zcta: zipResult.method === "census_zcta_proxy" ? q : undefined,
           lat: c.lat || null,
           lng: c.lng || null,
           multiCounty: zipResult.multiCounty,
@@ -48,10 +49,13 @@ class GeographyAgent {
             ? zipResult.all.map(a => ({
                 fips: a.fips,
                 name: a.county && a.county.name,
-                resRatio: a.resRatio
+                resRatio: a.resRatio,
+                areaRatio: a.areaRatio
               }))
             : undefined,
-          resolvedAs: "zip"
+          resolvedAs: zipResult.resolvedGeographyKind,
+          resolutionMethod: zipResult.method,
+          caveat: zipResult.caveat
         };
       }
 

@@ -176,6 +176,36 @@ test('tenant runtime without publish handler creates no review API', async () =>
   assert.equal(runtime.reviewApi, null);
 });
 
+test('tenant runtime resolves bounded agent assistance only after actor scope is established', async () => {
+  let resolvedTenant = null;
+  const runtimeForActor = createTenantCBCAPRuntimeFactory({
+    memoryForActor: () => new InMemoryRunMemory(),
+    evidenceClientForActor: () => ({ async getCountyPackage() { return structuredClone(evidencePackage()); } }),
+    agentOrchestratorForActor(resolvedActor) {
+      resolvedTenant = resolvedActor.tenantId;
+      return {
+        async run() {
+          return {
+            contract: 'cbcap.agent-run.v1',
+            promptVersion: 'prompt-v1',
+            model: 'reviewed-model',
+            synthesis: {},
+            brief: {},
+            trace: { toolCalls: ['synthesize_governed_evidence', 'draft_reviewable_planning_brief'] },
+          };
+        },
+      };
+    },
+  });
+
+  const runtime = await runtimeForActor(actor('tenant-a'));
+  assert.equal(resolvedTenant, 'tenant-a');
+  assert.equal(runtime.agentAssistanceEnabled, true);
+  const result = await runtime.planningApi.handle({ location: '36001' });
+  assert.equal(result.statusCode, 202);
+  assert.equal(result.body.draft.agentAssistance.contract, 'cbcap.agent-run.v1');
+});
+
 test('tenant runtime exposes workforce analysis through the same actor-scoped governed evidence client', async () => {
   const seen = [];
   const runtimeForActor = createTenantCBCAPRuntimeFactory({

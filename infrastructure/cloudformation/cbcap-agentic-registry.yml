@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Immutable ECR registry for the CB-CAP Node agentic runtime.
+
+Resources:
+  RuntimeRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: sozorock/cbcap-agentic-runtime
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Retain the newest 30 immutable runtime images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 30
+                },
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+      Tags:
+        - Key: Product
+          Value: CB-CAP
+        - Key: Runtime
+          Value: agentic-node
+
+Outputs:
+  RepositoryUri:
+    Value: !GetAtt RuntimeRepository.RepositoryUri
+  RepositoryArn:
+    Value: !GetAtt RuntimeRepository.Arn

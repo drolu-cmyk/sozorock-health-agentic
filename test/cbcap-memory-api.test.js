@@ -62,6 +62,19 @@ test('institutional proposal is blocked until every evidence ID revalidates', as
   assert.equal(valid.body.status, 'proposed');
 });
 
+test('institutional evidence validation receives the proposal geography on proposal and approval', async () => {
+  const contexts = [];
+  const { api } = fixture({ validator: async (_actor, _ids, context) => {
+    contexts.push(context);
+    return { ok: true, missingIds: [] };
+  } });
+  const proposed = await api.proposeInstitutional(proposal(), { workspaceActor: actor() });
+  await api.reviewInstitutional(proposed.body.id, { decision: 'approve', rationale: 'Reviewed.' }, {
+    workspaceActor: actor({ role: 'foundation_reviewer' }),
+  });
+  assert.deepEqual(contexts, [{ geographyId: 'county:36001' }, { geographyId: 'county:36001' }]);
+});
+
 test('approval revalidates evidence and only authorized reviewers can promote memory', async () => {
   let valid = true;
   const { api } = fixture({ validator: async (_actor, ids) => ({ ok: valid, missingIds: valid ? [] : ids }) });

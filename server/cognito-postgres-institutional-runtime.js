@@ -13,6 +13,8 @@ const { createTenantCBCAPRuntimeFactory } = require('./tenant-cbcap-runtime');
 function createCognitoPostgresInstitutionalGateway(options = {}) {
   const identityResolver = options.identityResolver || createCognitoWorkspaceResolver({
     region: options.region || process.env.AWS_REGION,
+    userPoolId: options.userPoolId || process.env.CB_CAP_COGNITO_USER_POOL_ID,
+    appClientId: options.appClientId || process.env.CB_CAP_COGNITO_APP_CLIENT_ID,
     fetchImpl: options.cognitoFetchImpl,
     timeoutMs: options.cognitoTimeoutMs,
   });
@@ -68,6 +70,7 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
       scenarioRegistrationsForActor: options.scenarioRegistrationsForActor,
       scenarioHandlerForActor: options.scenarioHandlerForActor,
       publishHandlerForActor: options.publishHandlerForActor,
+      agentOrchestratorForActor: options.agentOrchestratorForActor,
       fundingOpportunityForActor: options.fundingOpportunityForActor,
       fundingApplicantProfileForActor: options.fundingApplicantProfileForActor,
       auditSink: options.auditSink,
