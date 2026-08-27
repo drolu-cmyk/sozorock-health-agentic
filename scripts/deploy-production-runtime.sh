@@ -39,6 +39,18 @@ network_config() {
     '{awsvpcConfiguration:{subnets:($subnets|split(",")),securityGroups:[$sg],assignPublicIp:"ENABLED"}}'
 }
 
+emit_stack_failure_context() {
+  local status
+  status=$(aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)
+  if [[ -z "$status" || "$status" == "None" ]]; then return 0; fi
+  printf 'CB-CAP runtime stack status: %s\n' "$status" >&2
+  aws cloudformation describe-stack-events --stack-name "$RUNTIME_STACK" \
+    --max-items 25 \
+    --query 'StackEvents[:25].[Timestamp,LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason]' \
+    --output table >&2 || true
+}
+
 disable_runtime() {
   if [[ -z "$RUNTIME_IMAGE_URI" ]]; then return 0; fi
   if ! aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" >/dev/null 2>&1; then return 0; fi
@@ -69,6 +81,7 @@ cleanup_restore() {
 on_error() {
   local code=$?
   cleanup_restore
+  emit_stack_failure_context
   disable_runtime
   exit "$code"
 }
@@ -87,6 +100,14 @@ origin_main=$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}
 test "$origin_main" = "$APPROVED_COMMIT"
 test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
 test -z "$(git status --porcelain --untracked-files=no)"
+
+runtime_stack_status=$(aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" \
+  --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)
+if [[ "$runtime_stack_status" == "ROLLBACK_FAILED" ]]; then
+  echo "CB-CAP runtime stack requires reviewed recovery before another change set can be created." >&2
+  emit_stack_failure_context
+  exit 1
+fi
 
 aws cloudformation deploy \
   --stack-name "$REGISTRY_STACK" \
