@@ -1,21 +1,6 @@
-FROM node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df
-
-ENV NODE_ENV=production \
-    PORT=8080 \
-    CB_CAP_DATABASE_CA_FILE=/app/certs/global-bundle.pem
+FROM node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS build
 
 WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 cbcap \
-    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin cbcap \
-    && mkdir -p /app/certs \
-    && curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-       https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
-       -o /app/certs/global-bundle.pem \
-    && grep -q 'BEGIN CERTIFICATE' /app/certs/global-bundle.pem
 
 COPY package.json package-lock.json /app/
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
@@ -26,12 +11,22 @@ COPY packages /app/packages
 COPY scripts /app/scripts
 COPY infrastructure/postgres /app/infrastructure/postgres
 
-RUN chown -R 10001:10001 /app
-USER 10001:10001
+RUN mkdir -p /app/certs \
+    && node -e "const fs=require('node:fs');fetch('https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem').then((response)=>{if(!response.ok)throw new Error('RDS trust bundle download failed');return response.text()}).then((body)=>{if(!body.includes('BEGIN CERTIFICATE'))throw new Error('RDS trust bundle is invalid');fs.writeFileSync('/app/certs/global-bundle.pem',body,{mode:0o444})})"
 
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:4ac45c93b6c4b2304876569196e5962e55e8ba4ba095e7dde7bf6d7e00efc3b8
+
+ENV NODE_ENV=production \
+    PORT=8080 \
+    CB_CAP_DATABASE_CA_FILE=/app/certs/global-bundle.pem
+
+WORKDIR /app
+COPY --from=build --chown=65532:65532 /app /app
+
+USER 65532:65532
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=4s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:8080/healthz',{headers:{host:'api.cbcap.sozorockfoundation.org'}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:8080/healthz',{headers:{host:'api.cbcap.sozorockfoundation.org'}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
-CMD ["node", "server/production-index.js"]
+CMD ["server/production-index.js"]

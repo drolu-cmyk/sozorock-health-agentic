@@ -123,11 +123,23 @@ test('production workflow deploys only the exact triggering commit', () => {
 
 test('production image excludes the retired demonstration frontend', () => {
   const dockerfile = readFileSync(path.join(__dirname, '..', 'Dockerfile.runtime'), 'utf8');
-  assert.match(dockerfile, /^FROM node:24\.19\.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df$/m);
+  assert.match(dockerfile, /^FROM node:24\.19\.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS build$/m);
+  assert.match(dockerfile, /^FROM gcr\.io\/distroless\/nodejs24-debian13:nonroot@sha256:4ac45c93b6c4b2304876569196e5962e55e8ba4ba095e7dde7bf6d7e00efc3b8$/m);
+  assert.match(dockerfile, /COPY --from=build --chown=65532:65532/);
+  assert.match(dockerfile, /USER 65532:65532/);
   assert.doesNotMatch(dockerfile, /^COPY frontend\b/m);
-  assert.match(dockerfile, /CMD \["node", "server\/production-index\.js"\]/);
+  assert.match(dockerfile, /CMD \["server\/production-index\.js"\]/);
   assert.match(dockerfile, /COPY package\.json package-lock\.json/);
   assert.match(dockerfile, /npm ci --omit=dev/);
+  const runtime = dockerfile.slice(dockerfile.indexOf('\nFROM gcr.io/distroless'));
+  assert.doesNotMatch(runtime, /apt-get|apk add|curl|perl/);
+});
+
+test('distroless task commands extend the Node entrypoint without a duplicate executable', () => {
+  const template = readFileSync(path.join(__dirname, '..', 'infrastructure', 'cloudformation', 'cbcap-agentic-runtime.yml'), 'utf8');
+  assert.match(template, /Command: \[scripts\/migrate-postgres\.js\]/);
+  assert.match(template, /Command: \[scripts\/run-production-preflight\.js\]/);
+  assert.doesNotMatch(template, /Command: \[node,/);
 });
 
 test('production template injects the exact OpenAI secret only through the ECS execution role', () => {

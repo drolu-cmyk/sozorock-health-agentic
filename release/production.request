@@ -3,5 +3,5 @@ runtime: node-governed-control-plane
 activation_contract: cbcap.production-readiness.v1
 api_domain: api.cbcap.sozorockfoundation.org
 approval: user-authorized-production-activation
-request_generation: 9
-retry_reason: generation 8 identified three critical and fourteen high findings in the older pinned Node 24.19.0 Bookworm image before runtime stack activation; generation 9 pins the official image manifest refreshed on 2026-08-25 with Debian security updates and corrects bounded ECR package metadata extraction while preserving the zero-finding gate
+request_generation: 10
+retry_reason: generation 9 confirmed that the refreshed general-purpose Bookworm runtime still carries three critical and fourteen high OS findings; generation 10 uses a two-stage build with the official non-root Distroless Node 24 Debian 13 runtime pinned to the immutable digest resolved on 2026-08-27, excludes package managers and shells from the final image, and preserves the zero-critical and zero-high activation gate
