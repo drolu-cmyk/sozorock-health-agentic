@@ -46,8 +46,8 @@ emit_stack_failure_context() {
   if [[ -z "$status" || "$status" == "None" ]]; then return 0; fi
   printf 'CB-CAP runtime stack status: %s\n' "$status" >&2
   aws cloudformation describe-stack-events --stack-name "$RUNTIME_STACK" \
-    --max-items 25 \
-    --query 'StackEvents[:25].[Timestamp,LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason]' \
+    --max-items 200 \
+    --query 'StackEvents[?ResourceStatus==`CREATE_FAILED` || ResourceStatus==`UPDATE_FAILED` || ResourceStatus==`DELETE_FAILED`].[Timestamp,LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason]' \
     --output table >&2 || true
 }
 

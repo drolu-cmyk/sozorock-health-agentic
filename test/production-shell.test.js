@@ -108,7 +108,10 @@ test('failed CloudFormation recovery is diagnosed before another stack mutation'
   assert.match(script, /runtime_stack_status=.*describe-stacks/);
   assert.match(script, /runtime_stack_status" == "ROLLBACK_FAILED"/);
   assert.match(script, /describe-stack-events/);
-  assert.match(script, /--max-items 25/);
+  assert.match(script, /--max-items 200/);
+  assert.match(script, /ResourceStatus==`CREATE_FAILED`/);
+  assert.match(script, /ResourceStatus==`UPDATE_FAILED`/);
+  assert.match(script, /ResourceStatus==`DELETE_FAILED`/);
   assert.match(script, /LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason/);
   assert.match(script, /requires reviewed recovery before another change set/);
 });
