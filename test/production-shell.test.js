@@ -94,6 +94,15 @@ test('ECR scan polling never appends a shell fallback brace to valid JSON', () =
   assert.doesNotMatch(script, /\$\{scan_json:-\{\}\}/);
 });
 
+test('ECR vulnerability failures report only bounded finding metadata before activation', () => {
+  const script = readFileSync(path.join(__dirname, '..', 'scripts', 'deploy-production-runtime.sh'), 'utf8');
+  assert.match(script, /ECR scan blocked activation: CRITICAL=\$critical HIGH=\$high/);
+  assert.match(script, /PACKAGE_NAME/);
+  assert.match(script, /PACKAGE_VERSION/);
+  assert.match(script, /select\(\.severity == "CRITICAL" or \.severity == "HIGH"\)/);
+  assert.doesNotMatch(script, /\.description|\.uri/);
+});
+
 test('production workflow deploys only the exact triggering commit', () => {
   const workflow = readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'deploy-production-runtime.yml'), 'utf8');
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
