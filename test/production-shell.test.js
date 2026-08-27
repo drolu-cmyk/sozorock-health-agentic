@@ -94,6 +94,10 @@ test('production workflow deploys only the exact triggering commit', () => {
   assert.match(workflow, /RELEASE_SHA: \$\{\{ github\.sha \}\}/);
   assert.match(workflow, /test "\$approved_commit" = "\$RELEASE_SHA"/);
   assert.match(workflow, /test "\$origin_main" = "\$approved_commit"/);
+  assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_TOKEN/);
+  assert.match(workflow, /repo:drolu-cmyk\/sozorock-health-agentic:environment:production/);
+  assert.match(workflow, /deploy-production-runtime\.yml@refs\/heads\/main/);
+  assert.doesNotMatch(workflow, /echo .*oidc_token/);
   assert.match(workflow, /sozorock-health-contact/);
   assert.match(workflow, /Parameters\[\?ParameterKey=='OpenAISecretArn'\]/);
   assert.match(workflow, /secretsmanager describe-secret/);
