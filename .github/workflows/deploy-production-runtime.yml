@@ -95,7 +95,7 @@ jobs:
           unset oidc_token
           echo "GitHub OIDC claim boundary: $claims"
           jq -e \
-            --arg subject 'repo:drolu-cmyk/sozorock-health-agentic:environment:production' \
+            --arg subject 'repo:drolu-cmyk@271617784/sozorock-health-agentic@1313269615:environment:production' \
             --arg workflow 'drolu-cmyk/sozorock-health-agentic/.github/workflows/deploy-production-runtime.yml@refs/heads/main' \
             '.aud == "sts.amazonaws.com" and .sub == $subject and .repository == "drolu-cmyk/sozorock-health-agentic" and .ref == "refs/heads/main" and .job_workflow_ref == $workflow' \
             <<<"$claims" >/dev/null
