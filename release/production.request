@@ -3,5 +3,5 @@ runtime: node-governed-control-plane
 activation_contract: cbcap.production-readiness.v1
 api_domain: api.cbcap.sozorockfoundation.org
 approval: user-authorized-production-activation
-request_generation: 6
-retry_reason: generation 5 proved immutable-ID OIDC role assumption and failed closed while resolving the existing governed model secret reference; generation 6 follows bounded bootstrap generation 11, which adds exact read-only contact-stack lookup and Cognito domain validation permissions
+request_generation: 7
+retry_reason: generation 6 resolved the governed model configuration, created the registry, and published the immutable runtime image, then failed closed when an ambiguous Bash fallback appended a brace to valid ECR scan JSON; generation 7 uses the regression-tested scan parser fix
