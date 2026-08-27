@@ -114,6 +114,10 @@ test('failed CloudFormation recovery is diagnosed before another stack mutation'
   assert.match(script, /ResourceStatus==`DELETE_FAILED`/);
   assert.match(script, /LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason/);
   assert.match(script, /requires reviewed recovery before another change set/);
+  assert.match(script, /Stacks\[0\]\.StackId/);
+  assert.match(script, /LogicalResourceId=="UserPool"/);
+  assert.match(script, /Verified failed stack ARN/);
+  assert.match(script, /Verified failed user pool ARN/);
 });
 
 test('production workflow deploys only the exact triggering commit', () => {

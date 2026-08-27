@@ -104,6 +104,13 @@ test -z "$(git status --porcelain --untracked-files=no)"
 runtime_stack_status=$(aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)
 if [[ "$runtime_stack_status" == "ROLLBACK_FAILED" ]]; then
+  failed_stack_arn=$(aws cloudformation describe-stacks --stack-name "$RUNTIME_STACK" --query 'Stacks[0].StackId' --output text)
+  failed_resources=$(aws cloudformation list-stack-resources --stack-name "$failed_stack_arn" --output json)
+  failed_user_pool_id=$(jq -r '[.StackResourceSummaries[] | select(.LogicalResourceId=="UserPool" and .ResourceType=="AWS::Cognito::UserPool") | .PhysicalResourceId][0] // empty' <<<"$failed_resources")
+  [[ "$failed_stack_arn" =~ ^arn:aws:cloudformation:${AWS_REGION}:${EXPECTED_AWS_ACCOUNT_ID}:stack/cbcap-agentic-production/[0-9a-f-]{36}$ ]]
+  [[ "$failed_user_pool_id" =~ ^[a-z]{2}(-gov)?-[a-z]+-[0-9]_[A-Za-z0-9]+$ ]]
+  echo "Verified failed stack ARN: $failed_stack_arn" >&2
+  echo "Verified failed user pool ARN: arn:aws:cognito-idp:${AWS_REGION}:${EXPECTED_AWS_ACCOUNT_ID}:userpool/${failed_user_pool_id}" >&2
   echo "CB-CAP runtime stack requires reviewed recovery before another change set can be created." >&2
   emit_stack_failure_context
   exit 1
