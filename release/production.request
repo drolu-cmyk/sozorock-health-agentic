@@ -3,5 +3,5 @@ runtime: node-governed-control-plane
 activation_contract: cbcap.production-readiness.v1
 api_domain: api.cbcap.sozorockfoundation.org
 approval: user-authorized-production-activation
-request_generation: 13
-retry_reason: generation 12 proved the exact historical Cognito failure; generation 13 remains read-only and emits only the verified failed stack and empty user-pool ARNs needed to scope one-time recovery permissions without wildcards
+request_generation: 14
+retry_reason: generation 13 records the immutable failed stack and empty user-pool ARNs; generation 14 quotes the MFA enum, recovers only those exact resources, preserves retained failed-create artifacts under distinct names without secret, log, or KMS deletion authority, and completes governed activation
