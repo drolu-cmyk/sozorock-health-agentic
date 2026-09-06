@@ -53,7 +53,7 @@ emit_stack_failure_context() {
 
 recover_failed_initial_stack() {
   local events resources user_pool_id users pool
-  events=$(aws cloudformation describe-stack-events --stack-name "$RUNTIME_STACK" --max-items 200 --output json)
+  events=$(aws cloudformation describe-stack-events --stack-name "$RUNTIME_STACK" --max-items 200 --output json) || return 1
   if ! jq -e '
     any(.StackEvents[];
       .LogicalResourceId == "UserPool" and
@@ -63,7 +63,7 @@ recover_failed_initial_stack() {
       .LogicalResourceId == "UserPool" and
       .ResourceStatus == "DELETE_FAILED" and
       (.ResourceStatusReason | contains("deletion protection is activated"))) and
-    all(.StackEvents[] as $event;
+    all(.StackEvents[]; . as $event |
       if (["CREATE_FAILED", "UPDATE_FAILED", "DELETE_FAILED"] | index($event.ResourceStatus)) != null and
          (($event.ResourceStatusReason // "") | contains("Resource creation cancelled") | not)
       then $event.LogicalResourceId == "UserPool"
@@ -72,7 +72,7 @@ recover_failed_initial_stack() {
     return 1
   fi
 
-  resources=$(aws cloudformation list-stack-resources --stack-name "$RUNTIME_STACK" --output json)
+  resources=$(aws cloudformation list-stack-resources --stack-name "$RUNTIME_STACK" --output json) || return 1
   user_pool_id=$(jq -r '.StackResourceSummaries[] | select(.LogicalResourceId=="UserPool") | .PhysicalResourceId // empty' <<<"$resources")
   [[ "$user_pool_id" =~ ^[a-z]{2}(-gov)?-[a-z]+-[0-9]_[A-Za-z0-9]+$ ]] || return 1
   if jq -e 'any(.StackResourceSummaries[];
@@ -81,7 +81,7 @@ recover_failed_initial_stack() {
     return 1
   fi
 
-  pool=$(aws cognito-idp describe-user-pool --user-pool-id "$user_pool_id" --output json)
+  pool=$(aws cognito-idp describe-user-pool --user-pool-id "$user_pool_id" --output json) || return 1
   jq -e --arg id "$user_pool_id" --arg account "$EXPECTED_AWS_ACCOUNT_ID" --arg region "$AWS_REGION" '
     .UserPool.Id == $id and
     .UserPool.Name == "cbcap-agentic-workspace" and
@@ -89,8 +89,8 @@ recover_failed_initial_stack() {
     (.UserPool.EstimatedNumberOfUsers // 0) == 0 and
     .UserPool.Arn == ("arn:aws:cognito-idp:" + $region + ":" + $account + ":userpool/" + $id)
   ' <<<"$pool" >/dev/null || return 1
-  users=$(aws cognito-idp list-users --user-pool-id "$user_pool_id" --limit 1 --output json)
-  jq -e '(.Users // []) | length == 0' <<<"$users" >/dev/null || return 1
+  users=$(aws cognito-idp list-users --user-pool-id "$user_pool_id" --limit 1 --output json) || return 1
+  jq -e '.Users | type == "array" and length == 0' <<<"$users" >/dev/null || return 1
 
   echo "Recovering the exact empty CB-CAP first-create rollback."
   aws cognito-idp update-user-pool --user-pool-id "$user_pool_id" --deletion-protection INACTIVE >/dev/null || return 1
