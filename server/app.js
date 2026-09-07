@@ -129,6 +129,17 @@ function createApp(options = {}) {
     }
   });
 
+  app.post('/api/cbcap/capabilities', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!institutionalGateway || typeof institutionalGateway.handleCapabilities !== 'function') return res.sendStatus(404);
+    try {
+      const result = await institutionalGateway.handleCapabilities(req.body || {}, { request: req });
+      return res.status(result.statusCode).json(result.body);
+    } catch {
+      return res.status(503).json({ error: 'Workspace availability could not be checked.' });
+    }
+  });
+
   app.post('/api/cbcap', async (req, res) => {
     try {
       if (institutionalGateway) {

@@ -141,6 +141,11 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
     return {
       tenantId: actor.tenantId,
       actor,
+      async evidenceReadyForCounty(countyFips) {
+        const evidence = await engine.evidenceClient.getCountyPackage(countyFips);
+        return evidence?.package?.geographies?.length === 1
+          && evidence.package.geographies[0].county_fips === countyFips;
+      },
       engine,
       planningApi,
       reviewApi,
