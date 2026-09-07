@@ -84,6 +84,7 @@ function permissionDecision(actorInput, action) {
     'cbcap.monitoring.evaluate',
     'cbcap.workforce.view',
     'cbcap.fiscal.view',
+    'cbcap.metrics.read',
     'cbcap.private_evidence.read',
     'cbcap.workspace.read',
     'cbcap.memory.read',
@@ -97,6 +98,7 @@ function permissionDecision(actorInput, action) {
   }
   if ([
     'cbcap.plan.create',
+    'cbcap.metrics.write',
     'cbcap.workspace.write',
     'cbcap.memory.propose',
     'cbcap.private_evidence.submit',
@@ -108,6 +110,7 @@ function permissionDecision(actorInput, action) {
   }
   if ([
     'cbcap.plan.review',
+    'cbcap.metrics.review',
     'cbcap.memory.review',
     'cbcap.private_evidence.review',
   ].includes(action)) {

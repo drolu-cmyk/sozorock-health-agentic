@@ -170,6 +170,8 @@ async function createProductionRuntime(options = {}) {
         || governedEvidenceProviders.institutionalEvidenceValidatorForActor,
       scenarioRegistrationsForActor: options.scenarioRegistrationsForActor,
       scenarioHandlerForActor: options.scenarioHandlerForActor,
+      fiscalRecordsForActor: options.fiscalRecordsForActor,
+      metricStoreForActor: options.metricStoreForActor,
       fundingOpportunityForActor: options.fundingOpportunityForActor,
       fundingApplicantProfileForActor: options.fundingApplicantProfileForActor,
       monitoringDefinitionForActor: options.monitoringDefinitionForActor,

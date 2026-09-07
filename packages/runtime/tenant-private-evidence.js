@@ -27,7 +27,7 @@ function requiredString(value, label, max = 1000) {
 function dateOnly(value, label, allowNull = true) {
   if ((value === null || value === undefined || value === '') && allowNull) return null;
   const normalized = requiredString(value, label, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(Date.parse(`${normalized}T00:00:00.000Z`))) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(Date.parse(`${normalized}T00:00:00.000Z`)) || new Date(`${normalized}T00:00:00.000Z`).toISOString().slice(0, 10) !== normalized) {
     throw new Error(`${label} must be an ISO date.`);
   }
   return normalized;
@@ -233,6 +233,8 @@ function authorizeUse(document, reviews, actorInput, options = {}) {
   return {
     status: reasonCodes.length ? 'blocked' : 'ready',
     documentId: document.id,
+    documentVersion: document.storedObject.versionId,
+    sourceStatus: review?.decision === "accepted" ? "reviewed" : "review_required",
     latestReviewId: review?.id || null,
     reasonCodes: [...new Set(reasonCodes)].sort(),
   };
@@ -242,6 +244,8 @@ function sanitizeDocument(document, review = null) {
   return {
     contract: CONTRACT,
     documentId: document.id,
+    documentVersion: document.storedObject.versionId,
+    sourceStatus: review?.decision === "accepted" ? "reviewed" : "review_required",
     geographyIds: [...document.geographyIds],
     submittedInRunId: document.submittedInRunId,
     documentType: document.documentType,
