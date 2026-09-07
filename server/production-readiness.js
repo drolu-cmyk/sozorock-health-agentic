@@ -38,6 +38,8 @@ const MODEL_PROOF_FIELDS = Object.freeze([
 ]);
 
 const PROTECTED_TABLES = Object.freeze([
+  { name: 'cbcap_metric_registry', policy: 'cbcap_metric_registry_tenant_scope', privileges: ['SELECT', 'INSERT', 'UPDATE'] },
+  { name: 'cbcap_metric_events', policy: 'cbcap_metric_events_tenant_scope', trigger: 'cbcap_metric_events_append_only', privileges: ['SELECT', 'INSERT'] },
   { name: 'agent_runs', policy: 'agent_runs_tenant_scope', privileges: ['SELECT', 'INSERT', 'UPDATE'] },
   { name: 'agent_run_events', policy: 'agent_run_events_tenant_scope', trigger: 'agent_run_events_append_only', privileges: ['SELECT', 'INSERT'] },
   { name: 'cbcap_workspace_items', policy: 'cbcap_workspace_items_tenant_scope', privileges: ['SELECT', 'INSERT', 'UPDATE'] },

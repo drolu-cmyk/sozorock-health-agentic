@@ -1,3 +1,5 @@
+const { SqlMetricRegistry } = require('../packages/runtime/sql-metric-registry');
+const { createPostgresTenantQuery } = require('./postgres-tenant-memory');
 const { createCognitoWorkspaceResolver } = require('./cognito-get-user-provider');
 const {
   createPostgresInstitutionalMemoryFactory,
@@ -55,6 +57,8 @@ function createCognitoPostgresInstitutionalGateway(options = {}) {
 
     runtimeForActor = createTenantCBCAPRuntimeFactory({
       memoryForActor,
+      fiscalRecordsForActor: options.fiscalRecordsForActor,
+      metricStoreForActor: options.metricStoreForActor || (options.pool ? async actor => new SqlMetricRegistry({tenantId:actor.tenantId, query:createPostgresTenantQuery({...sharedPoolOptions, tenantId:actor.tenantId})}) : null),
       workspaceMemoryForActor,
       institutionalMemoryForActor,
       learningMemoryForActor,
