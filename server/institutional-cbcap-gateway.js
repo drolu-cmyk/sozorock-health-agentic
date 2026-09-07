@@ -101,6 +101,14 @@ function createInstitutionalCBCAPGateway(options = {}) {
       return result;
     },
 
+    async handleFiscal(input, context = {}) {
+      const auth = await actorFor(context.request, 'cbcap.fiscal.view');
+      if (auth.error) return auth.error;
+      const selected = await runtime(auth.actor);
+      if (!selected || selected.tenantId !== auth.actor.tenantId || typeof selected.fiscalApi?.handle !== 'function') return unavailable();
+      return selected.fiscalApi.handle(input || {}, { ...context, workspaceActor: auth.actor });
+    },
+
     async handleFunding(input, context = {}) {
       const auth = await actorFor(context.request, 'cbcap.funding.evaluate');
       if (auth.error) return auth.error;

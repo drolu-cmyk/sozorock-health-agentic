@@ -83,6 +83,7 @@ function permissionDecision(actorInput, action) {
     'cbcap.visualization.plan',
     'cbcap.monitoring.evaluate',
     'cbcap.workforce.view',
+    'cbcap.fiscal.view',
     'cbcap.private_evidence.read',
     'cbcap.workspace.read',
     'cbcap.memory.read',

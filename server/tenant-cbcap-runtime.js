@@ -1,3 +1,4 @@
+const { createCBCAPFiscalApi } = require('./cbcap-fiscal-api');
 const { CBCAPPlanningEngine } = require('../packages/cbcap/planning-engine');
 const { createGovernedScenarioHandler } = require('../packages/cbcap/scenario-governance');
 const { validateWorkspaceActor } = require('../packages/runtime/workspace-identity');
@@ -138,7 +139,10 @@ function createTenantCBCAPRuntimeFactory(options = {}) {
       throw new Error('Tenant learning memory does not expose the governed learning-memory contract.');
     }
 
+    const fiscalApi = typeof options.fiscalRecordsForActor === 'function'
+      ? createCBCAPFiscalApi({ recordsForActor: options.fiscalRecordsForActor, auditSink: options.auditSink }) : null;
     return {
+      fiscalApi,
       tenantId: actor.tenantId,
       actor,
       async evidenceReadyForCounty(countyFips) {
