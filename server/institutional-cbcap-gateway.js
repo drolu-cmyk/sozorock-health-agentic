@@ -50,6 +50,37 @@ function createInstitutionalCBCAPGateway(options = {}) {
   }
 
   return {
+    async handleCapabilities(input = {}, context = {}) {
+      const auth = await actorFor(context.request, 'cbcap.plan.view');
+      if (auth.error) return auth.error;
+      if (!input || Array.isArray(input) || Object.keys(input).some(key => key !== 'countyFips') || !/^\d{5}$/.test(input.countyFips || '')) {
+        return { statusCode: 400, body: { error: 'Select an exact county.' } };
+      }
+      const selected = await runtime(auth.actor);
+      if (!selected || selected.tenantId !== auth.actor.tenantId) return unavailable();
+      const allowed = (action, service, method = 'handle') => permissionDecision(auth.actor, action).ok && typeof service?.[method] === 'function';
+      // Route registration alone does not establish tenant or evidence readiness.
+      let evidenceReady = false;
+      if (typeof selected.evidenceReadyForCounty === 'function') {
+        try { evidenceReady = await selected.evidenceReadyForCounty(input.countyFips) === true; } catch { evidenceReady = false; }
+      }
+      return { statusCode: 200, body: {
+        contract: 'cbcap.workspace-capabilities.v1', countyFips: input.countyFips,
+        capabilities: {
+          planning: evidenceReady && allowed('cbcap.plan.create', selected.planningApi),
+          review: allowed('cbcap.plan.review', selected.reviewApi),
+          visualization: evidenceReady && allowed('cbcap.visualization.plan', selected.visualizationApi),
+          visualizationWorkspace: evidenceReady && allowed('cbcap.visualization.plan', selected.visualizationWorkspaceApi),
+          workforce: evidenceReady && allowed('cbcap.workforce.view', selected.workforceApi),
+          funding: false,
+          monitoring: false,
+          localEvidence: allowed('cbcap.private_evidence.read', selected.privateEvidenceApi, 'query'),
+          workspace: allowed('cbcap.workspace.read', selected.memoryApi, 'listWorkspace'),
+          decisionRecord: allowed('cbcap.memory.read', selected.memoryApi, 'queryInstitutional'),
+        },
+        evidenceReady,
+      } };
+    },
     async handlePlan(input, context = {}) {
       const auth = await actorFor(context.request, 'cbcap.plan.create');
       if (auth.error) return auth.error;
