@@ -17,6 +17,8 @@ concurrency:
 
 jobs:
   activate:
+    # Institutional runtime deployment is suspended during product definition.
+    if: ${{ false }}
     name: Build, migrate, prove, activate, rollback-test, and preflight
     runs-on: ubuntu-latest
     timeout-minutes: 180
