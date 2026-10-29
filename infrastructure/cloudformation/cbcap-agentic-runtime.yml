@@ -1,6 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Governed AWS production runtime for the CB-CAP Node agentic control plane.
 
+# Historical definition only. No parameter can re-enable this retired stack.
+# Do not apply a resource-removal update to a live stack; inventory it first.
+Rules:
+  RdsPermanentlyRetired:
+    Assertions:
+      - Assert:
+          Fn::Equals: [rds-retired, rds-enabled]
+        AssertDescription: RDS is permanently retired. This template cannot be deployed.
+
 Parameters:
   RuntimeImageUri:
     Type: String
@@ -312,7 +321,7 @@ Resources:
       AutoVerifiedAttributes: [email]
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
-      MfaConfiguration: ON
+      MfaConfiguration: 'ON'
       EnabledMfas: [SOFTWARE_TOKEN_MFA]
       AccountRecoverySetting:
         RecoveryMechanisms:

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Retired entrypoint: exit before configuration, AWS calls, or cleanup traps.
+# Retain the historical implementation below for audit; it must not be executed.
+echo 'RDS and the dependent institutional runtime are permanently retired. No AWS operations were performed.' >&2
+exit 1
+
 : "${AWS_REGION:?AWS_REGION is required}"
 : "${EXPECTED_AWS_ACCOUNT_ID:?EXPECTED_AWS_ACCOUNT_ID is required}"
 : "${CLOUDFORMATION_ROLE_ARN:?CLOUDFORMATION_ROLE_ARN is required}"
