@@ -19,7 +19,7 @@
     "@aws-sdk/client-s3": "3.1116.0",
     "express": "4.22.3",
     "pg": "8.23.0",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "amazon-cognito-identity-js": "6.3.20"
